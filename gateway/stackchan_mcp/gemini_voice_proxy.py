@@ -45,7 +45,12 @@ from .edge_tts_provider import EdgeTTSProvider
 from .gemini_live_bridge import GeminiLiveBridge, manual_vad_enabled
 from .opus_codec import StackchanOpusCodec
 from .session_keepalive import SessionKeepalive, keepalive_interval_from_env
-from .wake_gate import LISTENING_LED_RGB, WakeGate, create_wake_gate_from_env
+from .wake_gate import (
+    LISTENING_LED_RGB,
+    WakeGate,
+    button_only_listen_enabled,
+    create_wake_gate_from_env,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -348,6 +353,14 @@ class GeminiVoiceProxy:
             else create_wake_gate_from_env()
         )
         gate = self._wake_gate
+        if button_only_listen_enabled():
+            if gate is None:
+                gate = create_wake_gate_from_env()
+                self._wake_gate = gate
+            gate.button_only = True
+        mode = getattr(gate, "listening_mode", "wake_word") if gate else "pass_through"
+        self._status.listening_mode = mode
+        logger.info("Gateway listening mode: %s", mode)
         if gate is not None:
             gate.is_tts_active = lambda: self._tts_active
         self._status.on_wake_gate_configured(
@@ -503,7 +516,15 @@ class GeminiVoiceProxy:
                 await self._abort_in_flight_tts()
         elif msg_type == "listen":
             state = message.get("state", "")
-            if state == "stop":
+            if state in {"start", "detect"} and button_only_listen_enabled():
+                gate = self._maybe_rebuild_wake_gate()
+                if gate is not None:
+                    gate.open()
+                    self._status.on_wake_woke()
+                    await self._signal_manual_vad_start(self._bridge)
+                    await self._set_leds_safe(*LISTENING_LED_RGB)
+                    await self._send_device_emotion_safe(LISTENING_EMOTION)
+            elif state == "stop":
                 # Mark end-of-user-turn so Gemini commits the utterance.
                 bridge = self._bridge
                 if bridge is not None:
@@ -564,7 +585,17 @@ class GeminiVoiceProxy:
         return gate
 
     def _handle_wake_gate_process_error(self, exc: Exception) -> None:
-        logger.warning("wake word gate failed; scheduling rebuild: %s", exc)
+        logger.warning("wake word gate failed: %s", exc)
+        if button_only_listen_enabled():
+            # Detector failure must never turn privacy mode into pass-through.
+            gate = self._wake_gate
+            gate.kws = None
+            gate.button_only = True
+            gate.close()
+            self._status.on_wake_gate_configured(available=True)
+            self._status.listening_mode = "button_only"
+            logger.info("Gateway listening mode: button_only (detector failed)")
+            return
         self._wake_gate = None
         self._wake_gate_failures += 1
         if self._wake_gate_failures >= self._wake_gate_rebuild_max:
@@ -602,13 +633,15 @@ class GeminiVoiceProxy:
         gate = self._maybe_rebuild_wake_gate()
         if gate is None:
             # While the gate is backing off a rebuild or has failed for good, pass the microphone through so the robot is never deaf.
-            await bridge.send_audio(pcm)
+            if not button_only_listen_enabled():
+                await bridge.send_audio(pcm)
             return
         try:
             decision = gate.process(pcm)
         except Exception as exc:
             self._handle_wake_gate_process_error(exc)
-            await bridge.send_audio(pcm)
+            if not button_only_listen_enabled():
+                await bridge.send_audio(pcm)
             return
         if decision.closed:
             self._status.on_wake_closed()

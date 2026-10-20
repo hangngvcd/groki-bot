@@ -120,6 +120,18 @@ uv run --all-extras python scripts/kws_offline_repro.py --generate-say
 
 换了唤醒词先离线试一下：`kws_offline_repro.py` 读取同样的设置（`--voice` 换一个 macOS 声音，`--wav` 用自己的录音）。两到三个音节、辅音清楚的短语效果最好；太难唤醒或太容易误触发时，调整 `STACKCHAN_KWS_THRESHOLD` 和 `STACKCHAN_KWS_SCORE`。
 
+### 仅按键隐私模式（可选）
+
+在 `.env` 设置 `STACKCHAN_BUTTON_ONLY_LISTEN=1` 并重启，对 `gbot` 和
+`gemini` 后端均有效。默认 `0`，保留原有行为。关闭唤醒词或缺少 KWS 模型时，
+收到设备 XiaoZhi `listen`（`start` 或 `detect`，例如按键）前不转发任何麦克风音频，
+按键前的音频会丢弃。沿用 `STACKCHAN_WAKE_IDLE_S`（默认 30 秒）的静默超时、
+现有音量阈值和最长聆听窗口。有可用模型时，唤醒词和按键均可启动聆听。
+检测器出错时退回仅按键模式，不会自动转发全部音频。
+启动日志和状态页会显示当前模式；`/debug/status` 的
+`wake_gate.listening_mode` 为 `button_only`、`wake_word_or_button`、
+`wake_word` 或 `pass_through`。
+
 ## 3. 启动和检查
 
 ```bash

@@ -163,6 +163,23 @@ recording). Two or three syllables with clear consonants work best; if it
 triggers too rarely or too often, adjust `STACKCHAN_KWS_THRESHOLD` and
 `STACKCHAN_KWS_SCORE`.
 
+### Button-only privacy mode (optional)
+
+Set `STACKCHAN_BUTTON_ONLY_LISTEN=1` in `.env` and restart to enable this
+mode for either `gbot` or `gemini`. The default is `0`, preserving existing
+behavior. With wake word disabled (`STACKCHAN_WAKE_WORD=0`) or no usable
+KWS model, microphone audio stays local until the device sends XiaoZhi
+`listen` with state `start` or `detect` (for example, a button press).
+Audio recorded before the button press is discarded. Forwarding stops after
+`STACKCHAN_WAKE_IDLE_S` of silence (default 30 seconds), using the existing
+wake gate activity threshold and listening window. With a working KWS model,
+either the wake word or the button opens the window. A detector failure
+falls back to button-only listening, never continuous forwarding.
+
+The startup log and status page show `button_only`, `wake_word_or_button`,
+`wake_word`, or `pass_through`; `/debug/status` exposes this as
+`wake_gate.listening_mode`.
+
 ## 3. Start it and check
 
 ```bash
