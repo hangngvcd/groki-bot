@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from contextvars import ContextVar
 from typing import Any, Awaitable, Callable
 
+from . import child_profile
 from .debug_status import get_debug_status
 from .device_emotion import face_to_device_emotion
 from . import gbot_brain as _gbot_module
@@ -54,6 +55,8 @@ logger = logging.getLogger(__name__)
 
 def face_tracker_autostart_enabled():
     # Older installations inject their own declarations and have no supervisor module.
+    if child_profile.enabled():
+        return False
     value = os.getenv("STACKCHAN_FACE_TRACKER_AUTOSTART", "1").strip().lower()
     return value not in {"0", "false", "no", "off"}
 
@@ -190,12 +193,12 @@ def _env_flag(name: str, default: bool = False) -> bool:
 
 def device_tools_enabled() -> bool:
     """Expose face/LED/head tools to Gemini (needs MCP-capable firmware)."""
-    return _env_flag("STACKCHAN_GEMINI_DEVICE_TOOLS")
+    return not child_profile.enabled() and _env_flag("STACKCHAN_GEMINI_DEVICE_TOOLS")
 
 
 def mac_control_enabled() -> bool:
     """Let voice commands control this Mac. Off unless explicitly enabled."""
-    return _env_flag("STACKCHAN_MAC_CONTROL")
+    return not child_profile.enabled() and _env_flag("STACKCHAN_MAC_CONTROL")
 
 
 def ask_claude_enabled() -> bool:
@@ -205,7 +208,7 @@ def ask_claude_enabled() -> bool:
     user with Claude Code installed is not spending their quota by default
     without a way out.
     """
-    if not _env_flag("STACKCHAN_ASK_CLAUDE", default=True):
+    if child_profile.enabled() or not _env_flag("STACKCHAN_ASK_CLAUDE", default=True):
         return False
     return find_claude_bin() is not None
 
@@ -393,6 +396,8 @@ def build_function_declarations(*, types=None) -> list[Any]:
         if face_tracker_autostart_enabled()
         else []
     )
+    if child_profile.enabled():
+        return [end_conversation]
     return [
         *device,
         end_conversation,
@@ -738,7 +743,7 @@ class VoiceToolExecutor:
         self._status = debug_status or get_debug_status()
         self._declaration_provider = declaration_provider or build_function_declarations
         self._instruction_provider = instruction_provider
-        self._extensions = tuple(extensions)
+        self._extensions = () if child_profile.enabled() else tuple(extensions)
         self._extension_routes = {}
         self._extension_metadata = {}
         existing = {entry["name"] for entry in self._declaration_provider()}
@@ -772,7 +777,7 @@ class VoiceToolExecutor:
             )
 
     def declarations(self) -> list[dict[str, Any]]:
-        return [
+        entries = [
             *self._declaration_provider(),
             *(
                 entry
@@ -780,6 +785,7 @@ class VoiceToolExecutor:
                 for entry in extension.declarations
             ),
         ]
+        return [entry for entry in entries if child_profile.voice_tool_allowed(entry["name"])]
 
     def instructions(self, *, model_search: bool = True) -> str:
         if self._instruction_provider is not None:
@@ -791,7 +797,8 @@ class VoiceToolExecutor:
                 if "express_emotion" in names
                 else VOICE_ONLY_SYSTEM_INSTRUCTION,
                 agent_tools_instruction(
-                    ask_claude="ask_claude" in names, model_search=model_search
+                    ask_claude="ask_claude" in names,
+                    model_search=model_search and not child_profile.enabled(),
                 ),
             ]
             bot = tool_bot() if "ask_grokbot" in names else ""

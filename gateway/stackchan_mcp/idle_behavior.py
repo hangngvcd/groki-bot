@@ -11,6 +11,8 @@ import time
 from contextlib import suppress
 from typing import Any
 
+from . import child_profile
+
 logger = logging.getLogger(__name__)
 
 
@@ -39,7 +41,7 @@ class IdleBehavior:
         # Default 0: the firmware's IdleMotionModifier (ported from M5's official one) owns idle motion.
         # The gateway-side idle is kept as a fallback / debug aid and is off by default, so two sources
         # never send set_head_angles and fight over the spring animation. Set STACKCHAN_GATEWAY_IDLE_ENABLED=1 to use it.
-        self.enabled = os.getenv("STACKCHAN_GATEWAY_IDLE_ENABLED", "0").lower() not in {"0", "false", "no", "off"}
+        self.enabled = not child_profile.enabled() and os.getenv("STACKCHAN_GATEWAY_IDLE_ENABLED", "0").lower() not in {"0", "false", "no", "off"}
         self._rng = rng or random.Random()
         self._task: asyncio.Task[None] | None = None
         self._paused_until = 0.0
@@ -59,7 +61,7 @@ class IdleBehavior:
         self._paused_until = max(self._paused_until, time.monotonic() + self.pause_seconds)
 
     async def start(self) -> None:
-        if not self.enabled or self.running:
+        if child_profile.enabled() or not self.enabled or self.running:
             return
         self._task = asyncio.create_task(self._run(), name="stackchan-idle-behavior")
 
@@ -107,7 +109,7 @@ class IdleBehavior:
 
     async def step_once(self) -> bool:
         """Run one official-like idle step. Returns True when a command was sent."""
-        if self._is_paused() or not self._device_reachable():
+        if child_profile.enabled() or self._is_paused() or not self._device_reachable():
             return False
         if await self._head_is_moving():
             # Official IdleMotionModifier delays 500 ms instead of cutting off

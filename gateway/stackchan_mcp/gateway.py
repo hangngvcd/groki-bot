@@ -16,6 +16,7 @@ import time
 from aiohttp import web
 from aiohttp.web_log import AccessLogger
 
+from . import child_profile
 from .capture_server import create_capture_app
 from .cloud_proxy import CloudProxy, DEFAULT_CLOUD_URL
 from .device_emotion import IDLE_EMOTION, LISTENING_EMOTION, face_to_device_emotion
@@ -75,6 +76,8 @@ def head_follow_default_enabled() -> bool:
     Set STACKCHAN_HEAD_FOLLOW_DEFAULT=0 when the robot has no head servos or
     should stay still; "look at me" turns following on later.
     """
+    if child_profile.enabled():
+        return False
     value = os.getenv("STACKCHAN_HEAD_FOLLOW_DEFAULT", "1").strip().lower()
     return value not in {"0", "false", "no", "off"}
 
@@ -89,6 +92,10 @@ class Gateway:
     """
 
     def __init__(self):
+        if child_profile.enabled():
+            logger.info("Child profile enabled: restricted tools, no cameras or proactive behavior, no backend fallback")
+            for message in child_profile.diagnostics():
+                logger.warning("Child profile: %s", message)
         self.voice_input_bridge = VoiceInputBridge()
         # USB Serial/JTAG transport for low-latency control traffic.
         # Initialised before esp32 so the voice backend factory can hand it
@@ -102,7 +109,7 @@ class Gateway:
         self.usb_transport: UsbTransport | None
         usb_enabled = os.getenv("STACKCHAN_USB_TRANSPORT", "0").strip().lower() in {"1", "true", "yes", "on"}
         usb_disabled = os.getenv("STACKCHAN_USB_DISABLE", "0").strip().lower() in {"1", "true", "yes", "on"}
-        if usb_enabled and not usb_disabled:
+        if usb_enabled and not usb_disabled and not child_profile.enabled():
             self.usb_transport = UsbTransport()
         else:
             self.usb_transport = None
@@ -190,6 +197,8 @@ class Gateway:
         return self._set_head_follow(False)
 
     def _set_head_follow(self, enabled: bool) -> dict:
+        if child_profile.enabled():
+            return {"ok": False, "error": "face tracking disabled by child profile"}
         self.tracking_bridge.enabled = enabled
         result: dict = {
             "ok": True,
@@ -255,6 +264,9 @@ class Gateway:
         need a forward reference at __init__ time.
         """
         backend = self.voice_backend
+        if not child_profile.backend_allowed(backend):
+            logger.warning("Child profile: voice backend unavailable; refusing automatic fallback")
+            return None
         if backend in {"gemini", "gbot"}:
             proxy_class = GbotVoiceProxy if backend == "gbot" else GeminiVoiceProxy
             return proxy_class(
@@ -294,6 +306,8 @@ class Gateway:
         back to "127.0.0.1" with a warning if unset; in that case the ESP32
         will not be able to reach the capture endpoint over the network.
         """
+        if child_profile.enabled():
+            return ""
         explicit_url = os.getenv("VISION_URL")
         if explicit_url:
             return explicit_url
@@ -369,7 +383,8 @@ class Gateway:
             capture_token=self.vision_token,
             inject_text_handler=self._inject_debug_text,
         )
-        app.router.add_post("/track", self._handle_track)
+        if not child_profile.enabled():
+            app.router.add_post("/track", self._handle_track)
         app.router.add_post("/demo/intro", self._handle_demo_intro)
         app.router.add_get("/demo/intro", self._handle_demo_intro)
         app.router.add_post("/demo/arm", self._handle_demo_arm)

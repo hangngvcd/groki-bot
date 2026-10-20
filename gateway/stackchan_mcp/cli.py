@@ -448,6 +448,14 @@ def _run_preflight() -> int:
 
     # --- Configuration ------------------------------------------------------
     print("Configuration:")
+    from . import child_profile
+
+    if child_profile.enabled():
+        print("  STACKCHAN_CHILD_PROFILE enabled (restrictions enforced; no backend fallback)")
+        for message in child_profile.diagnostics():
+            print(f"  WARNING: {message}")
+        if not child_profile.backend_allowed(os.getenv("STACKCHAN_VOICE_BACKEND", "gemini").strip().lower()):
+            issues += 1
     token = os.getenv("STACKCHAN_TOKEN") or os.getenv("BEARER_TOKEN")
     if token:
         print("  STACKCHAN_TOKEN     set (***redacted***)")
@@ -462,7 +470,9 @@ def _run_preflight() -> int:
         print("  VISION_HOST         not set")
 
     vision_url_explicit = os.getenv("VISION_URL", "")
-    if vision_url_explicit:
+    if child_profile.enabled():
+        print("  Camera capture     disabled by child profile (/capture and /track unavailable)")
+    elif vision_url_explicit:
         print(f"  VISION_URL          {_redact_url_secrets(vision_url_explicit)}")
     elif vision_host:
         # Derived URL has no userinfo or query params, so no redaction

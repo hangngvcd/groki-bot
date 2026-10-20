@@ -17,6 +17,7 @@ from mcp.server.session import ServerSession
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
+from . import child_profile
 from .gateway import get_gateway
 from .tts import synthesize_and_send
 
@@ -94,7 +95,7 @@ def create_server() -> Server:
         Tools prefixed with ESP32 names (self.*) are relayed to the device.
         get_status is handled locally by the gateway.
         """
-        return [
+        tools = [
             Tool(
                 name="get_status",
                 description=(
@@ -588,9 +589,13 @@ def create_server() -> Server:
             ),
         ]
 
+        return [tool for tool in tools if not child_profile.camera_tool_blocked(tool.name)]
+
     @server.call_tool()
     async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[TextContent]:
         """Handle a tool call by relaying to ESP32."""
+        if child_profile.camera_tool_blocked(name):
+            return [TextContent(type="text", text=json.dumps({"error": "camera disabled by child profile"}))]
         arguments = arguments or {}
         gw = get_gateway()
 

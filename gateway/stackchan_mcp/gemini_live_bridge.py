@@ -33,6 +33,7 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from . import child_profile
 from .debug_status import DebugStatus, get_debug_status
 from .gbot_brain import tool_bot
 
@@ -140,11 +141,13 @@ def default_system_instruction(
         grokbot = tool_bot()
     if ask_claude is None:
         ask_claude = ask_claude_enabled()
+    if child_profile.enabled():
+        device_tools, mac_control, grokbot, ask_claude = False, False, "", False
     parts = [
         _load_personality(),
         LANGUAGE_INSTRUCTION,
         EMOTION_SYSTEM_INSTRUCTION if device_tools else VOICE_ONLY_SYSTEM_INSTRUCTION,
-        agent_tools_instruction(ask_claude=ask_claude),
+        agent_tools_instruction(ask_claude=ask_claude, model_search=not child_profile.enabled()),
     ]
     if grokbot:
         parts.append(grokbot_instruction(grokbot, mac_control=mac_control))
@@ -348,7 +351,7 @@ def build_live_config(
             parts=[types.Part(text=instruction)],
         ),
         tools=[
-            types.Tool(google_search=types.GoogleSearch()),
+            *([] if child_profile.enabled() else [types.Tool(google_search=types.GoogleSearch())]),
             types.Tool(function_declarations=build_function_declarations()),
         ],
         session_resumption=types.SessionResumptionConfig(

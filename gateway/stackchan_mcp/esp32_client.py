@@ -19,6 +19,7 @@ import websockets
 import websockets.exceptions
 from websockets.asyncio.server import ServerConnection
 
+from . import child_profile
 from .audio_stream import SpeakResult, handle_audio_frame, speak_text
 from .cloud_proxy import CloudConnectionInfo, CloudProxy
 from .debug_status import DebugStatus, get_debug_status
@@ -527,7 +528,13 @@ class ESP32Manager:
 
                     if cloud_proxy is not None:
                         cloud_info = CloudConnectionInfo.from_headers(request_headers)
-                        await cloud_proxy.start(cloud_info, data, ws.send)
+                        started = await cloud_proxy.start(cloud_info, data, ws.send)
+                    else:
+                        started = False
+                    if child_profile.enabled() and not started:
+                        logger.warning("Child profile: voice session unavailable; closing device connection (no fallback)")
+                        await ws.close(code=1011, reason="Voice backend unavailable")
+                        break
 
                     # Send hello response only after the cloud socket has had a
                     # chance to connect and receive the ESP32 hello.  The ESP32
@@ -638,16 +645,22 @@ class ESP32Manager:
                 },
             }
         elif method == "tools/list":
+            tools = self._connection.tools if self._connection else []
             response_payload = {
                 "jsonrpc": "2.0",
                 "id": req_id,
-                "result": {"tools": self._connection.tools if self._connection else [], "nextCursor": ""},
+                "result": {
+                    "tools": [tool for tool in tools if not child_profile.camera_tool_blocked(tool["name"])],
+                    "nextCursor": "",
+                },
             }
         elif method == "tools/call":
             params = payload.get("params", {})
             tool_name = params.get("name", "")
             arguments = params.get("arguments", {})
-            if tool_name == "get_status":
+            if child_profile.camera_tool_blocked(tool_name):
+                result, error = None, {"code": -32000, "message": "camera disabled by child profile"}
+            elif tool_name == "get_status":
                 result = {
                     "content": [
                         {
@@ -728,6 +741,8 @@ class ESP32Manager:
         notify_head_command: bool = True,
     ) -> tuple[Any, dict[str, Any] | None]:
         """Call a tool on the connected ESP32 device."""
+        if child_profile.camera_tool_blocked(name):
+            return None, {"code": -32000, "message": "camera disabled by child profile"}
         if not self._connection or not self._connection.connected:
             return None, {"code": -32000, "message": "No ESP32 device connected"}
         if not self._connection.mcp_supported:
