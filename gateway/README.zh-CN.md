@@ -120,6 +120,19 @@ uv run --all-extras python scripts/kws_offline_repro.py --generate-say
 
 换了唤醒词先离线试一下：`kws_offline_repro.py` 读取同样的设置（`--voice` 换一个 macOS 声音，`--wav` 用自己的录音）。两到三个音节、辅音清楚的短语效果最好；太难唤醒或太容易误触发时，调整 `STACKCHAN_KWS_THRESHOLD` 和 `STACKCHAN_KWS_SCORE`。
 
+多变体用 `|` 分隔完整关键词行（也支持换行），每行格式为音素、可选
+`:score #threshold`、`@tag`；任意标签命中即可唤醒，每行参数覆盖全局默认值
+（score 7、threshold 0.05）。启动时会检查音素是否存在于 `tokens.txt`。
+
+小芽家长可设置 `STACKCHAN_WAKE_PHRASE=小白`、`STACKCHAN_CHILD_PROFILE=1` 和
+`STACKCHAN_BUTTON_ONLY_LISTEN=1`，保留 BOOT 按钮后备。儿童模式不会自动改唤醒词。
+不设 `STACKCHAN_WAKE_KEYWORD` 时，「小白」内置配置为：
+`x iǎo b ái :1 #0.02 @小白|S UW1 B AA1 S UW1 B AA1 :10 #0.02 @小白小白`。
+模型只支持普通话和英文；粤语「小白」siu2 baak6 不能用普通话拼音识别。
+粤语「小白小白」用英文音素近似，合成声命中约 58–70%，43 分钟合成负样本零误触；
+普通话「小白」约 98–99%。建议普通话「小白」，或靠近设备说粤语「小白小白」，
+保留按钮／仅按钮模式，并用 [tools/kws_eval](tools/kws_eval/README.md) 测试孩子真声。
+
 ### 仅按键隐私模式（可选）
 
 在 `.env` 设置 `STACKCHAN_BUTTON_ONLY_LISTEN=1` 并重启，对 `gbot` 和

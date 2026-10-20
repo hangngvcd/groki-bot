@@ -157,8 +157,36 @@ retraining the model. Set it in `.env` and restart the gateway:
   STACKCHAN_WAKE_KEYWORD=x iǎo j ī q ì r én @小机器人
   ```
 
+Separate full keyword lines with `|` (embedded newlines also work). Each line
+has phoneme tokens, optional `:score` and `#threshold` overrides, then `@tag`.
+Any configured tag can wake the gateway; startup checks tokens against the
+model's `tokens.txt`. Per-line overrides win over the unchanged global defaults
+(`STACKCHAN_KWS_SCORE=7`, `STACKCHAN_KWS_THRESHOLD=0.05`). For example:
+
+```dotenv
+STACKCHAN_WAKE_PHRASE=小白
+# Optional: this is the built-in 小白 preset when no keyword is supplied.
+STACKCHAN_WAKE_KEYWORD="x iǎo b ái :1 #0.02 @小白|S UW1 B AA1 S UW1 B AA1 :10 #0.02 @小白小白"
+STACKCHAN_CHILD_PROFILE=1
+STACKCHAN_BUTTON_ONLY_LISTEN=1
+```
+
+小芽 parents should set the phrase together with child profile and button-only
+listen as above, keeping the BOOT button as fallback. Child profile does not
+select a wake phrase automatically. With a working detector, the button and
+wake word both open the listening window.
+
+The model supports Mandarin and English. Cantonese 小白 (`siu2 baak6`) is not
+recognised using Mandarin pinyin. The preset combines Mandarin 小白 with an
+English-phoneme approximation for Cantonese 小白小白. Ticket 04 measured roughly
+58–70% Cantonese hits on synthetic voices and zero false triggers in 43 minutes
+of synthetic negatives; Mandarin 小白 reached 98–99%. These are synthetic
+results, not a guarantee for children or real rooms. Prefer Mandarin “小白”,
+or say Cantonese “小白小白” close to the device. Keep BOOT / button-only mode as
+fallback and test with a real child voice using [tools/kws_eval](tools/kws_eval/README.md).
+
 Check a new wake word before relying on it: `kws_offline_repro.py` reads the
-same settings (`--voice` picks another macOS voice, `--wav` uses your own
+same settings (`--per-variant` reports each variant separately, `--voice` picks another macOS voice, `--wav` uses your own
 recording). Two or three syllables with clear consonants work best; if it
 triggers too rarely or too often, adjust `STACKCHAN_KWS_THRESHOLD` and
 `STACKCHAN_KWS_SCORE`.

@@ -4,7 +4,18 @@ import struct
 import sys
 from unittest.mock import MagicMock
 
+import pytest
+
 from stackchan_mcp.wake_gate import (
+    HEY_GROKI_WAKE_KEYWORD,
+    KWS_MODEL_NAME,
+    XIAOBAI_WAKE_KEYWORD,
+    WakeWordUnavailable,
+    _default_model_root,
+    _keyword_from_env,
+    keywords_file_body,
+    parse_keyword_variants,
+    validate_keyword_tokens,
     WAKE_KEYWORD,
     SherpaOnnxKeywordSpotter,
     WakeGate,
@@ -455,6 +466,7 @@ def test_sherpa_onnx_keyword_spotter_passes_keywords_score_and_threshold(monkeyp
         "joiner-epoch-13-avg-2-chunk-16-left-64.onnx",
     ):
         (model_dir / name).write_text("", encoding="utf-8")
+    _write_builtin_tokens(model_dir)
     SherpaOnnxKeywordSpotter(
         model_dir=model_dir,
         keywords_score=3.14,
@@ -511,6 +523,7 @@ def _fake_kws_model(monkeypatch, tmp_path):
         "joiner-epoch-13-avg-2-chunk-16-left-64.onnx",
     ):
         (model_dir / name).write_text("", encoding="utf-8")
+    _write_builtin_tokens(model_dir)
     return model_dir
 
 
@@ -574,3 +587,120 @@ def test_custom_wake_keyword_is_written_alone(monkeypatch) -> None:
     from stackchan_mcp.wake_gate import keywords_file_body
 
     assert keywords_file_body("HH EH1 L OW0 @hello") == "HH EH1 L OW0 @hello\n"
+
+
+@pytest.mark.parametrize("separator", ["|", "\n"])
+def test_parse_keyword_variants(separator):
+    variants = parse_keyword_variants(f"x iǎo b ái :1 #0.02 @小白{separator}S UW1 B AA1 @other")
+    assert variants[0].tokens == ("x", "iǎo", "b", "ái")
+    assert variants[0].score == 1
+    assert variants[0].threshold == 0.02
+    assert variants[0].tag == "小白"
+    assert variants[1].score is None
+    assert variants[1].threshold is None
+    assert variants[1].tag == "other"
+
+
+def test_parse_single_keyword():
+    variant, = parse_keyword_variants(WAKE_KEYWORD)
+    assert variant.line == WAKE_KEYWORD
+    assert variant.tokens == ("HH", "AY1", "G", "R", "AA1", "K")
+
+
+@pytest.mark.parametrize("raw", ["", "@tag", "x :bad @tag", "x #bad @tag", "x :nan @tag", "x @", "x", "x @a||b @b"])
+def test_malformed_keyword(raw):
+    with pytest.raises(ValueError, match="keyword variant"):
+        parse_keyword_variants(raw)
+
+
+def test_builtin_keyword_bodies():
+    assert keywords_file_body(WAKE_KEYWORD) == (
+        "HH AY1 G R AA1 K @hi_grok\nHH AY1 G R OW1 K @hi_grok_ow\n"
+        "HH AY1 G R AO1 K @hi_grok_ao\nHH AY1 G R AH1 K @hi_grok_ah\n"
+    )
+    assert keywords_file_body(HEY_GROKI_WAKE_KEYWORD) == (
+        "HH EY1 G R OW1 K IY0 @hey_groki\nHH EY1 G R AA1 K IY0 @hey_groki_aa\n"
+        "HH EY1 G R AO1 K IY0 @hey_groki_ao\nHH EY1 G R AH1 K IY0 @hey_groki_ah\n"
+    )
+    assert keywords_file_body(XIAOBAI_WAKE_KEYWORD) == (
+        "x iǎo b ái :1 #0.02 @小白\nS UW1 B AA1 S UW1 B AA1 :10 #0.02 @小白小白\n"
+    )
+
+
+def test_xiaobai_env_and_explicit_override(monkeypatch):
+    _clear_wake_env(monkeypatch)
+    assert _keyword_from_env() == WAKE_KEYWORD
+    monkeypatch.setenv("STACKCHAN_WAKE_PHRASE", "小白")
+    assert _keyword_from_env() == XIAOBAI_WAKE_KEYWORD
+    monkeypatch.setenv("STACKCHAN_WAKE_KEYWORD", "S UW1 @custom")
+    assert _keyword_from_env() == "S UW1 @custom"
+
+
+def test_validate_keyword_tokens():
+    variants = parse_keyword_variants(XIAOBAI_WAKE_KEYWORD)
+    tokens = {token for v in variants for token in v.tokens}
+    validate_keyword_tokens(variants, tokens)
+    with pytest.raises(WakeWordUnavailable, match="UW1") as exc:
+        validate_keyword_tokens(variants, tokens - {"UW1"})
+    assert variants[1].line in str(exc.value)
+
+
+def test_second_variant_matches_and_detect_records_tag(monkeypatch, tmp_path, caplog):
+    model = _fake_kws_model(monkeypatch, tmp_path)
+    (model / "tokens.txt").write_text("\n".join(f"{t} {i}" for i, t in enumerate(
+        {t for v in parse_keyword_variants(XIAOBAI_WAKE_KEYWORD) for t in v.tokens}
+    )), encoding="utf-8")
+    spotter = SherpaOnnxKeywordSpotter(model_dir=model, keyword=XIAOBAI_WAKE_KEYWORD, phrase="小白")
+    assert spotter.last_hit_tag is None
+    assert spotter._result_matches("小白小白")
+    assert not spotter._result_matches("unrelated")
+    spotter._spotter.is_ready.return_value = False
+    spotter._spotter.get_result.return_value = "小白小白"
+    with caplog.at_level("INFO"):
+        assert spotter.detect(_pcm(100))
+    assert spotter.last_hit_tag == "小白小白"
+    assert "小白小白" in caplog.text
+
+
+def test_xiaobai_real_model_tokens():
+    path = _default_model_root() / KWS_MODEL_NAME / "tokens.txt"
+    if not path.is_file():
+        pytest.skip("real KWS model not installed")
+    pytest.importorskip("sherpa_onnx")
+    tokens = {line.split()[0] for line in path.read_text(encoding="utf-8").splitlines() if line.split()}
+    validate_keyword_tokens(parse_keyword_variants(XIAOBAI_WAKE_KEYWORD), tokens)
+
+
+def _write_builtin_tokens(model_dir):
+    tokens = {t for keyword in (WAKE_KEYWORD, HEY_GROKI_WAKE_KEYWORD)
+              for v in parse_keyword_variants(keywords_file_body(keyword)) for t in v.tokens}
+    (model_dir / "tokens.txt").write_text("\n".join(f"{t} {i}" for i, t in enumerate(sorted(tokens))), encoding="utf-8")
+
+
+def test_token_validation_error_contains_path_and_logs_error(monkeypatch, tmp_path, caplog):
+    _clear_wake_env(monkeypatch)
+    model = _fake_kws_model(monkeypatch, tmp_path)
+    (model / "tokens.txt").write_text("HH 0\n", encoding="utf-8")
+    monkeypatch.setenv("STACKCHAN_KWS_MODEL_DIR", str(model))
+    monkeypatch.setenv("STACKCHAN_WAKE_WORD", "1")
+    monkeypatch.setenv("STACKCHAN_BUTTON_ONLY_LISTEN", "1")
+    gate = create_wake_gate_from_env()
+    assert gate.listening_mode == "button_only"
+    assert str(model / "tokens.txt") in caplog.text
+    assert "AY1" in caplog.text
+    assert "@hi_grok" in caplog.text
+    assert any(record.levelname == "ERROR" for record in caplog.records)
+
+
+def test_single_variant_replay_disables_builtin_expansion(monkeypatch, tmp_path):
+    model = _fake_kws_model(monkeypatch, tmp_path)
+    SherpaOnnxKeywordSpotter(model_dir=model, include_builtin_variants=False)
+    assert (model / "stackchan_keywords.txt").read_text(encoding="utf-8") == WAKE_KEYWORD + "\n"
+
+
+def test_custom_tag_independent_of_phrase():
+    spotter = SherpaOnnxKeywordSpotter.__new__(SherpaOnnxKeywordSpotter)
+    spotter._phrase = "小白"
+    spotter._variants = parse_keyword_variants("S UW1 @cantonese")
+    assert spotter._result_matches("cantonese")
+    assert not spotter._result_matches("unrelated")

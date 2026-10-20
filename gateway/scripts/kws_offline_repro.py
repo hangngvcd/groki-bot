@@ -22,6 +22,9 @@ from stackchan_mcp.wake_gate import (
     SherpaOnnxKeywordSpotter,
     _keyword_from_env,
     _phrase_from_env,
+    _model_dir_from_env,
+    keywords_file_body,
+    parse_keyword_variants,
 )
 
 
@@ -74,13 +77,17 @@ def detect_wake(
     pcm: bytes,
     *,
     chunk_ms: int,
+    keyword: str | None = None,
+    per_variant: bool = False,
     kws_score: float | None = None,
     kws_threshold: float | None = None,
 ) -> int | None:
     # Same wake word the gateway uses (STACKCHAN_WAKE_PHRASE / _KEYWORD).
-    spotter_kwargs: dict[str, float | str] = {
-        "keyword": _keyword_from_env(),
+    spotter_kwargs: dict[str, float | str | bool] = {
+        "keyword": keyword or _keyword_from_env(),
+        "model_dir": str(_model_dir_from_env()),
         "phrase": _phrase_from_env(),
+        "include_builtin_variants": not per_variant,
     }
     if kws_score is not None:
         spotter_kwargs["keywords_score"] = kws_score
@@ -90,12 +97,14 @@ def detect_wake(
     chunk_bytes = int(16_000 * 2 * chunk_ms / 1000)
     for idx, offset in enumerate(range(0, len(pcm), chunk_bytes)):
         if spotter.detect(pcm[offset : offset + chunk_bytes]):
+            print(f"hit tag={spotter.last_hit_tag!r}")
             return idx
     return None
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--per-variant", action="store_true")
     parser.add_argument("--wav", type=Path)
     parser.add_argument("--generate-say", action="store_true")
     parser.add_argument("--text", default=_phrase_from_env())
@@ -113,6 +122,8 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    if args.chunk_ms <= 0:
+        parser.error("--chunk-ms must be positive")
     if not args.wav and not args.generate_say:
         parser.error("pass --wav or --generate-say")
 
@@ -121,18 +132,25 @@ def main() -> int:
         # One second of trailing silence lets the streaming model flush the
         # last frames; without it a wake phrase at the very end is missed.
         pcm = _read_wav(wav_path) + b"\0" * 32_000
-        hit_at = detect_wake(
-            pcm,
-            chunk_ms=args.chunk_ms,
-            kws_score=args.kws_score,
-            kws_threshold=args.kws_threshold,
-        )
-
-    if hit_at is None:
-        print(f"miss: {args.text!r}")
-        return 1
-    print(f"hit: {args.text!r}, chunk={hit_at}")
-    return 0
+        variants = parse_keyword_variants(keywords_file_body(_keyword_from_env()))
+        for variant in variants:
+            score = variant.score if variant.score is not None else args.kws_score
+            threshold = variant.threshold if variant.threshold is not None else args.kws_threshold
+            print(
+                f"variant tag={variant.tag!r} tokens={' '.join(variant.tokens)} "
+                f"score={score if score is not None else 7} "
+                f"threshold={threshold if threshold is not None else 0.05}"
+            )
+        keywords = [v.line for v in variants] if args.per_variant else [_keyword_from_env()]
+        any_hit = False
+        for keyword in keywords:
+            hit_at = detect_wake(
+                pcm, chunk_ms=args.chunk_ms, keyword=keyword, per_variant=args.per_variant,
+                kws_score=args.kws_score, kws_threshold=args.kws_threshold,
+            )
+            any_hit |= hit_at is not None
+            print(f"{'hit' if hit_at is not None else 'miss'}: {keyword!r}, chunk={hit_at}")
+    return 0 if any_hit else 1
 
 
 if __name__ == "__main__":
