@@ -168,10 +168,7 @@ std::optional<avatar::Expression> parse_expression(const char* name) {
 // expression set. Direct names (thinking/confused/surprised/…) hit
 // parse_expression first; the rest collapse onto the closest face.
 // Unknown names yield nullopt and are ignored by the caller.
-std::optional<avatar::Expression> parse_emotion(const char* name) {
-#if CONFIG_STACKCHAN_COMPANION_FACE
-    return avatar::CompanionPolicy::parse_emotion(name != nullptr ? name : "");
-#else
+std::optional<avatar::Expression> parse_xiaozhi_emotion(const char* name) {
     if (name == nullptr) {
         return std::nullopt;
     }
@@ -199,6 +196,16 @@ std::optional<avatar::Expression> parse_emotion(const char* name) {
         return avatar::Expression::Neutral;
     }
     return std::nullopt;
+}
+
+std::optional<avatar::Expression> parse_emotion(const char* name) {
+#if CONFIG_STACKCHAN_COMPANION_FACE
+    // Companion face: keep the XiaoZhi alias mapping (laughing -> Excited,
+    // winking -> Happy, crying -> Sad, ...), then apply the firmware whitelist.
+    // Unknown names become Neutral instead of being ignored.
+    return avatar::CompanionPolicy::whitelist(parse_xiaozhi_emotion(name).value_or(avatar::Expression::Neutral));
+#else
+    return parse_xiaozhi_emotion(name);
 #endif
 }
 
