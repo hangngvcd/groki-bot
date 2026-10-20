@@ -203,6 +203,14 @@ tracking, camera capture, idle behavior, and demo reactions stay off even
 when their individual switches are on. `/capture` and `/track` are unavailable,
 camera MCP tools are hidden and refused, and tracking cannot be enabled by a tool.
 
+Device emotions are limited to Neutral, Happy, Excited, Curious, Thinking,
+Affection, Surprised, and Sad (for empathy only). Other expressions, including
+Angry, Bored, and Doubt, become Neutral; wire names remain lowercase. XiaoZhi
+aliases that the firmware maps onto allowed faces (for example `winking`,
+`laughing`, `crying`, `shocked`) pass through; `embarrassed`, `confused` and
+`sleepy` become Neutral.
+With child profile off, existing emotion mappings are unchanged.
+
 Voice startup failure closes the device's existing WebSocket with code 1011
 before server hello, so the robot can show a disconnected state. No other
 backend is started. Unknown backend names and `xiaozhi` cloud pass-through

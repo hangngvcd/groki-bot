@@ -16,22 +16,25 @@ import websockets
 from aiohttp.test_utils import TestClient, TestServer
 from mcp.types import CallToolRequest, ListToolsRequest
 
-from stackchan_mcp import cli, gateway as gateway_module, voice_tools
+from stackchan_mcp import audio_stream, cli, gateway as gateway_module, voice_tools
 from stackchan_mcp.capture_server import create_capture_app
 from stackchan_mcp.cloud_proxy import CloudConnectionInfo
 from stackchan_mcp.demo_reactions import DemoReactions
+from stackchan_mcp.esp32_client import ESP32Connection
 from stackchan_mcp.gbot_voice_bridge import GbotVoiceBridge
 from stackchan_mcp.gbot_voice_proxy import GbotVoiceProxy
 from stackchan_mcp.gemini_live_bridge import build_live_config
 from stackchan_mcp.idle_behavior import IdleBehavior
 from stackchan_mcp.stdio_server import create_server
 from stackchan_mcp.touch_bridge import TouchEvent
+from stackchan_mcp.wake_gate import WakeGate
 from test_gemini_voice_proxy import (
     FakeBridge,
     FakeCodec,
     FakeEdgeTTSProvider,
     FakeVoiceOnlyESP32,
 )
+from test_wake_gate import FakeClock, FakeKeywordSpotter
 
 
 RESTRICTED_FLAGS = (
@@ -425,3 +428,204 @@ def test_profile_defaults_off(monkeypatch):
     monkeypatch.setenv("STACKCHAN_GEMINI_DEVICE_TOOLS", "1")
     names = {entry["name"] for entry in voice_tools.VoiceToolExecutor().declarations()}
     assert {"get_current_datetime", "move_head", "open_app"} <= names
+
+
+class EmotionBridge(FakeBridge):
+    async def reply(self, face):
+        self.current_turn_emotion_face = face
+        await self.on_audio(b"fixture audio")
+        await self.on_turn_complete()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("profile", ["0", "1"])
+@pytest.mark.parametrize("channel", ["manager", "socket", "manager_error"])
+async def test_gbot_bridge_emotions_received_by_device(monkeypatch, profile, channel):
+    """Seam G: drive provider replies and observe only device-bound frames."""
+    monkeypatch.setenv("STACKCHAN_CHILD_PROFILE", profile)
+    received = asyncio.Queue()
+
+    async def receive(frame):
+        if isinstance(frame, str):
+            message = json.loads(frame)
+            if message.get("type") == "llm":
+                await received.put(message)
+
+    class Device(FakeVoiceOnlyESP32):
+        async def send_emotion(self, emotion, **kwargs):
+            if channel == "manager_error":
+                return None, {"message": "fixture send failure"}
+            await receive(json.dumps({"type": "llm", "emotion": emotion}))
+            return {"ok": True}, None
+
+    device = Device()
+    if channel == "socket":
+        device.send_emotion = None
+    bridges = []
+
+    def bridge_factory(**kwargs):
+        bridge = EmotionBridge(**kwargs)
+        bridges.append(bridge)
+        return bridge
+
+    proxy = GbotVoiceProxy(
+        esp32_ref=lambda: device,
+        bridge_factory=bridge_factory,
+        codec_factory=FakeCodec,
+        edge_tts_provider_factory=FakeEdgeTTSProvider,
+        wake_gate_factory=lambda: None,
+        device_tts_start_delay_s=0,
+        device_prebuffer_ms=0,
+        device_frame_pace_ms=0,
+    )
+    try:
+        assert await proxy.start(
+            CloudConnectionInfo("wss://unused.invalid", "", "1", "device", "client"),
+            {}, receive,
+        )
+        for face, legacy, child_emotion in (
+            ("Neutral", "neutral", "neutral"),
+            (" Happy ", "happy", "happy"),
+            ("Excited", "neutral", "excited"),
+            ("Curious", "neutral", "curious"),
+            ("Thinking", "thinking", "thinking"),
+            ("Affection", "neutral", "affection"),
+            ("Surprised", "surprised", "surprised"),
+            ("Sad", "sad", "sad"),
+            ("Angry", "angry", "neutral"),
+            ("Bored", "neutral", "neutral"),
+            ("Doubt", "doubt", "neutral"),
+            ("sleeping", "sleepy", "neutral"),
+            ("embarrassed", "embarrassed", "neutral"),
+            ("winking", "winking", "winking"),
+            ("confused", "confused", "neutral"),
+            ("unknown", "neutral", "neutral"),
+        ):
+            await bridges[0].reply(face)
+            assert await asyncio.wait_for(received.get(), 1) == {
+                "type": "llm",
+                "emotion": child_emotion if profile == "1" else legacy,
+            }
+            # Each completed reply also restores the idle face.
+            assert await asyncio.wait_for(received.get(), 1) == {
+                "type": "llm", "emotion": "neutral",
+            }
+    finally:
+        await proxy.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("profile", ["0", "1"])
+async def test_direct_emotion_and_avatar_device_frames(monkeypatch, profile):
+    monkeypatch.setenv("STACKCHAN_CHILD_PROFILE", profile)
+    messages = []
+
+    class DeviceSocket:
+        async def send(self, frame):
+            message = json.loads(frame)
+            messages.append(message)
+            if message["type"] == "mcp":
+                connection.handle_response({
+                    "id": message["payload"]["id"], "result": {"ok": True},
+                })
+
+    connection = ESP32Connection(DeviceSocket(), "fixture")
+    for emotion, child_emotion in (
+        ("Angry", "neutral"), ("Bored", "neutral"), ("Doubt", "neutral"),
+        (" Happy ", "happy"), ("Excited", "excited"), ("Curious", "curious"),
+        ("Affection", "affection"), ("Sad", "sad"), ("unknown", "neutral"),
+    ):
+        expected = child_emotion if profile == "1" else emotion
+        result = await connection.send_emotion(emotion)
+        assert result["emotion"] == expected
+        assert messages[-1] == {
+            "session_id": "fixture", "type": "llm", "emotion": expected,
+        }
+        arguments = {"face": emotion}
+        _, error = await connection.call_tool("self.display.set_avatar", arguments)
+        assert error is None
+        assert messages[-1]["payload"]["params"] == {
+            "name": "self.display.set_avatar", "arguments": {"face": expected},
+        }
+        assert arguments == {"face": emotion}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("profile", ["0", "1"])
+@pytest.mark.parametrize("avatar", ["absent", "success", "failure"])
+@pytest.mark.parametrize("emotion", [" Angry ", "Thinking"])
+async def test_local_speak_emotion_reaches_device_safely(
+    monkeypatch, profile, avatar, emotion
+):
+    monkeypatch.setenv("STACKCHAN_CHILD_PROFILE", profile)
+    monkeypatch.setattr(audio_stream, "synthesize_speech", AsyncMock(return_value=
+        audio_stream.SynthesizedSpeech(opus_frames=[b"fixture"], provider="fake")
+    ))
+    sent = []
+
+    async def receive(frame):
+        if isinstance(frame, str):
+            sent.append(json.loads(frame))
+
+    set_avatar = None if avatar == "absent" else AsyncMock(
+        side_effect=RuntimeError("fixture avatar failure") if avatar == "failure" else None
+    )
+    result = await audio_stream.speak_text(
+        receive, "fixture speech", emotion=emotion, set_avatar=set_avatar,
+    )
+    assert result.ok and result.frames_sent == 1
+    expected = emotion if profile == "0" else (
+        "thinking" if emotion == "Thinking" else "neutral"
+    )
+    if set_avatar is not None:
+        set_avatar.assert_awaited_once_with(expected)
+    assert [message for message in sent if message["type"] == "llm"] == (
+        [] if avatar == "success" else [{"type": "llm", "emotion": expected}]
+    )
+
+
+@pytest.mark.asyncio
+async def test_child_express_emotion_tool_cannot_dispatch(child):
+    device = FakeVoiceOnlyESP32()
+    executor = voice_tools.VoiceToolExecutor(esp32=device)
+    try:
+        assert (await executor.execute(
+            "express_emotion", {"mood": "curious", "intensity": "high"}
+        ))["ok"] is False
+        assert device.calls == []
+        assert device.emotions == []
+    finally:
+        await executor.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("profile", ["0", "1"])
+async def test_wake_listening_and_idle_emotions(monkeypatch, profile):
+    monkeypatch.setenv("STACKCHAN_CHILD_PROFILE", profile)
+    clock = FakeClock()
+    gate = WakeGate(kws=FakeKeywordSpotter([True]), clock=clock, idle_s=1)
+    device = FakeVoiceOnlyESP32()
+    proxy = GbotVoiceProxy(
+        esp32_ref=lambda: device,
+        bridge_factory=FakeBridge,
+        codec_factory=FakeCodec,
+        edge_tts_provider_factory=FakeEdgeTTSProvider,
+        wake_gate_factory=lambda: gate,
+        wake_confirm_hold_s=0,
+    )
+    try:
+        assert await proxy.start(
+            CloudConnectionInfo("wss://unused.invalid", "", "1", "device", "client"),
+            {}, AsyncMock(),
+        )
+        await proxy.send_device_binary(b"wake")
+        assert device.emotions == [
+            "winking", "neutral",
+        ]
+        clock.advance(2)
+        await proxy.send_device_binary(b"silence")
+        assert device.emotions == [
+            "winking", "neutral", "neutral",
+        ]
+    finally:
+        await proxy.stop()

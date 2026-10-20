@@ -32,6 +32,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import child_profile
 from .cloud_proxy import CloudConnectionInfo
 from .debug_status import DebugStatus, get_debug_status
 from .device_emotion import (
@@ -1187,6 +1188,8 @@ class GeminiVoiceProxy:
 
     async def _set_avatar_safe(self, face: str) -> None:
         """USB-first, WS-fallback avatar dispatch. Never raises."""
+        if child_profile.enabled():
+            face = face_to_device_emotion(face)
         args = {"face": face}
         usb = self.usb_transport
         if usb is not None and getattr(usb, "connected", False):
@@ -1215,6 +1218,7 @@ class GeminiVoiceProxy:
 
     async def _send_device_emotion_safe(self, emotion: str) -> None:
         """Best-effort ``llm.emotion`` expression dispatch. Never raises."""
+        emotion = child_profile.filter_emotion(emotion)
         esp32 = self.esp32_ref() if self.esp32_ref is not None else None
         if esp32 is not None and getattr(esp32, "device_connected", False):
             send_emotion = getattr(esp32, "send_emotion", None)

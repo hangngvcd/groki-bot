@@ -15,6 +15,23 @@ VOICE_TOOL_NAMES = frozenset(
     }
 )
 
+# Whitelisted faces: Neutral, Happy, Excited, Curious, Thinking, Affection,
+# Surprised, Sad (empathy only). Allowed wire names are those faces plus the
+# XiaoZhi aliases the firmware collapses onto them (main/conversation_task.cpp
+# parse_emotion). Everything else (angry, bored, doubt, embarrassed->Doubt,
+# confused, sleepy, ...) is sent as neutral.
+EMOTION_NAMES = frozenset(
+    {
+        "neutral", "happy", "excited", "curious", "thinking", "affection", "surprised", "sad",
+        # firmware aliases -> Excited / Happy / Sad / Surprised / Neutral
+        "laughing", "funny",
+        "loving", "delicious", "kissy", "winking", "silly",
+        "crying",
+        "shocked",
+        "relaxed", "cool", "confident",
+    }
+)
+
 # Defaults match the features' existing environment switches. Report defaults too:
 # a clean environment otherwise autostarts the Mac camera and offers ask_claude.
 _DISABLED_SETTINGS = {
@@ -40,6 +57,14 @@ def enabled() -> bool:
 
 def voice_tool_allowed(name: str) -> bool:
     return not enabled() or name in VOICE_TOOL_NAMES
+
+
+def filter_emotion(emotion: str) -> str:
+    """Restrict device expressions in child mode; preserve the exact input otherwise."""
+    if not enabled():
+        return emotion
+    value = str(emotion or "").strip().lower()
+    return value if value in EMOTION_NAMES else "neutral"
 
 
 def camera_tool_blocked(name: str) -> bool:

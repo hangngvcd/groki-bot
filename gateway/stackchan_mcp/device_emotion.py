@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from . import child_profile
+
 LISTENING_EMOTION = "neutral"
 WAKE_CONFIRM_EMOTION = "winking"
 IDLE_EMOTION = "neutral"
@@ -55,6 +57,8 @@ FACE_TO_DEVICE_EMOTION = {
 def normalize_device_emotion(emotion: str | None, *, default: str = IDLE_EMOTION) -> str:
     """Return a firmware-supported emotion name."""
     value = str(emotion or "").strip().lower()
+    if child_profile.enabled():
+        return child_profile.filter_emotion(value)
     if value in SUPPORTED_DEVICE_EMOTIONS:
         return value
     return default
@@ -63,4 +67,6 @@ def normalize_device_emotion(emotion: str | None, *, default: str = IDLE_EMOTION
 def face_to_device_emotion(face: str | None) -> str:
     """Map gateway avatar names onto firmware-supported ``llm.emotion`` names."""
     value = str(face or "").strip().lower()
-    return FACE_TO_DEVICE_EMOTION.get(value, normalize_device_emotion(value))
+    return child_profile.filter_emotion(
+        FACE_TO_DEVICE_EMOTION.get(value, normalize_device_emotion(value))
+    )

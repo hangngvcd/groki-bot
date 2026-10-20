@@ -17,6 +17,7 @@ from typing import Any
 
 import websockets
 
+from . import child_profile
 from .debug_status import DebugStatus, get_debug_status
 
 logger = logging.getLogger(__name__)
@@ -210,7 +211,7 @@ class CloudProxy:
             self._status.on_tts_state(True, source="xiaozhi_request")
             try:
                 if emotion and self._send_to_device is not None:
-                    await self._send_to_device(json.dumps({"type": "llm", "emotion": emotion}, ensure_ascii=False))
+                    await self._forward_cloud_json({"type": "llm", "emotion": emotion})
                 await self._send_cloud(
                     json.dumps(
                         {"session_id": session_id, "type": "listen", "state": "start", "mode": "auto"},
@@ -359,6 +360,8 @@ class CloudProxy:
     async def _forward_cloud_json(self, message: dict[str, Any]) -> None:
         if self._send_to_device is None:
             return
+        if child_profile.enabled() and message.get("type") == "llm" and "emotion" in message:
+            message = {**message, "emotion": child_profile.filter_emotion(message["emotion"])}
         await self._send_to_device(json.dumps(message, ensure_ascii=False))
 
     async def _forward_cloud_binary(self, data: bytes) -> None:

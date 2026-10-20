@@ -159,6 +159,11 @@ class ESP32Connection:
         self, name: str, arguments: dict[str, Any]
     ) -> tuple[Any, dict[str, Any] | None]:
         """Call a tool on ESP32."""
+        if child_profile.enabled() and name == "self.display.set_avatar":
+            arguments = {
+                **arguments,
+                "face": child_profile.filter_emotion(arguments.get("face", "")),
+            }
         if not self.mcp_supported:
             return None, {
                 "code": -32000,
@@ -172,6 +177,7 @@ class ESP32Connection:
         """Send a XiaoZhi ``llm.emotion`` message over the live WebSocket."""
         if not self._connected:
             raise ConnectionError("ESP32 not connected")
+        emotion = child_profile.filter_emotion(emotion)
         message = {
             "session_id": self.session_id,
             "type": "llm",

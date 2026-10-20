@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Any, Iterable
 
 import aiohttp
 
+from . import child_profile
+
 
 if TYPE_CHECKING:
     from .esp32_client import ESP32Manager
@@ -206,14 +208,15 @@ async def speak_text(
 
     started = False
     try:
+        device_emotion = child_profile.filter_emotion(emotion) if emotion else emotion
         if emotion and set_avatar is not None:
             try:
-                await set_avatar(emotion)
+                await set_avatar(device_emotion)
             except Exception as exc:
                 logger.warning("set_avatar(%s) failed, falling back to llm emotion: %s", emotion, exc)
-                await send_to_device(json.dumps({"type": "llm", "emotion": emotion}, ensure_ascii=False))
+                await send_to_device(json.dumps({"type": "llm", "emotion": device_emotion}, ensure_ascii=False))
         elif emotion:
-            await send_to_device(json.dumps({"type": "llm", "emotion": emotion}, ensure_ascii=False))
+            await send_to_device(json.dumps({"type": "llm", "emotion": device_emotion}, ensure_ascii=False))
         await send_to_device(json.dumps({"type": "tts", "state": "start"}, ensure_ascii=False))
         started = True
         await send_to_device(
