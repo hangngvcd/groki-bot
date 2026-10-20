@@ -7,6 +7,14 @@
 
 menu "Stack-chan board"
 
+    config STACKCHAN_BOARD_SPOTPEAR_128CAM
+        bool "SpotPear ESP32-S3 1.28-CAM board skeleton"
+        default n
+        help
+            Use the schematic pin map and a manually configured GC9A01A,
+            bypassing M5 board autodetection. Audio and BOOT input await ticket 14.
+
+
     config STACKCHAN_SERVO_ENABLED
         bool "Enable SCS servo bus and head motion"
         default y

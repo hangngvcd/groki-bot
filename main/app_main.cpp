@@ -261,7 +261,9 @@ extern "C" void app_main()
     // any LED / PY32 access in the rest of app_main so the snapshot reflects
     // the post-corruption state we want to investigate, not a fresh-write
     // state we created ourselves.
-    stackchan::app::dump_internal_i2c_registers();
+    if (board.kind() != stackchan::board::BoardKind::SpotPear128Cam) {
+        stackchan::app::dump_internal_i2c_registers();
+    }
 
     // NVS init + config load — moved ahead of the camera init so the ASR
     // mode can gate the (internal/DMA-RAM-hungry) DVP camera off. ASR
@@ -329,7 +331,8 @@ extern "C" void app_main()
     //   Auto         → codec_present ? module : internal
     //   Internal     → internal even if codec_present
     //   ModuleAudio  → module if codec_present, else warn and use internal
-    const bool codec_present = stackchan::board::es8388::probe();
+    const bool codec_present = board.kind() != stackchan::board::BoardKind::SpotPear128Cam &&
+                               stackchan::board::es8388::probe();
     const bool effective_audio_module =
         codec_present && (cfg.audio_output == stackchan::config::AudioOutput::Auto ||
                           cfg.audio_output == stackchan::config::AudioOutput::ModuleAudio);
@@ -369,7 +372,8 @@ extern "C" void app_main()
     // the same M-BUS I2C as the codec but doesn't depend on it — useful for
     // bisecting "codec didn't probe but MCU does" cases (jumper / power
     // wiring issue on the codec side specifically).
-    if (m5::In_I2C.scanID(stackchan::board::es8388::kMcuI2cAddress, 100'000)) {
+    if (board.kind() != stackchan::board::BoardKind::SpotPear128Cam &&
+        m5::In_I2C.scanID(stackchan::board::es8388::kMcuI2cAddress, 100'000)) {
         ESP_LOGI(kTag, "Module Audio MCU ACK at 0x%02X — running LED diag",
                  stackchan::board::es8388::kMcuI2cAddress);
         (void)stackchan::board::es8388::diagnose_rgb_pattern();

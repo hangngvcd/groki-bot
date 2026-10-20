@@ -112,3 +112,5 @@ The `minimal-firmware` job in `.github/workflows/host-tests.yml` runs this build
 with ESP-IDF 5.5.4 and Node.js and records the app image size in the job summary.
 When changing defaults, recreate the build directory or use `set-target` to
 regenerate its `sdkconfig`; IDF preserves existing values on ordinary rebuilds.
+
+SpotPear ESP32-S3 1.28-CAM skeleton: `make build BOARD=spotpear128cam`. This selects 16 MB flash, 8 MB Octal PSRAM, a manual GC9A01A panel, and the companion face policy. Audio and BOOT input bring-up follow in ticket 14; camera, servos, head touch and LEDs are disabled.

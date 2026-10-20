@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: BSL-1.0
 
 #include "board/board.hpp"
+#if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
+#include "board/spotpear_128cam_pins.hpp"
+#include <lgfx/v1/panel/Panel_GC9A01.hpp>
+#endif
 
 #include <memory>
 #include <optional>
@@ -42,7 +46,7 @@ public:
         // path can come back via a separate accessor without disturbing
         // this one. StopWatch (C152) has no nekomimi wiring at all — leave
         // led_ as nullptr so app_main / led_task null-check naturally.
-        if (kind_ == BoardKind::StopWatch) {
+        if (kind_ == BoardKind::StopWatch || kind_ == BoardKind::SpotPear128Cam) {
             return;
         }
         const int gpio = (kind_ == BoardKind::AtomNyan)
@@ -69,6 +73,53 @@ private:
 
 tl::expected<Board, Error> Board::begin()
 {
+#if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
+    {
+        // M5GFX::init_impl returns early for a known board ID; assigning a fake
+        // M5 ID would still send M5Unified through _check_boardtype/_setup_pinmap/
+        // _setup_i2c. Instead init(Panel_Device*) directly invokes LGFX_Device's
+        // implementation on M5.Display, bypassing autodetect entirely. Do NOT call
+        // M5.begin(): it probes unrelated GPIOs and configures M5 power/I2C chips
+        // (and raises GPIO46, harmless PA enable here). Static objects outlive Display.
+        // Risks: panel orientation/backlight polarity need hardware confirmation.
+        // TODO(ticket 14): initialize ES8311 + ES7210 registers and shared I2S,
+        // PA enable and BOOT-to-listen. M5.BtnA/Speaker/Mic remain default inert
+        // objects (audio data pins remain disabled), with no M5 pin map or I2C bus installed.
+        namespace pins = spotpear_128cam;
+        static lgfx::Bus_SPI bus;
+        static lgfx::Panel_GC9A01 panel;
+        static lgfx::Light_PWM light;
+        auto bus_cfg = bus.config();
+        bus_cfg.spi_host = SPI2_HOST;
+        bus_cfg.pin_sclk = pins::lcd_sclk;
+        bus_cfg.pin_mosi = pins::lcd_mosi;
+        bus_cfg.pin_miso = pins::lcd_miso;
+        bus_cfg.pin_dc = pins::lcd_dc;
+        bus.config(bus_cfg);
+        panel.setBus(&bus);
+        auto panel_cfg = panel.config();
+        panel_cfg.pin_cs = pins::lcd_cs;
+        panel_cfg.pin_rst = pins::lcd_rst;
+        panel_cfg.panel_width = panel_cfg.memory_width = pins::lcd_width;
+        panel_cfg.panel_height = panel_cfg.memory_height = pins::lcd_height;
+        panel_cfg.offset_x = panel_cfg.offset_y = 0;
+        // Keep Panel_GC9A01's default inversion.
+        panel.config(panel_cfg);
+        auto light_cfg = light.config();
+        light_cfg.pin_bl = pins::lcd_backlight;
+        light_cfg.invert = true; // Guessed polarity: R78/R79 assembly option; verify in ticket 14.
+        light.config(light_cfg);
+        panel.setLight(&light);
+        if (!M5.Display.init(&panel)) return tl::unexpected{Error::DisplayInit};
+        M5.Display.setRotation(0);
+        M5.Display.setBrightness(128);
+        Board board;
+        board.impl_ = std::make_shared<Impl>(BoardKind::SpotPear128Cam,
+                                           std::optional<Py32Expander>{}, std::optional<Si12tTouch>{});
+        ESP_LOGI(kTag, "board initialized: kind=SpotPear128Cam (240x240 GC9A01A, skeleton; audio/input TODO ticket 14)");
+        return board;
+    }
+#endif
     auto cfg = M5.config();
     // Always-on Atomic ECHO BASE codec hint. M5Unified only consults this flag
     // inside the AtomS3R-family case branch (M5Unified.cpp:2113), so it's a
@@ -248,6 +299,10 @@ BoardProfile profile_for(BoardKind kind) noexcept
     case BoardKind::AtomS3:
         p.button_overlay_ui = true; // 128×128, no LCD touch → atom_status
         break;
+    case BoardKind::SpotPear128Cam:
+        p.circular_display = true;
+        p.button_overlay_ui = true; // No touch; BOOT input wiring follows in ticket 14.
+        break;
     case BoardKind::StopWatch:
         p.speaker_magnification = 16; // ES8311 → AW8737A input attenuator
         p.speaker_base_volume = 255;  // weak downstream path, full scale
@@ -266,7 +321,8 @@ ServoBusConfig Board::servo_bus_config() const noexcept
 {
     if (impl_->kind() == BoardKind::AtomNyan ||
         impl_->kind() == BoardKind::AtomS3 ||
-        impl_->kind() == BoardKind::StopWatch) {
+        impl_->kind() == BoardKind::StopWatch ||
+        impl_->kind() == BoardKind::SpotPear128Cam) {
         // No on-board servo bus on these variants — the servo task is not
         // started. Return a syntactically valid but inert config so callers
         // that read this defensively don't see junk. (StopWatch *can* drive
@@ -289,6 +345,7 @@ ServoBusConfig Board::servo_bus_config() const noexcept
 
 bool Board::has_battery() const noexcept
 {
+    // TODO(ticket 14): SpotPear GPIO1 ADC divider/curve unverified; expose no battery.
     // M5 base: INA226. StopWatch: M5PM1 PMIC (M5Unified `M5.Power` API
     // surfaces battery voltage / state-of-charge directly). Other variants
     // have no battery telemetry path we expose here.

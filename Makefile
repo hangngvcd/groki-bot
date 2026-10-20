@@ -16,6 +16,8 @@ TARGET      ?= esp32s3
 #              M5IOE1 IO expander + RX8130CE RTC + BMI270 IMU + 振動モータ.
 #              No PY32 / no Si12T / no nekomimi LED 配線. Servo I/O は背面
 #              2.54 mm バス経由のオプション (Phase 3).
+#   spotpear128cam — SpotPear ESP32-S3 1.28-CAM: 240x240 round GC9A01A skeleton,
+#                    16 MB flash, 8 MB Octal PSRAM; hardware bring-up in ticket 14.
 # Default cores3 keeps `make build` backward-compatible.
 BOARD       ?= cores3
 BUILD_DIR    = build-$(BOARD)

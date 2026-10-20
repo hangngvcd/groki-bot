@@ -210,7 +210,7 @@ void worker(void* arg)
 const char* board_slug(std::uint8_t board_kind)
 {
     // Order MUST match board::BoardKind: M5Base=0, TakaoBase=1, AtomNyan=2,
-    // AtomS3=3, StopWatch=4. M5Base and TakaoBase both flash the cores3
+    // AtomS3=3, StopWatch=4, SpotPear128Cam=5. M5Base and TakaoBase both flash the cores3
     // build (same ESP32-S3 + servo bus pinning is a runtime detection
     // detail, not a per-binary one).
     switch (board_kind) {
@@ -219,6 +219,7 @@ const char* board_slug(std::uint8_t board_kind)
     case 2:  return "atoms3r";   // AtomNyan
     case 3:  return "atoms3";    // AtomS3 slim
     case 4:  return "stopwatch"; // M5 StopWatch C152
+    case 5:  return "spotpear128cam"; // SpotPear ESP32-S3 1.28-CAM
     default: return nullptr;
     }
 }

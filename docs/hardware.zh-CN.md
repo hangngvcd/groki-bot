@@ -36,6 +36,7 @@ Takao Base 使用同一份 `cores3` 固件：舵机走 Port A（TX GPIO 2 / RX G
 | AtomS3R + Atomic ECHO BASE | `atoms3r` | 128×128 LCD | 无舵机。8 MB Octal PSRAM，8 MB Flash，ES8311，BtnA 切换 UI / AP |
 | AtomS3（无 PSRAM）+ ECHO BASE | `atoms3` | 128×128 LCD | 轻量配置。无对话 / 无 BLE 音频 / 无 RTP |
 | M5 StopWatch (C152) | `stopwatch` | 466×466 圆形 AMOLED + 触摸 | 无舵机。8 MB Octal PSRAM，16 MB Flash，触摸视线跟随，ES8311 |
+| SpotPear ESP32-S3 1.28-CAM | `spotpear128cam` | 240x240 round GC9A01A | Skeleton: builds in CI; hardware bring-up in ticket 14; no servos/touch/LED; camera off |
 
 板卡在启动时检测，经 `set_board_kind()` 反映到 UI 与功能开关。构建：`make build BOARD=<代号>`（默认 `cores3`）。不同板卡的 PSRAM 模式在链接期锁定，固件不能混刷。
 
@@ -56,3 +57,9 @@ Takao Base 使用同一份 `cores3` 固件：舵机走 Port A（TX GPIO 2 / RX G
 | BLE | NimBLE，Just Works 配对；应用层 X25519 + AES-256-GCM；可选口令 |
 | Wi-Fi 设置 | 连接后 HTTP 80 端口提供 `settings_wifi.html`，mDNS `stackchan-XXXXXX.local` |
 | SoftAP | SSID `Stackchan-XXXXXX` 加 WPA2；LCD 显示 Wi-Fi 二维码；DNS 劫持加 HTTP 404 兜底打开 captive portal |
+
+## SpotPear ESP32-S3 1.28-CAM pin map
+
+- [ ] Parent confirmation: pending
+
+See the [pin map and source confidence labels](hardware.md#spotpear-esp32-s3-128-cam-pin-map). Audio, BOOT input and battery calibration await ticket 14.

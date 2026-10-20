@@ -57,8 +57,10 @@ jobs:
       # this job and skip the release.
       fail-fast: false
       matrix:
-        board: [cores3, atoms3r, atoms3, stopwatch]
+        board: [cores3, atoms3r, atoms3, stopwatch, spotpear128cam]
         include:
+          - board: spotpear128cam
+            allow_failure: true
           - board: atoms3r
             allow_failure: true
           - board: atoms3
@@ -260,6 +262,7 @@ jobs:
             firmware-${{ steps.version.outputs.version }}-atoms3r.zip
             firmware-${{ steps.version.outputs.version }}-atoms3.zip
             firmware-${{ steps.version.outputs.version }}-stopwatch.zip
+            firmware-${{ steps.version.outputs.version }}-spotpear128cam.zip
           body: |
             # Groki Bot firmware ${{ steps.version.outputs.version }}
 
@@ -270,6 +273,8 @@ jobs:
             - **M5Stack StopWatch (C152)**: `firmware-${{ steps.version.outputs.version }}-stopwatch.zip` (16 MB flash, Octal PSRAM)
             - **AtomS3R + Atomic ECHO BASE**: `firmware-${{ steps.version.outputs.version }}-atoms3r.zip` (8 MB flash, Octal PSRAM), attached only if this build passed
             - **AtomS3 + Atomic ECHO BASE, slim profile**: `firmware-${{ steps.version.outputs.version }}-atoms3.zip` (8 MB flash, no PSRAM), attached only if this build passed
+
+            - **SpotPear ESP32-S3 1.28-CAM skeleton**: `firmware-${{ steps.version.outputs.version }}-spotpear128cam.zip` (16 MB flash, Octal PSRAM), attached only if this build passed; hardware bring-up in ticket 14
 
             ## Install
 
