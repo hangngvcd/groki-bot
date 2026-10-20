@@ -3,8 +3,16 @@
 # Phase 4 — at which point this Kconfig surface goes away.
 menu "Telegram Bot (Stack-chan)"
 
+    config STACKCHAN_TELEGRAM_ENABLED
+        bool "Enable Telegram client"
+        default y
+        help
+            Compile the Telegram HTTPS client. The one-shot startup probe
+            remains separately controlled by TELEGRAM_PHASE1_ENABLED.
+
     config TELEGRAM_PHASE1_ENABLED
         bool "Enable Phase 1 one-shot getUpdates probe"
+        depends on STACKCHAN_TELEGRAM_ENABLED
         default n
         help
             When enabled, app_main spawns a one-shot task that connects to

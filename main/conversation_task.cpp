@@ -34,7 +34,10 @@
 #include "utf8.hpp"
 #include "wifi_sta.hpp"
 
+#include <sdkconfig.h>
+#if CONFIG_STACKCHAN_JTTS_ENABLED
 #include <jtts/jtts.hpp>
+#endif
 
 namespace stackchan::app {
 
@@ -691,7 +694,12 @@ private:
         //  - a firm touch on the head sensor (legacy). firmly_touched() guards
         //    against stray Level-1 RFI blips that would clobber every reply.
         if (state_.barge_in_request.exchange(false, std::memory_order_relaxed) ||
-            (touch_ != nullptr && touch_->read().firmly_touched())) {
+#if CONFIG_STACKCHAN_HEAD_TOUCH_ENABLED
+            (touch_ != nullptr && touch_->read().firmly_touched())
+#else
+            false
+#endif
+        ) {
             barge_in();
             return;
         }
@@ -1145,6 +1153,7 @@ private:
     // same internal-RAM ring used by reply playback) to dodge PSRAM contention.
     std::string handle_speak_katakoto(const std::string& args)
     {
+#if CONFIG_STACKCHAN_JTTS_ENABLED
         cJSON* root = cJSON_Parse(args.c_str());
         if (root == nullptr) {
             return R"({"ok":false,"error":"bad arguments"})";
@@ -1238,6 +1247,9 @@ private:
         vTaskDelay(kI2sSettle);
         state_.face.mouth_open.store(0.0f, std::memory_order_relaxed);
         return R"({"ok":true})";
+#else
+        return R"({"ok":false,"error":"Japanese TTS disabled"})";
+#endif
     }
 
     std::string handle_set_head_pose(const std::string& args)

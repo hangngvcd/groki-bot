@@ -1,13 +1,10 @@
 set(_main_priv_reqs
     board
-    scs_servo
     avatar
     groki_motion
     conversation
     config_service
     wifi_config_service
-    jtts
-    telegram
     espressif__esp_audio_codec
     espressif__esp-sr
     json
@@ -22,16 +19,12 @@ set(_main_priv_reqs
     esp_event
     app_update
     lwip
-    espnow_poc
-    espnow_remote
 )
 
-# Slim-build per-source gates. The PRIV_REQUIRES list above can't be made
-# conditional on Kconfig (ESP-IDF's early-expansion phase evaluates REQUIRES
-# before sdkconfig.h exists; the `if(CONFIG_*)` is dead at that point) — so
-# we always link the conversation / audio_stream / wifi_audio components and
-# just skip the per-file SRCS here, which trims out only the main-side glue
-# (~10 KB) on the no-PSRAM build.
+# Optional dependencies are added after registration with
+# idf_component_optional_requires: Kconfig is unavailable during IDF's early
+# requirements pass. All project components are discovered by the root build;
+# their own source gates make disabled components header-only interfaces.
 set(_main_srcs
     "ap_screen.cpp"
     "app_main.cpp"
@@ -60,6 +53,18 @@ set(_main_srcs
     "hmm_voice.cpp"
     "wifi_sta.cpp"
 )
+if(NOT CONFIG_STACKCHAN_SERVO_ENABLED)
+    list(REMOVE_ITEM _main_srcs "servo_task.cpp")
+endif()
+if(NOT CONFIG_STACKCHAN_LED_ENABLED)
+    list(REMOVE_ITEM _main_srcs "led_task.cpp")
+endif()
+if(NOT CONFIG_STACKCHAN_JTTS_ENABLED)
+    list(REMOVE_ITEM _main_srcs "speech.cpp" "voice_db.cpp" "hmm_voice.cpp")
+endif()
+if(NOT CONFIG_STACKCHAN_CAMERA_ENABLED)
+    list(REMOVE_ITEM _main_srcs "camera_service.cpp" "qr_task.cpp")
+endif()
 if(CONFIG_STACKCHAN_CONVERSATION_ENABLED)
     list(APPEND _main_srcs "conversation_task.cpp")
 endif()
@@ -83,3 +88,19 @@ idf_component_register(
     PRIV_REQUIRES ${_main_priv_reqs}
 )
 target_compile_features(${COMPONENT_LIB} PRIVATE cxx_std_20)
+
+if(CONFIG_STACKCHAN_SERVO_ENABLED)
+    idf_component_optional_requires(PRIVATE scs_servo)
+endif()
+if(CONFIG_STACKCHAN_JTTS_ENABLED)
+    idf_component_optional_requires(PRIVATE jtts)
+endif()
+if(CONFIG_STACKCHAN_TELEGRAM_ENABLED)
+    idf_component_optional_requires(PRIVATE telegram)
+endif()
+if(CONFIG_STACKCHAN_ESPNOW_POC)
+    idf_component_optional_requires(PRIVATE espnow_poc)
+endif()
+if(CONFIG_STACKCHAN_ESPNOW_REMOTE_ENABLED)
+    idf_component_optional_requires(PRIVATE espnow_remote)
+endif()

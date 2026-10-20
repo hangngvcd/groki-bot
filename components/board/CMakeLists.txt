@@ -8,19 +8,18 @@ set(_board_srcs
     "si12t_touch.cpp"
 )
 
-# esp32-camera is pulled in only when STACKCHAN_CAMERA_ENABLED=y. Listing it
-# unconditionally in PRIV_REQUIRES would force the managed component to be
-# downloaded / linked even for the atoms3r profile (which has no GC0308). We
-# expose it as an optional dependency the same way idf does for its own
-# optional bits.
-# espressif__led_strip is unconditional — both cores3 and atoms3r builds use
-# RMT-driven WS2812 chains, and the managed component is small (~5 KiB).
-set(_board_priv_reqs driver espressif__led_strip)
-if(CONFIG_STACKCHAN_CAMERA_ENABLED)
-    # Managed-component requires name keeps the upstream hyphen — IDF does NOT
-    # rewrite "-" → "_" for component-manager dependencies; doing so makes the
-    # esp_camera.h include silently miss.
-    list(APPEND _board_priv_reqs espressif__esp32-camera)
+set(_board_priv_reqs driver)
+if(NOT CONFIG_STACKCHAN_PY32_ENABLED)
+    list(REMOVE_ITEM _board_srcs "io_expander_py32.cpp" "led_strip.cpp")
+endif()
+if(NOT CONFIG_STACKCHAN_HEAD_TOUCH_ENABLED)
+    list(REMOVE_ITEM _board_srcs "si12t_touch.cpp")
+endif()
+if(NOT CONFIG_STACKCHAN_LED_ENABLED)
+    list(REMOVE_ITEM _board_srcs "led_strip.cpp" "nekomimi_led_strip.cpp")
+endif()
+if(NOT CONFIG_STACKCHAN_CAMERA_ENABLED)
+    list(REMOVE_ITEM _board_srcs "camera_gc0308.cpp")
 endif()
 
 idf_component_register(
@@ -34,3 +33,11 @@ idf_component_register(
     PRIV_REQUIRES ${_board_priv_reqs}
 )
 target_compile_features(${COMPONENT_LIB} PUBLIC cxx_std_20)
+
+# Config-dependent dependencies must be added after early expansion.
+if(CONFIG_STACKCHAN_LED_ENABLED)
+    idf_component_optional_requires(PRIVATE espressif__led_strip)
+endif()
+if(CONFIG_STACKCHAN_CAMERA_ENABLED)
+    idf_component_optional_requires(PRIVATE espressif__esp32-camera)
+endif()
