@@ -108,7 +108,15 @@ jobs:
           cmake --build build
           ctest --test-dir build --output-on-failure
 
-      # --- conversation: XiaoZhi control dispatch (gateway head message) --
+      # --- conversation: XiaoZhi control dispatch + companion policy (seam F) --
+      - name: conversation host tests
+        working-directory: components/conversation/test/host
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build
+          ctest --test-dir build --output-on-failure
+
       - name: conversation host tests (ASan + UBSan)
         working-directory: components/conversation/test/host
         run: |

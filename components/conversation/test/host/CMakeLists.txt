@@ -45,3 +45,14 @@ target_include_directories(conversation_test_control_dispatch PRIVATE ${CONVERSA
 target_link_libraries(conversation_test_control_dispatch PRIVATE cjson_host)
 target_compile_options(conversation_test_control_dispatch PRIVATE -Wall -Wextra)
 add_test(NAME control_dispatch COMMAND conversation_test_control_dispatch)
+
+# Seam F: gateway JSON -> production control dispatch -> companion face policy.
+add_executable(conversation_test_companion_policy test_companion_policy.cpp)
+target_include_directories(conversation_test_companion_policy PRIVATE
+    ${CONVERSATION_ROOT}/include
+    ${CONVERSATION_ROOT}/../avatar/include
+    ${CONVERSATION_ROOT}/../avatar_vm/include
+)
+target_link_libraries(conversation_test_companion_policy PRIVATE cjson_host)
+target_compile_options(conversation_test_companion_policy PRIVATE -Wall -Wextra)
+add_test(NAME companion_policy COMMAND conversation_test_companion_policy)

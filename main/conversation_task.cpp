@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: BSL-1.0
 
 #include "conversation_task.hpp"
+#if CONFIG_STACKCHAN_COMPANION_FACE
+#include "avatar/companion_policy.hpp"
+#endif
 
 #include <algorithm>
 #include <array>
@@ -166,6 +169,9 @@ std::optional<avatar::Expression> parse_expression(const char* name) {
 // parse_expression first; the rest collapse onto the closest face.
 // Unknown names yield nullopt and are ignored by the caller.
 std::optional<avatar::Expression> parse_emotion(const char* name) {
+#if CONFIG_STACKCHAN_COMPANION_FACE
+    return avatar::CompanionPolicy::parse_emotion(name != nullptr ? name : "");
+#else
     if (name == nullptr) {
         return std::nullopt;
     }
@@ -193,6 +199,7 @@ std::optional<avatar::Expression> parse_emotion(const char* name) {
         return avatar::Expression::Neutral;
     }
     return std::nullopt;
+#endif
 }
 
 std::uint32_t now_ms() {
@@ -223,12 +230,14 @@ public:
     Coordinator(SharedState& state, const char* api_key, config::Provider provider, board::Si12tTouch* touch,
                 const char* xiaozhi_url, const char* xiaozhi_token, const char* system_prompt,
                 const char* extra_headers, const ServoLimits& limits,
-                const std::array<std::int16_t*, kSegmentBuffers>& seg_buf)
+                const std::array<std::int16_t*, kSegmentBuffers>& seg_buf, bool head_control, bool led_control)
         : state_{state}, api_key_{api_key != nullptr ? api_key : ""}, provider_{provider}, touch_{touch},
           xiaozhi_url_{xiaozhi_url != nullptr ? xiaozhi_url : ""},
           xiaozhi_token_{xiaozhi_token != nullptr ? xiaozhi_token : ""},
           system_prompt_{system_prompt != nullptr ? system_prompt : ""},
           extra_headers_{extra_headers != nullptr ? extra_headers : ""}, limits_{limits}, seg_buf_{seg_buf} {
+        config_.head_control = head_control;
+        config_.led_control = led_control;
         // Per-provider audio rates. The OpenAI client further compands its
         // 8 kHz PCM16 into µ-law on the wire; Gemini sends raw PCM16; XiaoZhi
         // streams Opus (16 kHz mono up, server-rate down, resampled to 24 kHz).
@@ -381,6 +390,8 @@ private:
     bool connect()
     {
         conv::ConversationConfig cfg{};
+        cfg.head_control = config_.head_control;
+        cfg.led_control = config_.led_control;
         // User-set system prompt (over Wi-Fi) wins; empty falls back to the
         // firmware's built-in persona.
         cfg.instructions = system_prompt_.empty() ? kInstructions : system_prompt_;
@@ -602,7 +613,11 @@ private:
             vs = VoiceState::Idle;
             break;
         }
-        state_.set_voice_state(vs);
+#if CONFIG_STACKCHAN_COMPANION_FACE
+        // XiaoZhi face timing follows gateway milestones, not buffered playback.
+        if (provider_ != config::Provider::XiaoZhi || s == Local::Init || s == Local::Yielded)
+#endif
+            state_.set_voice_state(vs);
         // Mask servo motion for the entire reply playback (Speaking). Deriving
         // it from the state — rather than the speaker's isPlaying() — keeps the
         // head still across the brief silences between streamed reply segments,
@@ -635,7 +650,10 @@ private:
         case Local::Thinking:
             if (!thinking_face_released_ && now_ms() - thinking_since_ms_ > kThinkingFaceMs) {
                 thinking_face_released_ = true;
-                state_.set_voice_state(avatar::VoiceState::Idle);
+#if CONFIG_STACKCHAN_COMPANION_FACE
+                if (provider_ != config::Provider::XiaoZhi)
+#endif
+                    state_.set_voice_state(avatar::VoiceState::Idle);
                 ESP_LOGI(kTag, "thinking > %u ms with no reply — face back to idle, still waiting",
                          static_cast<unsigned>(kThinkingFaceMs));
             }
@@ -916,12 +934,21 @@ private:
     void handle_event(const conv::ConversationEvent& ev)
     {
         switch (ev.type) {
+        case conv::ConversationEventType::FaceVoiceState:
+#if CONFIG_STACKCHAN_COMPANION_FACE
+            state_.set_voice_state(ev.face_voice_state);
+#endif
+            break;
         case conv::ConversationEventType::StateChanged:
             // The protocol reaching Listening for the first time means the
             // session is live. Later protocol transitions are ignored — the
             // local state machine owns mic/speaker timing.
             if (local_ == Local::Init && ev.state == conv::ConversationState::Listening) {
                 ESP_LOGI(kTag, "session ready");
+#if CONFIG_STACKCHAN_COMPANION_FACE
+                state_.set_voice_state(avatar::VoiceState::Idle);
+                state_.face.expression.store(static_cast<int>(avatar::Expression::Neutral), std::memory_order_relaxed);
+#endif
                 state_.conv.active.store(true, std::memory_order_relaxed);
                 enter_listening();
             }
@@ -1360,9 +1387,9 @@ private:
 void conversation_task_entry(void* arg)
 {
     auto& args = *static_cast<ConversationTaskArgs*>(arg);
-    auto* coordinator = new Coordinator(*args.state, args.api_key, args.provider, args.touch,
-                                        args.xiaozhi_url, args.xiaozhi_token, args.system_prompt,
-                                        args.extra_headers, args.limits, args.seg_buf);
+    auto* coordinator = new Coordinator(*args.state, args.api_key, args.provider, args.touch, args.xiaozhi_url,
+                                        args.xiaozhi_token, args.system_prompt, args.extra_headers, args.limits,
+                                        args.seg_buf, args.head_control, args.led_control);
     coordinator->run();
     // run() only returns by deleting the task; keep the object alive regardless.
     // A task created WithCaps must be deleted WithCaps, or the PSRAM stack is not returned.

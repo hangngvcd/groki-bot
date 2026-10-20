@@ -73,3 +73,24 @@ menu "Stack-chan feature gates"
             dependency from slim builds.
 
 endmenu
+
+menu "Stack-chan companion face"
+
+    config STACKCHAN_COMPANION_FACE
+        bool "Enable companion face policy"
+        default n
+        help
+            Opt-in study-buddy face policy for board profiles such as Xiaoya.
+            Idle is Neutral, active listening/thinking follows the voice state,
+            speaking emotions are whitelisted, and inactivity goes directly to
+            Sleepy. Disconnections show a periodic Dizzy overlay. Speech
+            balloons are hidden. Gateway head/LED controls are silently ignored
+            when the detected board has no corresponding hardware.
+
+    config STACKCHAN_COMPANION_SLEEP_AFTER_MS
+        int "Companion inactivity before Sleepy (ms)"
+        depends on STACKCHAN_COMPANION_FACE
+        range 1 2147483647
+        default 300000
+
+endmenu

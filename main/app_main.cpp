@@ -832,11 +832,21 @@ extern "C" void app_main()
 
 #if CONFIG_STACKCHAN_CONVERSATION_ENABLED
     g_conversation_args = new stackchan::app::ConversationTaskArgs{
-        .state = g_state, .limits = servo_limits, .api_key = api_key, .provider = cfg.provider, .touch = head_touch,
-        .xiaozhi_url = xiaozhi_url, .xiaozhi_token = xiaozhi_token,
+        .state = g_state,
+        .limits = servo_limits,
+        .api_key = api_key,
+        .provider = cfg.provider,
+        .touch = head_touch,
+        .xiaozhi_url = xiaozhi_url,
+        .xiaozhi_token = xiaozhi_token,
         .system_prompt = cfg.system_prompt.c_str(),
         .extra_headers = cfg.conv_extra_headers.c_str(),
-        .seg_buf = g_conv_seg_buf};
+        .seg_buf = g_conv_seg_buf,
+#if CONFIG_STACKCHAN_COMPANION_FACE
+        .head_control = profile.has_servo_bus,
+        .led_control = board.led_strip() != nullptr,
+#endif
+    };
 #else
     (void)api_key; (void)xiaozhi_url; (void)xiaozhi_token;
 #endif

@@ -145,9 +145,13 @@ void detect_task(void*) {
             ESP_LOGI(kTag, "★★ WAKE WORD DETECTED (idx=%d) ★★", r->wake_word_index);
             if (g_state != nullptr) {
                 // 唤醒后聆听神态出现（Issue #4 直观验收项）。
+#if CONFIG_STACKCHAN_COMPANION_FACE
+                g_state->set_voice_state(stackchan::avatar::VoiceState::Listening);
+#else
                 g_state->request_face_overlay(
                     stackchan::avatar::Expression::Listening,
                     stackchan::avatar::ExpressionController::kDefaultOverlayHoldMs);
+#endif
                 g_state->set_balloon_text("在！", 1800);
             }
         }

@@ -49,14 +49,20 @@ inline std::optional<HeadCommand> parse_head_command(const cJSON* root)
     };
 }
 
+// Absent hardware is filtered before validation: even malformed hardware
+// commands are silent no-ops. Defaults preserve the original dispatch.
+struct ControlCapabilities {
+    bool head = true;
+    bool led = true;
+};
+
 // Entry point for XiaoZhi control messages (JSON text frames). `head` is
 // decoded here; every other type goes to `other_sink(type, root)` with the
 // parsed tree, which is only valid during the call. Host tests drive this
 // exact function.
 template <typename HeadSink, typename OtherSink, typename ErrorSink>
 void parse_control(const char* json, std::size_t len, HeadSink&& head_sink, OtherSink&& other_sink,
-                   ErrorSink&& error_sink)
-{
+                   ErrorSink&& error_sink, ControlCapabilities capabilities = {}) {
     cJSON* root = cJSON_ParseWithLength(json, len);
     if (root == nullptr) {
         error_sink("json parse failed");
@@ -65,7 +71,10 @@ void parse_control(const char* json, std::size_t len, HeadSink&& head_sink, Othe
     const cJSON* type_item = cJSON_GetObjectItemCaseSensitive(root, "type");
     const char* type = cJSON_IsString(type_item) ? type_item->valuestring : nullptr;
     if (type != nullptr) {
-        if (std::strcmp(type, "head") == 0) {
+        if ((!capabilities.head && std::strcmp(type, "head") == 0) ||
+            (!capabilities.led && std::strcmp(type, "led") == 0)) {
+            // No action, error, or face activity for absent hardware.
+        } else if (std::strcmp(type, "head") == 0) {
             if (auto head = parse_head_command(root)) {
                 head_sink(*head);
             } else {
