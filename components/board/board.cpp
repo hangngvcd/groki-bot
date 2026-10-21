@@ -302,7 +302,7 @@ BoardProfile profile_for(BoardKind kind) noexcept
     case BoardKind::SpotPear128Cam:
         p.circular_display = true;
         p.round_face_layout = true;
-        p.button_overlay_ui = true; // No touch; BOOT input wiring follows in ticket 14.
+        p.button_overlay_ui = true; // No touch; BOOT gestures: main/boot_button_task.cpp.
         break;
     case BoardKind::StopWatch:
         p.speaker_magnification = 16; // ES8311 → AW8737A input attenuator
