@@ -98,7 +98,7 @@ def build_parent_status(debug_status_snapshot, settings, env, helper_health):
     battery_text = "未有資料" if battery is None else f"{battery}%"
     connected = "已連線" if device.get("connected") else "未連線"
     mode = wake.get("listening_mode")
-    if mode == "wake_word":
+    if mode in {"wake_word", "wake_word_or_button"}:
         mode_text = f"叫「{result['wake']['phrase']}」或者撳掣"
     elif mode == "button_only":
         mode_text = "只准撳掣"

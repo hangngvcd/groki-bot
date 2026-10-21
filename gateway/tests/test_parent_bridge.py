@@ -116,6 +116,14 @@ def test_pure_status(store):
     assert payload["voice"]["backend"] == "gemini"
     assert payload["device"]["battery_percent"] == 25
     assert "小白" in payload["summary_zh"] and "25%" in payload["summary_zh"]
+    status.listening_mode = "wake_word_or_button"
+    payload = build_parent_status(
+        status.snapshot(), store.get(), {"STACKCHAN_WAKE_PHRASE": "小白"}, {}
+    )
+    assert "叫「小白」或者撳掣" in payload["summary_zh"]
+    status.listening_mode = "button_only"
+    payload = build_parent_status(status.snapshot(), store.get(), {}, {})
+    assert "只准撳掣" in payload["summary_zh"]
     payload = build_parent_status(
         DebugStatus().snapshot(),
         store.get(),
