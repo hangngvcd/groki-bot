@@ -5,7 +5,7 @@ name: Build and Release Firmware
 # dispatch is supported too for smoke-testing the CI without cutting a tag.
 #
 # Layout (2026-06 onwards):
-#   1. `build` job runs 4× in parallel (matrix on board), each shard does
+#   1. `build` job runs 5× in parallel (matrix on board), each shard does
 #      its own checkout + env init + ccache-warmed build + zip + artifact
 #      upload. Per-shard ccache cache survives across runs and pulls main
 #      branch hits even on a fresh tag, keeping compile time ~30 s after
@@ -18,7 +18,7 @@ name: Build and Release Firmware
 # builds used to fail because the old face animation assets did not fit
 # the 1 MiB storage partition; those assets are gone, but neither board
 # has been re-verified yet. Keeping the shards in the matrix leaves any
-# failure visible in CI. cores3 / stopwatch have no allow_failure flag: if either fails,
+# failure visible in CI. cores3 / stopwatch / spotpear128cam have no allow_failure flag: if any fails,
 # `build` fails and `release` is skipped (job `if` implies success()).
 #
 # Previously the build was one sequential job to avoid paying the Docker
@@ -47,20 +47,18 @@ jobs:
     name: Build ${{ matrix.board }}
     runs-on: ubuntu-latest
     # Job-level, driven by matrix.include — do not hard-code per step.
-    # Unset allow_failure (cores3 / stopwatch) evaluates to false.
+    # Unset allow_failure (cores3 / stopwatch / spotpear128cam) evaluates to false.
     continue-on-error: ${{ matrix.allow_failure || false }}
     strategy:
       # Don't kill sibling shards on one board's failure — we still want
       # to know which other boards built OK so we can rerun only the bad
       # one. atoms3r / atoms3 may fail (known_issues.md item 4) without
-      # blocking the release; cores3 / stopwatch failures still fail
+      # blocking the release; cores3 / stopwatch / spotpear128cam failures still fail
       # this job and skip the release.
       fail-fast: false
       matrix:
         board: [cores3, atoms3r, atoms3, stopwatch, spotpear128cam]
         include:
-          - board: spotpear128cam
-            allow_failure: true
           - board: atoms3r
             allow_failure: true
           - board: atoms3
@@ -184,6 +182,12 @@ jobs:
           # Fails the shard (and so the release) when static data leaves too
           # little internal RAM for the heap; see the script header.
           python3 tools/check_static_ram.py --board "$BOARD" "build-$BOARD/stackchan_idf.map"
+          partitions=$(sed -n 's/^CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="\(.*\)"$/\1/p' "build-$BOARD/sdkconfig")
+          min_free=0
+          if [ "$BOARD" = spotpear128cam ]; then min_free=10; fi
+          python3 tools/check_ota_headroom.py --board "$BOARD" \
+            --bin "build-$BOARD/stackchan_idf.bin" --partitions "$partitions" \
+            --min-free-pct "$min_free"
           echo "=== ccache stats ==="
           ccache --show-stats || true
           echo "=== Packing firmware for $BOARD ==="
@@ -222,7 +226,7 @@ jobs:
     # Only attach to a Release on actual tag pushes — manual dispatch runs
     # just build the artifacts and stop. Matrix shards upload independently;
     # this job attaches whichever zips exist. Job `if` implies success(),
-    # so a cores3 or stopwatch failure (no allow_failure) skips publish
+    # so a cores3, stopwatch or spotpear128cam failure (no allow_failure) skips publish
     # even on a tag push. atoms3r / atoms3 failures do not.
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
@@ -274,7 +278,7 @@ jobs:
             - **AtomS3R + Atomic ECHO BASE**: `firmware-${{ steps.version.outputs.version }}-atoms3r.zip` (8 MB flash, Octal PSRAM), attached only if this build passed
             - **AtomS3 + Atomic ECHO BASE, slim profile**: `firmware-${{ steps.version.outputs.version }}-atoms3.zip` (8 MB flash, no PSRAM), attached only if this build passed
 
-            - **SpotPear ESP32-S3 1.28-CAM skeleton**: `firmware-${{ steps.version.outputs.version }}-spotpear128cam.zip` (16 MB flash, Octal PSRAM), attached only if this build passed; hardware bring-up in ticket 14
+            - **SpotPear ESP32-S3 1.28-CAM (小芽)**: `firmware-${{ steps.version.outputs.version }}-spotpear128cam.zip` (16 MB flash, Octal PSRAM). Flash with the web flasher choosing "SpotPear ESP32-S3 1.28-CAM"; later updates over Wi-Fi OTA. Hardware OTA/rollback verification pending.
 
             ## Install
 

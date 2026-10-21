@@ -31,6 +31,7 @@ on:
       - 'assets/voices/**'
       - 'assets/voices.json'
       - '.github/workflows/pages.yml'
+      - 'script/release_board.py'
   release:
     types: [published]
   workflow_dispatch:
@@ -164,16 +165,13 @@ jobs:
             boards_json='{}'
             while IFS= read -r asset; do
               [ -z "$asset" ] && continue
+              if ! board=$(python3 script/release_board.py "$asset"); then
+                echo "::warning::Skipping unrecognized firmware asset: $asset"
+                continue
+              fi
               asset_id=$(printf '%s\n' "$asset_rows" | awk -F'\t' -v n="$asset" '$1 == n { print $2; exit }')
               gh api -H "Accept: application/octet-stream" \
                 "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" > "$dest/$asset"
-              # Extract board suffix; legacy un-suffixed zips map to cores3.
-              base="${asset%.zip}"
-              suffix="${base##*-}"
-              case "$suffix" in
-                cores3|atoms3r|atoms3|stopwatch) board="$suffix" ;;
-                *)                              board="cores3" ;; # legacy fallback
-              esac
               boards_json=$(echo "$boards_json" | jq --arg b "$board" --arg z "$asset" '.[$b] = $z')
               # Also extract the OTA payload (stackchan_idf.bin — app
               # partition image only, NOT the firmware-<tag>-<board>.bin
@@ -194,7 +192,7 @@ jobs:
             echo "{\"tag\":\"$tag\",\"boards\":$boards_json}" >> /tmp/per_tag.ndjson
           done
 
-          # versions.json: ordered list of {tag, boards: {cores3?, atoms3r?, atoms3?, stopwatch?}}.
+          # versions.json: ordered list of {tag, boards: {cores3?, atoms3r?, atoms3?, stopwatch?, spotpear128cam?}}.
           jq -s '.' < /tmp/per_tag.ndjson > _site/versions.json
           echo "--- versions.json ---"
           cat _site/versions.json

@@ -43,6 +43,27 @@ jobs:
           cmake --version | head -1
           g++ --version | head -1
 
+      - name: Release asset and OTA partition tests
+        run: python3 -m unittest script.test_release_board tools.test_check_ota_headroom
+
+      - name: Release OTA host tests
+        working-directory: components/wifi_config_service/test/host
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build
+          ctest --test-dir build --output-on-failure
+
+      - name: Release OTA host tests (ASan + UBSan)
+        working-directory: components/wifi_config_service/test/host
+        run: |
+          set -euo pipefail
+          cmake -S . -B build-san -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_FLAGS="-fsanitize=address,undefined" \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all"
+          cmake --build build-san
+          ctest --test-dir build-san --output-on-failure
+
       # --- avatar_vm: bytecode decoder + VM interpreter + fuzz -------------
       # Built twice: once plain (fast, exhaustive) and once under
       # ASan + UBSan so the fuzz harness proves memory safety on arbitrary
@@ -197,7 +218,7 @@ jobs:
           echo "Minimal app image: $bytes bytes" | tee -a "$GITHUB_STEP_SUMMARY"
 
   spotpear128cam-firmware:
-    name: SpotPear 1.28-CAM firmware skeleton
+    name: SpotPear 1.28-CAM firmware
     runs-on: ubuntu-latest
     container:
       image: espressif/idf:v5.5.4
@@ -225,14 +246,9 @@ jobs:
           idf.py -B build-spotpear128cam -DSDKCONFIG=build-spotpear128cam/sdkconfig \
             -DSDKCONFIG_DEFAULTS='sdkconfig.defaults;sdkconfig.defaults.esp32s3;sdkconfig.defaults.spotpear128cam' \
             set-target esp32s3 build
-          bytes=$(stat -c %s build-spotpear128cam/stackchan_idf.bin)
-          slot=$((0x400000))
-          free=$((slot - bytes))
-          echo "SpotPear app image: $bytes bytes; OTA slot: $slot bytes; free: $free bytes" | tee -a "$GITHUB_STEP_SUMMARY"
-          if (( free * 10 < slot )); then
-            echo "::error::App must leave at least 10% of the 4 MiB OTA slot free"
-            exit 1
-          fi
+          python3 tools/check_ota_headroom.py \
+            --bin build-spotpear128cam/stackchan_idf.bin \
+            --partitions partitions_16mb.csv --min-free-pct 10
 
       - name: Upload SpotPear firmware
         uses: actions/upload-artifact@v4

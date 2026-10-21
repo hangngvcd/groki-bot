@@ -1001,8 +1001,8 @@ esp_err_t handle_ota_data_post(httpd_req_t* req)
 
 // GET /api/release/versions
 //
-// Device-side proxy for GitHub Pages `versions.json`. Same JSON the desktop
-// web-flasher UI consumes, forwarded via the device's own STA link so the
+// Device-side proxy for GitHub Pages `versions.json`, filtered to releases
+// containing this board's image, fetched via the device's own STA link so the
 // on-device settings page can populate a version dropdown even when the
 // browser side has no direct internet access (AP-mode iPhone — DNS hijack
 // blocks the iPhone from resolving github.com, but the device's STA does
@@ -1018,9 +1018,8 @@ esp_err_t handle_release_versions_get(httpd_req_t* req)
         return send_error(req, "502 Bad Gateway",
                           "versions.json fetch failed (STA down?)");
     }
-    // Body is already JSON — passthrough as-is with the JSON content-type
-    // header that send_json sets.
-    return send_json(req, body);
+    return send_json(req, release_ota::filter_versions_for_board(
+        body, release_ota::board_slug(g_board_kind)));
 }
 
 // POST /api/ota/release  — body: {"tag":"vX.Y.Z"}

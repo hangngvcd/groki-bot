@@ -1396,11 +1396,13 @@ loadHmmCatalog();
 // Per-board gating: Atom-nyan has no servos, no battery monitor. Older
 // firmware that doesn't report "board" in /api/status leaves this null, in
 // which case we keep everything visible (historical M5-base behaviour).
+let runningBoardSlug = null;
 function applyBoardGating(kind) {
   // Capability facts come from the shared board table (settings_common.js).
   // Unknown / null kind → no gating (both flags false), matching the old
   // behaviour for pre-BoardKind firmware.
   const cap = StackchanSettings.BOARDS[kind];
+  runningBoardSlug = cap ? cap.slug : null;
   const noServo = cap ? !cap.servo : false;
   const noBattery = cap ? !cap.battery : false;
   const sv = document.getElementById('servo-section');
@@ -1733,7 +1735,10 @@ async function loadReleaseVersions() {
   try {
     const r = await fetch('/api/release/versions', { cache: 'no-store' });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const arr = await r.json();
+    const versions = await r.json();
+    const arr = Array.isArray(versions) ? versions.filter(v =>
+      v && (!v.boards || (runningBoardSlug &&
+        Object.prototype.hasOwnProperty.call(v.boards, runningBoardSlug)))) : [];
     if (!Array.isArray(arr) || arr.length === 0) throw new Error('empty');
     // Replace placeholder options.
     sel.innerHTML = '';

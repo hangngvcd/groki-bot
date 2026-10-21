@@ -77,6 +77,7 @@
         <option value="atoms3r">AtomS3R + Atomic ECHO BASE (アトムニャン)</option>
         <option value="atoms3">AtomS3 + Atomic ECHO BASE (slim、PSRAM 無し)</option>
         <option value="stopwatch">M5 StopWatch (C152)</option>
+        <option value="spotpear128cam">SpotPear ESP32-S3 1.28-CAM (小芽)</option>
       </select>
     </label>
   </div>
@@ -281,6 +282,9 @@ function showAssetSummary() {
   const rel = selectedRelease();
   const board = $('selBoard').value;
   assetInfoEl.innerHTML = '';
+  if (board === 'spotpear128cam') {
+    assetInfoEl.appendChild(document.createTextNode('Image must match your board: PSRAM mode differs per board. '));
+  }
   if (!rel) return;
   const zip = zipFor(rel, board);
   const span = document.createElement('span');
