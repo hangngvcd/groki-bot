@@ -101,4 +101,5 @@ def diagnostics() -> list[str]:
         messages.append(
             "STACKCHAN_TOKEN: not set; child profile debug inject-text disabled"
         )
+    messages.append("debug status: localhost-only; conversation text redacted")
     return messages

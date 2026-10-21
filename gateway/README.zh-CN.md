@@ -137,7 +137,12 @@ uv run --all-extras python scripts/kws_offline_repro.py --generate-say
 
 在 `.env` 设置 `STACKCHAN_BUTTON_ONLY_LISTEN=1` 并重启，对 `gbot` 和
 `gemini` 后端均有效。默认 `0`，保留原有行为。关闭唤醒词或缺少 KWS 模型时，
-收到设备 XiaoZhi `listen`（`start` 或 `detect`，例如按键）前不转发任何麦克风音频，
+收到设备 XiaoZhi `listen` 的明确按键消息前不转发任何麦克风音频。
+只有 `state:detect` 且 `source:button`（BOOT 按钮），或 `state:start` 且
+`mode:manual`（明确的按住说话／一键说话操作）算作按键；字段值去除首尾空白后
+不区分大小写。固件每次连接／重连时自动发送的 `listen start mode:auto` 会被忽略，
+`mode:realtime`、未指定 mode 的 start，以及 source 不是 button 或缺少 source 的
+detect 也会被忽略。每个新会话的唤醒门均从休眠状态开始。
 按键前的音频会丢弃。沿用 `STACKCHAN_WAKE_IDLE_S`（默认 30 秒）的静默超时、
 现有音量阈值和最长聆听窗口。有可用模型时，唤醒词和按键均可启动聆听。
 检测器出错时退回仅按键模式，不会自动转发全部音频。
@@ -146,6 +151,12 @@ uv run --all-extras python scripts/kws_offline_repro.py --generate-say
 `wake_word` 或 `pass_through`。
 
 ### 儿童配置（可选）
+
+儿童配置下，debug/capture HTTP 仅监听 `127.0.0.1`，忽略 `HOST`；ESP32
+WebSocket 监听地址不变。调试状态不含对话文本或工具错误文本。设置
+`STACKCHAN_TOKEN` 后，状态和文本注入接口需要 Bearer 认证；未设置时禁用文本注入。
+使用 `http://127.0.0.1:8766/debug/panel#token=...` 打开面板（替换为你的 token）。
+面板通过 Authorization 请求头发送 token，不放入查询字符串。
 
 在 `.env` 设置 `STACKCHAN_CHILD_PROFILE=1` 并重启。默认 `0`，保留现有行为。
 开启后强制关闭 Mac control、`ask_claude`、device tools、USB transport、Mac

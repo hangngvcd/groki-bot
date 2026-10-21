@@ -21,6 +21,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import child_profile
+
 RECENT_LIMIT = 10
 
 _USAGE_COUNT_FIELDS = (
@@ -307,7 +309,7 @@ class DebugStatus:
         self.recent_tool_calls.append(entry)
 
     def record_transcript(self, text: str) -> None:
-        if not text:
+        if child_profile.enabled() or not text:
             return
         self.recent_transcripts.append({"text": text, "at": self.clock()})
 
@@ -315,6 +317,7 @@ class DebugStatus:
 
     def snapshot(self) -> dict[str, Any]:
         """Build the JSON for ``GET /debug/status``. recent lists newest first."""
+        redacted = child_profile.enabled()
         return {
             "generated_at": self.clock(),
             "device": {
@@ -366,8 +369,16 @@ class DebugStatus:
                 self.face_tracking_provider() if self.face_tracking_provider is not None else None
             ),
             "recent": {
-                "tool_calls": list(reversed(self.recent_tool_calls)),
-                "transcripts": list(reversed(self.recent_transcripts)),
+                "tool_calls": [
+                    {key: entry[key] for key in ("name", "ok", "at")}
+                    for entry in reversed(self.recent_tool_calls)
+                ]
+                if redacted
+                else list(reversed(self.recent_tool_calls)),
+                "transcripts": []
+                if redacted
+                else list(reversed(self.recent_transcripts)),
+                **({"redacted": True} if redacted else {}),
             },
         }
 

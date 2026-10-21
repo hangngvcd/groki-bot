@@ -8,7 +8,7 @@ Options considered:
 | Option | Trade-off |
 | --- | --- |
 | A: bot writes a watched settings file | Simple, but weak validation and no reliable acknowledgement. |
-| B: extend device HTTP :8766 | Already available, but binds 0.0.0.0 and mixes child/device and parent authority. |
+| B: extend device HTTP :8766 | Already available; binds 0.0.0.0 outside child profile, but is 127.0.0.1-only in child profile. Mixes child/device and parent authority. |
 | C: MCP inside the existing stdio gateway | Couples parent access to ownership of the running gateway process. |
 | D: separate loopback API + CLI + optional MCP | Chosen: explicit parent authority and independent clients. |
 

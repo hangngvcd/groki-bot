@@ -520,6 +520,17 @@ def pcm_rms_int16(pcm: bytes) -> float:
     return math.sqrt(total / sample_count)
 
 
+def is_explicit_listen_request(message: dict) -> bool:
+    """Recognize only BOOT detection and manual push/hold-to-talk requests."""
+    def normalized(key: str) -> str:
+        return str(message.get(key, "")).strip().lower()
+
+    return normalized("type") == "listen" and (
+        (normalized("state") == "detect" and normalized("source") == "button")
+        or (normalized("state") == "start" and normalized("mode") == "manual")
+    )
+
+
 def button_only_listen_enabled() -> bool:
     return os.environ.get("STACKCHAN_BUTTON_ONLY_LISTEN", "0").strip().lower() in {
         "1", "true", "yes", "on",
