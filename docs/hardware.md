@@ -103,3 +103,21 @@ Sources:
 | Camera XCLK / PWDN | 12 (both drawn on GP12 via R82/R80) | assembly-dependent | [S] |
 | Camera HREF / VSYNC / PCLK | 46 / 43 / 44 via 0R/NC options, alternatives route to SD pins | assembly-dependent, unverified | [S] — camera is OFF in this firmware anyway |
 | Camera SCCB | shares I2C 15/14 | verified | [S] |
+
+### SpotPear round face layout
+
+Only the SpotPear128Cam profile enables `round_face_layout`: eye-ring points
+and the VM share `round_face_layout_scale(canvas)` through `DrawContext.layout_scale`:
+`min(width, height) / 240 * 0.85`. The nominal body diameter is 170 px on the
+240×240 panel. A zero layout scale retains automatic `design_scale(canvas)`.
+The larger green sprout follows the head, sways with breathing, and lifts during
+speech in every expression. Sleepy zzz and affection hearts hug the upper-right
+of the head; render tests enforce a 4 px circular safe-area margin. Other board profiles keep the default face.
+
+Render expressions, companion states, a contact sheet and a CoreS3 comparison locally:
+
+```sh
+cmake -S tools/face_render -B build-face-render -G Ninja && cmake --build build-face-render && ctest --test-dir build-face-render && build-face-render/face_render out/
+```
+
+Hardware visual sign-off remains for tickets 14/15 on-board.

@@ -220,6 +220,14 @@ bool Avatar::has_face() const noexcept {
     return impl_->has_face();
 }
 
+void Avatar::set_sprout_visible(bool visible) noexcept {
+    impl_->context().sprout_visible = visible;
+}
+
+void Avatar::set_layout_scale(float scale) noexcept {
+    impl_->context().layout_scale = scale;
+}
+
 void Avatar::set_eye_ring_buffer(const float* buffer) noexcept {
     impl_->context().aora_ring = buffer;
 }

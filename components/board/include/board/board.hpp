@@ -71,6 +71,8 @@ struct BoardProfile {
     std::uint8_t speaker_base_volume = 128;
     // Round panel (StopWatch AMOLED): render inside the inscribed circle.
     bool circular_display = false;
+    // SpotPear Xiaoya face: fit eye rings and show the sprout.
+    bool round_face_layout = false;
     // On-device UI flavour: true = atom_status button overlay (no LCD
     // touch), false = the touch-driven device_ui tab screen.
     bool button_overlay_ui = false;

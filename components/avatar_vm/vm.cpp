@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Kenta IDA <fuga@fugafuga.org>
 // SPDX-License-Identifier: BSL-1.0
 
+#include "avatar_vm/design_scale.hpp"
 #include "avatar_vm/vm.hpp"
 
 #include <algorithm>
@@ -39,34 +40,11 @@ static_assert(static_cast<std::uint8_t>(avatar::Expression::Affection) ==
 static_assert(static_cast<std::uint8_t>(avatar::Expression::Bored) == static_cast<std::uint8_t>(ExprValue::Bored));
 static_assert(avatar::kExpressionCount == static_cast<std::size_t>(avatar::Expression::Bored) + 1);
 
-// Compute the design→canvas uniform scale the original face.cpp used.
-// For circular displays we fit the 320×240 design rect by its DIAGONAL
-// to the panel diameter, with a small margin so corner-anchored effect
-// marks (heart / sweat / spark on the 320×240 design's top-right) don't
-// graze the visible circle's edge. The earlier 1/√2 inset matched a
-// SQUARE design (320×320) and so under-scaled the actual 4:3 rect by
-// ~10% on 466×466 — using the proper rectangle diagonal recovers that.
-inline float canvas_scale(const avatar::Canvas& c) noexcept
-{
-    constexpr float kBaseW = 320.0f;
-    constexpr float kBaseH = 240.0f;
-    if (c.is_circular()) {
-        // Round AMOLEDs report width == height == diameter, so either dim
-        // gives the diameter. Slight margin (0.97) keeps the very corner
-        // pixels just inside the visible edge.
-        constexpr float kCornerMargin = 0.97f;
-        constexpr float kBaseDiag = 400.0f;  // sqrt(320² + 240²)
-        const float diameter = static_cast<float>(std::min(c.width(), c.height()));
-        return diameter / kBaseDiag * kCornerMargin;
-    }
-    return std::min(static_cast<float>(c.width()) / kBaseW,
-                    static_cast<float>(c.height()) / kBaseH);
-}
-
 inline float read_var(Var v, const avatar::Canvas& canvas, const avatar::DrawContext& ctx,
                       const avatar::FaceTuning& t, float scale)
 {
     switch (v) {
+    case Var::Sprout: return ctx.sprout_visible ? 1.0f : 0.0f;
     case Var::CanvasW: return static_cast<float>(canvas.width());
     case Var::CanvasH: return static_cast<float>(canvas.height());
     case Var::CanvasScale: return scale;
@@ -132,7 +110,7 @@ tl::expected<void, VmError> Vm::run(const Bytecode& bc, avatar::Canvas& canvas,
 {
     sp_ = 0;
     fp_ = 0;
-    const float scale = canvas_scale(canvas);
+    const float scale = ctx.layout_scale > 0.0f ? ctx.layout_scale : design_scale(canvas);
     const float cx_screen = canvas.width() / 2.0f;
     const float cy_screen = canvas.height() / 2.0f;
 
@@ -208,7 +186,7 @@ tl::expected<void, VmError> Vm::run(const Bytecode& bc, avatar::Canvas& canvas,
         case Op::PushVar: {
             if (pc + 1 > code_size) return tl::unexpected(VmError::Truncated);
             const std::uint8_t id = code[pc++];
-            if (id >= static_cast<std::uint8_t>(Var::RingBase) + kRingVarCount) {
+            if (id > static_cast<std::uint8_t>(Var::Sprout)) {
                 return tl::unexpected(VmError::BadVarId);
             }
             auto r = push(read_var(static_cast<Var>(id), canvas, ctx, tuning, scale));

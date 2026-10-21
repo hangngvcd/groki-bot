@@ -250,6 +250,26 @@ fn draw()
     fill_circle(cx, cy, base_r, body)
   end
 
+  -- Xiaoya's sprout follows the head, with a breathing lean and speech lift.
+  if sprout > 0.5 then
+    let lean = (bre - 10) / 10 * sz(3)
+    let root_y = cy - base_r
+    let tip_x = cx + lean
+    let tip_y = root_y - sz(18) - talk * sz(4)
+    let joint_y = tip_y + sz(4)
+    fill_triangle(cx - sz(1.5), root_y + sz(1), cx + sz(1.5), root_y + sz(1), tip_x, tip_y, 0x5C08)
+    fill_triangle(cx + sz(1.5), root_y + sz(1), tip_x + sz(1.5), tip_y, tip_x, tip_y, 0x5C08)
+    -- Pointed leaves: the breathing lean also tilts their outer tips.
+    let left_x = tip_x - sz(16)
+    let left_y = joint_y - sz(7) - lean * 0.4
+    fill_triangle(tip_x, joint_y, tip_x - sz(9), joint_y - sz(9), left_x, left_y, 0x7E4A)
+    fill_triangle(tip_x, joint_y, left_x, left_y, tip_x - sz(9), joint_y - sz(1), 0x7E4A)
+    let right_x = tip_x + sz(16)
+    let right_y = joint_y - sz(7) + lean * 0.4
+    fill_triangle(tip_x, joint_y, tip_x + sz(9), joint_y - sz(9), right_x, right_y, 0x7E4A)
+    fill_triangle(tip_x, joint_y, right_x, right_y, tip_x + sz(9), joint_y - sz(1), 0x7E4A)
+  end
+
   -- Sleeping zzz trail floating up past the top-right edge (aora emotion 00 睡眠, "sleep").
   if expr == SLEEPY then
     let zi = 0
@@ -258,6 +278,10 @@ fn draw()
       let zr = zc / 40 * sz(12)
       let zx = tx(244 + zi * 14)
       let zy = ty(58 - zi * 16) - zr
+      if sprout > 0.5 then
+        zx = cx + base_r * (0.92 - zi * 0.16)
+        zy = cy - base_r * (0.53 + zi * 0.19) - zr
+      end
       let zs = sz(7 + zi * 2)
       draw_z(zx, zy, zs, body)
       zi = zi + 1
@@ -279,7 +303,12 @@ fn draw()
       fill_ellipse(brx, bry + sz(24), sz(11), sz(6), 0xFD15)
       let hc = (now_ms / 60) % 40
       let hyy = ty(52) - hc / 40 * sz(16)
-      draw_heart(tx(243), hyy, sz(6 + 2 * (hc / 40)), body)
+      let hxx = tx(243)
+      if sprout > 0.5 then
+        hxx = cx + base_r * 0.86
+        hyy = cy - base_r * 0.72 - hc / 40 * sz(16)
+      end
+      draw_heart(hxx, hyy, sz(6 + 2 * (hc / 40)), body)
     end
   end
 

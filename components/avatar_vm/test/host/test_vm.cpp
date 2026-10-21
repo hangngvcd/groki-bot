@@ -185,6 +185,56 @@ int main() {
         CHECK(rr.canvas.ops.size() == 1 && rr.canvas.ops[0].a == 320);
     }
 
+    // The explicit layout scale drives coordinates, sizes and canvas_scale
+    // together; zero and negative overrides keep the automatic layout.
+    for (float override_scale : {0.0f, -1.0f, 0.85f}) {
+        BytecodeBuilder b;
+        b.code(PUSH_I8); b.code(100); b.code(static_cast<std::uint8_t>(Op::Tx));
+        b.code(PUSH_I8); b.code(100); b.code(static_cast<std::uint8_t>(Op::Ty));
+        b.code(PUSH_I8); b.code(10); b.code(static_cast<std::uint8_t>(Op::Scale));
+        b.code(PUSH_VAR); b.code(static_cast<std::uint8_t>(Var::CanvasScale));
+        b.code(PUSH_I8); b.code(100); b.code(MUL);
+        b.code(FILL_CIRCLE); b.code(RET);
+        b.add_fn(0, 0, 0);
+        stackchan::avatar::DrawContext ctx;
+        ctx.layout_scale = override_scale;
+        auto rr = run_program(b.build(0), ctx);
+        CHECK(rr.ran.has_value());
+        CHECK(rr.canvas.ops.size() == 1);
+        const auto& op = rr.canvas.ops[0];
+        CHECK(op.a == (override_scale > 0 ? 109 : 100));
+        CHECK(op.b == (override_scale > 0 ? 103 : 100));
+        CHECK(op.c == (override_scale > 0 ? 8 : 10));
+        CHECK(op.color == (override_scale > 0 ? 85 : 100));
+    }
+
+    // Sprout is the first ID beyond the ring window; both boolean values
+    // must reach the VM, while the next ID remains invalid.
+    static_assert(static_cast<std::uint8_t>(Var::Sprout) == 0xE5);
+    for (bool visible : {false, true}) {
+        BytecodeBuilder b;
+        b.code(PUSH_VAR);
+        b.code(static_cast<std::uint8_t>(Var::Sprout));
+        for (int i = 0; i < 3; ++i) { b.code(PUSH_I8); b.code(1); }
+        b.code(FILL_CIRCLE);
+        b.code(RET);
+        b.add_fn(0, 0, 0);
+        stackchan::avatar::DrawContext ctx;
+        ctx.sprout_visible = visible;
+        auto rr = run_program(b.build(0), ctx);
+        CHECK(rr.ran.has_value());
+        CHECK(rr.canvas.ops.size() == 1 && rr.canvas.ops[0].a == (visible ? 1 : 0));
+    }
+    {
+        BytecodeBuilder b;
+        b.code(PUSH_VAR);
+        b.code(0xE6);
+        b.code(RET);
+        b.add_fn(0, 0, 0);
+        auto rr = run_program(b.build(0));
+        CHECK(!rr.ran && rr.ran.error() == VmError::BadVarId);
+    }
+
     // --- PushVar Expr / ExprFrom / ExprBlend read DrawContext ------------
     {
         BytecodeBuilder b;

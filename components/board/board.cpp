@@ -301,6 +301,7 @@ BoardProfile profile_for(BoardKind kind) noexcept
         break;
     case BoardKind::SpotPear128Cam:
         p.circular_display = true;
+        p.round_face_layout = true;
         p.button_overlay_ui = true; // No touch; BOOT input wiring follows in ticket 14.
         break;
     case BoardKind::StopWatch:

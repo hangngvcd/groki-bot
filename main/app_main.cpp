@@ -789,6 +789,7 @@ extern "C" void app_main()
         .display = &board.display(),
         .state = g_state,
         .circular_display = profile.circular_display,
+        .round_face_layout = profile.round_face_layout,
     };
     const auto servo_limits = stackchan::app::parse_servo_limits(cfg.servo_limits_json);
 #if CONFIG_STACKCHAN_SERVO_ENABLED
