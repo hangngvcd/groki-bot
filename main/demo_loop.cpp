@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BSL-1.0
 
 #include "demo_loop.hpp"
+#include "boot_button_task.hpp"
 
 #include <algorithm>
 #include <array>
@@ -44,6 +45,9 @@ constexpr const char* kTag = "stackchan";
     // Aliases keep the body textually identical to its pre-extraction form
     // in app_main.cpp (where these were file-scope globals / parameters).
     SharedState* const g_state = args.state;
+#if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
+    start_boot_button_task(*g_state);
+#endif
     stackchan::board::Board* const g_board = args.board;
     [[maybe_unused]] stackchan::board::Si12tTouch* const g_touch = args.touch;
     const std::string& jtts_config_json = args.jtts_config_json;

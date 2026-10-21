@@ -350,6 +350,17 @@ public:
                 // and the existing handler progresses us to Listening.
             }
             drain_events();
+#if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
+            if (state_.barge_in_request.exchange(false, std::memory_order_relaxed)) {
+                barge_in();
+            }
+            // Consume the request even when it can't be served so a stale press
+            // never fires later.
+            if (state_.listen_request.exchange(false) && state_.conv.active.load() &&
+                local_ != Local::Speaking) {
+                (void)client_->request_listen();
+            }
+#endif
             service_state();
         }
     }
@@ -459,12 +470,20 @@ private:
     {
         std::uint32_t waited_ms = 0;
         while (waited_ms < delay_ms) {
+#if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
+            if (state_.reconnect_now.load()) return true;
+#endif
             if (allow_audio_abort &&
                 state_.audio_stream_active.load(std::memory_order_acquire)) {
                 ESP_LOGI(kTag, "session reconnect backoff paused: BLE audio in use");
                 return false;
             }
-            const std::uint32_t step_ms = std::min<std::uint32_t>(500, delay_ms - waited_ms);
+#if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
+            constexpr std::uint32_t poll_ms = 20;
+#else
+            constexpr std::uint32_t poll_ms = 500;
+#endif
+            const std::uint32_t step_ms = std::min(poll_ms, delay_ms - waited_ms);
             vTaskDelay(pdMS_TO_TICKS(step_ms));
             waited_ms += step_ms;
         }
@@ -486,6 +505,9 @@ private:
 
             ESP_LOGI(kTag, "%s: transport start attempt %u",
                      context, failed_starts + 1);
+#if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
+            state_.reconnect_now.store(false);
+#endif
             if (connect()) {
                 ESP_LOGI(kTag, "%s: transport start accepted", context);
                 return true;
@@ -570,7 +592,12 @@ private:
                 ESP_LOGI(kTag, "recover aborted — BLE audio active");
                 return;
             }
+#if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
+            if (!delay_reconnect(kBackoffStepMs, /*allow_audio_abort=*/true)) return;
+            if (state_.reconnect_now.load()) break;
+#else
             vTaskDelay(pdMS_TO_TICKS(kBackoffStepMs));
+#endif
             const std::size_t dma_largest = heap_caps_get_largest_free_block(MALLOC_CAP_DMA);
             if (i == 0 || (i % 4) == 3) {
                 ESP_LOGI(kTag,
@@ -771,6 +798,10 @@ private:
         ESP_LOGI(kTag, "barge-in: user touched the head, interrupting reply");
         M5.Speaker.stop();
         (void)client_->cancel_response();
+#if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
+        flush_events(); // Includes any old audio queued before cancel acquired the inbound lock.
+        state_.set_voice_state(avatar::VoiceState::Idle);
+#endif
         state_.set_balloon_text("我在呢？", /*hold_ms=*/1500);
         log_playback_metrics();
         enter_listening();

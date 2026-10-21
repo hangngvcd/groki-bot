@@ -56,3 +56,12 @@ target_include_directories(conversation_test_companion_policy PRIVATE
 target_link_libraries(conversation_test_companion_policy PRIVATE cjson_host)
 target_compile_options(conversation_test_companion_policy PRIVATE -Wall -Wextra)
 add_test(NAME companion_policy COMMAND conversation_test_companion_policy)
+
+add_executable(conversation_test_boot_button test_boot_button.cpp)
+target_include_directories(conversation_test_boot_button PRIVATE
+    ${CONVERSATION_ROOT}/include
+    ${CONVERSATION_ROOT}/../avatar_vm/include
+)
+target_link_libraries(conversation_test_boot_button PRIVATE cjson_host)
+target_compile_options(conversation_test_boot_button PRIVATE -Wall -Wextra)
+add_test(NAME boot_button COMMAND conversation_test_boot_button)

@@ -107,6 +107,9 @@ void init(SharedState& state)
 
 void poll_button()
 {
+#if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
+    return; // GPIO BOOT gestures belong exclusively to boot_button_task.
+#endif
     // M5.update() is called by demo_loop on each iteration; we just look at
     // the latched press state.
     if (M5.BtnA.wasPressed()) {

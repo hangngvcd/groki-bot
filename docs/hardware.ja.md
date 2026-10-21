@@ -1,5 +1,7 @@
 [English](hardware.md) | [中文](hardware.zh-CN.md) | [日本語](hardware.ja.md)
 
+SpotPear BOOT ボタンの操作と実機確認項目は [SpotPear BOOT button](hardware.md#spotpear-boot-button) を参照。
+
 # 対応ボード
 
 | ボード | 略号 | 表示 | 主な特徴 |
