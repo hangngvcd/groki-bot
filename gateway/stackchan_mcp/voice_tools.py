@@ -808,6 +808,8 @@ class VoiceToolExecutor:
             if mac_enabled:
                 parts.append(mac_control_instruction(grokbot=bool(bot)))
             base = "\n\n".join(parts)
+        if child_profile.enabled():
+            base += "\n如果小朋友要求改音量、休息時間、鏡頭、通知、wake word、聆聽模式，唔好用工具；溫柔講：「呢樣要問媽媽或者爸爸幫你改㗎。」"
         return "\n\n".join(
             [
                 base,

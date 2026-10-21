@@ -562,6 +562,13 @@ class ESP32Manager:
                             self._debug_status.on_tts_state(False, source="local")
                         self._connection = connection
                         self._debug_status.on_device_connected(device_id)
+                        from .parent_settings import get_parent_settings
+
+                        push_task = asyncio.create_task(get_parent_settings().push_to_device())
+                        self._init_tasks.append(push_task)
+                        push_task.add_done_callback(
+                            lambda t: self._init_tasks.remove(t) if t in self._init_tasks else None
+                        )
 
                     if mcp_supported:
                         # Start initialization as a separate task so the read

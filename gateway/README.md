@@ -469,6 +469,11 @@ reconnect the MCP client, after a change).
 | `GEMINI_API_KEY` | none | Required only for the Gemini backend, not Grok login voice |
 | `STACKCHAN_GEMINI_VOICE` | `Kore` | Gemini voice name |
 | `STACKCHAN_GEMINI_MODEL` | `gemini-3.8-live` | Gemini Live model (set `gemini-3.1-flash-live-preview` to go back) |
+| `STACKCHAN_PARENT_API` | off | `1` enables separate loopback parent API; see [parent bridge](../docs/xiaoya-parent-bridge.md) |
+| `STACKCHAN_PARENT_API_PORT` | `18772` | Parent API port (always 127.0.0.1) |
+| `STACKCHAN_PARENT_TOKEN` | empty | Separate parent bearer token; must differ from device token |
+| `STACKCHAN_PARENT_TOKEN_FILE` | `~/.stackchan/parent_token` | Parent token file; generated 0600 when enabled |
+| `STACKCHAN_PARENT_SETTINGS_PATH` | `~/.stackchan/parent_settings.json` | Parent settings JSON path |
 | `STACKCHAN_TOKEN` | empty | Shared secret with the robot; also protects `/capture` and `/debug/inject-text` |
 | `HOST`, `WS_PORT`, `CAPTURE_PORT` | `0.0.0.0`, `8765`, `8766` | Listen address and ports |
 | `STACKCHAN_WAKE_WORD` | on | `0` disables the wake word gate |

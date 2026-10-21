@@ -346,6 +346,9 @@ class Gateway:
 
     async def start(self) -> None:
         """Start the ESP32 WebSocket server and HTTP capture server."""
+        from .parent_api import start_parent_api
+
+        self._parent_runner = await start_parent_api()
         host = os.getenv("HOST", "0.0.0.0")
         ws_port = int(os.getenv("WS_PORT", os.getenv("PORT", "8765")))
         capture_port = self.capture_port
@@ -555,6 +558,9 @@ class Gateway:
     async def stop(self) -> None:
         """Stop the gateway."""
         self._running = False
+        if getattr(self, "_parent_runner", None) is not None:
+            await self._parent_runner.cleanup()
+            self._parent_runner = None
         await self.face_tracker.stop()
         await self.demo_reactions.stop()
         if self._http_runner:

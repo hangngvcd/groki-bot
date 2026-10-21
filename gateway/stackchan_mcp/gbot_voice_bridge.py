@@ -141,6 +141,10 @@ class GbotVoiceBridge:
         )
         self.language = os.getenv("STACKCHAN_GBOT_VOICE_LANGUAGE", "zh")
         self.call_id = str(uuid.uuid4())
+        from .debug_status import get_debug_status
+
+        self._debug_status = debug_status or get_debug_status()
+        self._status_generation = None
         self._on_transcript = on_transcript
         self._on_text = on_text
         self._on_end_conversation = on_end_conversation
@@ -565,6 +569,8 @@ class GbotVoiceBridge:
         return result
 
     async def start(self):
+        self._status_generation = self._debug_status.next_gemini_generation()
+        self._debug_status.on_gemini_started(self._status_generation)
         stage = "account_requests"
         self.metrics["startup_stage"] = stage
         trace = aiohttp.TraceConfig()
@@ -669,6 +675,10 @@ class GbotVoiceBridge:
             }:
                 error_type = "other"
             self.metrics["startup_error_type"] = error_type
+            self._debug_status.on_gemini_disconnected(
+                error="Grok Bot voice startup failed", was_connected=False,
+                generation=self._status_generation,
+            )
             logger.warning(
                 "Grok voice startup failed stage=%s error_type=%s", stage, error_type
             )
@@ -748,6 +758,9 @@ class GbotVoiceBridge:
         kind = event.get("type")
         if kind == "session.updated":
             self._connected_event.set()
+            self._debug_status.on_gemini_connected(
+                self._debug_status.gemini_session_count + 1, generation=self._status_generation
+            )
         elif kind == "response.created":
             self._active_response = event.get("response", {}).get("id")
             self._response_in_progress = True
@@ -1013,6 +1026,10 @@ class GbotVoiceBridge:
         except asyncio.CancelledError:
             raise
         except Exception:
+            self._debug_status.on_gemini_disconnected(
+                error="Grok Bot voice receive failed", was_connected=False,
+                generation=self._status_generation
+            )
             logger.warning("Grok Bot voice receive failed (details redacted)")
         finally:
             # A sink callback can initiate stop() and await this receiver. Its
@@ -1021,6 +1038,7 @@ class GbotVoiceBridge:
                 await self._output.cancel()
             self.running = False
             self._connected_event.clear()
+            self._debug_status.on_gemini_disconnected(generation=self._status_generation)
             if not self._stopped:
                 if self._native:
                     await self._native.close()
@@ -1033,6 +1051,7 @@ class GbotVoiceBridge:
 
     async def stop(self):
         self._stopped = True
+        self._debug_status.on_gemini_stopped(self._status_generation)
         self._cancel_idle()
         self._pending_updates.clear()
         self._pending_response = False
