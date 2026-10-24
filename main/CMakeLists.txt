@@ -15,6 +15,7 @@ set(_main_priv_reqs
     esp_psram
     driver
     nvs_flash
+    spi_flash
     esp_wifi
     esp_netif
     esp_event
@@ -37,6 +38,7 @@ set(_main_srcs
     "captive_portal.cpp"
     "demo_loop.cpp"
     "flash_worker.cpp"
+    "panic_breadcrumb.cpp"
     "boot_button_task.cpp"
     "device_ui.cpp"
     "diag.cpp"
@@ -91,6 +93,9 @@ idf_component_register(
     PRIV_REQUIRES ${_main_priv_reqs}
 )
 target_compile_features(${COMPONENT_LIB} PRIVATE cxx_std_20)
+# Ticket 15h: panic breadcrumb (main/panic_breadcrumb.cpp) wraps the IDF panic
+# handler; -u keeps the wrapper object linked regardless of library order.
+target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=esp_panic_handler" "-Wl,-u,__wrap_esp_panic_handler")
 
 if(CONFIG_STACKCHAN_SERVO_ENABLED)
     idf_component_optional_requires(PRIVATE scs_servo)

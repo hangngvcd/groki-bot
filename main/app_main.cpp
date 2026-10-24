@@ -43,6 +43,7 @@
 #include "demo_loop.hpp"
 #include "device_ui.hpp"
 #include "diag.hpp"
+#include "panic_breadcrumb.hpp"
 #include "i2c_dump.hpp"
 #if CONFIG_STACKCHAN_LED_ENABLED
 #include "led_task.hpp"
@@ -197,6 +198,8 @@ extern "C" void app_main()
     gpio_set_level(GPIO_NUM_46, 0);
 #endif
     ESP_LOGW(kTag, "reset reason: %d", static_cast<int>(esp_reset_reason()));
+    // Ticket 15h: pick up the previous boot's panic breadcrumb (RTC RAM only).
+    stackchan::app::panic_breadcrumb_init();
 
     // Log every failed heap alloc (size + caps + caller + remaining heap).
     // This is how the esp-aes "Failed to allocate memory" finally gets a

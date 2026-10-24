@@ -376,6 +376,24 @@ async def test_boot_report_logged_and_volume_resent(forms, caplog):
     assert not any(r.levelno == logging.WARNING and "poweron" in r.getMessage() for r in caplog.records)
 
 
+def test_panic_breadcrumb_logged_as_warning(forms, caplog):
+    crumb = "abort core0 pc=40375a2e task=conversation bt=4037fd1a,420b1c2d - abort() was called"
+    with caplog.at_level(logging.INFO):
+        forms.note_device_event(
+            {"type": "xiaoya", "event": "form_state", "form": 1, "volume": 40,
+             "reset_reason": "panic", "panic": crumb, "uptime_ms": 9000}
+        )
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("panic breadcrumb" in m and crumb in m for m in warnings)
+    assert forms.snapshot()["device"]["panic"] == crumb
+    caplog.clear()
+    with caplog.at_level(logging.INFO):
+        forms.note_device_event({"type": "xiaoya", "event": "form_state", "form": 1,
+                                 "reset_reason": "poweron", "panic": ""})
+    assert not any("panic breadcrumb" in r.getMessage() for r in caplog.records)
+    assert "panic" not in forms.snapshot()["device"]
+
+
 @pytest.mark.parametrize("bad", [-1, 101, 40.5, "40", True, None])
 def test_volume_message_validation(bad):
     from stackchan_mcp.xiaoya_forms import volume_message

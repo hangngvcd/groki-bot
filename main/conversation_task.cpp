@@ -3,6 +3,7 @@
 
 #include "lingling/assets.hpp"
 #include "flash_worker.hpp"
+#include "panic_breadcrumb.hpp"
 #include "conversation_task.hpp"
 #if CONFIG_STACKCHAN_COMPANION_FACE
 #include "avatar/companion_policy.hpp"
@@ -1269,6 +1270,9 @@ private:
                                    std::to_string(state_.face.form.load())+
                                    ",\"volume\":"+std::to_string(state_.speaker.volume_pct.load())+
                                    ",\"reset_reason\":\""+reset_reason_name(esp_reset_reason())+"\""+
+                                   (panic_breadcrumb_text()[0] != '\0'
+                                        ? ",\"panic\":\"" + std::string(panic_breadcrumb_text()) + "\""
+                                        : std::string())+
                                    ",\"uptime_ms\":"+std::to_string(now_ms())+"}");
             break;
         case conv::ConversationEventType::XiaoyaCommand:

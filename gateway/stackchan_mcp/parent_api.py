@@ -243,6 +243,7 @@ def create_parent_app(token, settings=None, debug_status=None, forms=None):
             "device_connected": forms.session_ready,
             "device_volume": report.get("volume"),
             "last_reset_reason": report.get("reset_reason"),
+            "last_panic": report.get("panic"),
             "last_boot_report_at": report.get("at"),
         }
 

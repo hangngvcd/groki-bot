@@ -324,7 +324,14 @@ class XiaoyaForms:
                 "uptime_ms": message.get("uptime_ms"),
                 "at": _dt.datetime.now().astimezone().isoformat(timespec="seconds"),
             }
+            # Ticket 15h: firmware's RTC-RAM panic breadcrumb from the previous
+            # boot (kind, core, pc, task, backtrace, reason); absent if none.
+            panic = message.get("panic")
+            if isinstance(panic, str) and panic:
+                report["panic"] = panic[:256]
             self.device_report = report
+            if "panic" in report:
+                logger.warning("鈴鈴 panic breadcrumb (previous boot): %s", report["panic"])
             log = logger.warning if reason in ABNORMAL_RESETS else logger.info
             log(
                 "鈴鈴 device reports form=%s volume=%s reset_reason=%s uptime_ms=%s",
