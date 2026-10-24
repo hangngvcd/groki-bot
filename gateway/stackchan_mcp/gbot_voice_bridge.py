@@ -328,6 +328,13 @@ class GbotVoiceBridge:
 
     @staticmethod
     def _desktop_failure(code, *, refused=False):
+        if child_profile.enabled():
+            spoken = (
+                "我而家攞唔到，唔好意思。你可以遲啲再問我，或者問吓媽媽或者爸爸。"
+                if refused
+                else "我而家連唔到電腦，攞唔到資料。等陣再試，或者問吓媽媽或者爸爸。"
+            )
+            return {"relay": "refused" if refused else "unreachable", "spoken": spoken}
         if refused:
             return {"relay": "refused", "spoken": "桌面助手没有受理这项任务。"}
         return {
@@ -923,8 +930,8 @@ class GbotVoiceBridge:
                     if name == "send_task"
                     else {
                         "ok": False,
-                        "error": "桌面助手暂时未连上，请稍后再试。",
-                        "spoken": "桌面助手暂时未连上，请稍后再试。",
+                        "error": self._desktop_failure("native_not_ready")["spoken"],
+                        "spoken": self._desktop_failure("native_not_ready")["spoken"],
                     }
                 )
             elif name == "send_task":
