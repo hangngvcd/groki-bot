@@ -26,11 +26,14 @@ QueueHandle_t s_queue = nullptr;
 SemaphoreHandle_t s_start_lock = nullptr;
 portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 
-void worker(void*)
+void worker(void* arg)
 {
+    // Queue handle comes in as the task argument: the task can start running
+    // before start() publishes s_queue (it has a higher priority than callers).
+    QueueHandle_t q = static_cast<QueueHandle_t>(arg);
     Job job;
     for (;;) {
-        if (xQueueReceive(s_queue, &job, portMAX_DELAY) == pdTRUE) {
+        if (xQueueReceive(q, &job, portMAX_DELAY) == pdTRUE) {
             job.fn(job.ctx);
             xSemaphoreGive(job.done);
         }
@@ -61,7 +64,7 @@ bool start()
         QueueHandle_t q = xQueueCreate(4, sizeof(Job));
         // Plain xTaskCreate: stack from internal RAM (FreeRTOS default caps),
         // never PSRAM. That is the whole point of this task.
-        if (q && xTaskCreatePinnedToCore(worker, "flash-wkr", kStackBytes, nullptr,
+        if (q && xTaskCreatePinnedToCore(worker, "flash-wkr", kStackBytes, q,
                                          tskIDLE_PRIORITY + 4, nullptr, tskNO_AFFINITY) == pdPASS) {
             s_queue = q;
             ok = true;
