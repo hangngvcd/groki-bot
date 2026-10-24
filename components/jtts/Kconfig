@@ -1,7 +1,15 @@
 menu "jtts (Japanese TTS)"
 
+config STACKCHAN_JTTS_ENABLED
+    bool "Enable Japanese TTS"
+    default y
+    help
+        Compile Japanese speech synthesis, idle babble, local say workers and
+        voice upload/load support. Disable to omit JTTS and HMM entirely.
+
 config JTTS_ENABLE_HMM
     bool "Enable HMM (hts_engine) synthesis engine"
+    depends on STACKCHAN_JTTS_ENABLED
     default n
     help
         HMM 音声合成 (hts_engine) を有効にする。.htsvoice ボイス (~1-2 MB) を

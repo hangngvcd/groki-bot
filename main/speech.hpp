@@ -8,10 +8,14 @@
 #include <string>
 #include <vector>
 
+#include <sdkconfig.h>
+#if CONFIG_STACKCHAN_JTTS_ENABLED
 #include <jtts/jtts.hpp>
+#endif
 
 namespace stackchan::app {
 
+#if CONFIG_STACKCHAN_JTTS_ENABLED
 // Parse the user's jtts config JSON (the same blob Speech::configure
 // expects — defaults to the built-in "female child" preset when the
 // JSON is empty / malformed / missing fields) into a jtts::Options.
@@ -89,5 +93,18 @@ private:
     std::atomic<std::uint32_t> start_ms_{0};
     std::atomic<std::uint32_t> duration_ms_{0};
 };
+
+#else
+// Silent boards retain timer/balloon scheduling without a synthesis backend.
+class Speech {
+public:
+    void configure(const std::string&) {}
+    std::string babble(std::uint32_t) { return {}; }
+    bool say(std::u32string_view) { return false; }
+    void stop() {}
+    float current_mouth_open() const { return 0.0f; }
+    bool is_speaking() const { return false; }
+};
+#endif
 
 } // namespace stackchan::app

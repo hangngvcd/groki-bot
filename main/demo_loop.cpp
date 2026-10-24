@@ -45,27 +45,29 @@ constexpr const char* kTag = "stackchan";
     // in app_main.cpp (where these were file-scope globals / parameters).
     SharedState* const g_state = args.state;
     stackchan::board::Board* const g_board = args.board;
-    stackchan::board::Si12tTouch* const g_touch = args.touch;
+    [[maybe_unused]] stackchan::board::Si12tTouch* const g_touch = args.touch;
     const std::string& jtts_config_json = args.jtts_config_json;
     const bool has_battery = args.has_battery;
     const bool btn_a_toggles_ui = args.btn_a_toggles_ui;
     const bool touch_gaze_follow = args.touch_gaze_follow;
     const bool conversation_enabled = args.conversation_enabled;
     const bool jtts_idle_enabled = args.jtts_idle_enabled;
-    const bool external_servo_control = args.external_servo_control;
-    const ServoLimits& limits = args.limits;
+    [[maybe_unused]] const bool external_servo_control = args.external_servo_control;
+    [[maybe_unused]] const ServoLimits& limits = args.limits;
 
     using namespace stackchan;
 
     // Random head pose targets, redrawn every kPoseMinMs..kPoseMaxMs. The
     // ranges come from the per-device ServoLimits so the demo respects the
     // configured motion (servo_task also clamps defensively).
+#if CONFIG_STACKCHAN_SERVO_ENABLED
     const float kYawMinDeg = static_cast<float>(limits.yaw_min_deg);
     const float kYawMaxDeg = static_cast<float>(limits.yaw_max_deg);
     const float kPitchMinDeg = static_cast<float>(limits.pitch_min_deg);
     const float kPitchMaxDeg = static_cast<float>(limits.pitch_max_deg);
     constexpr std::uint32_t kPoseMinMs = 4000;
     constexpr std::uint32_t kPoseMaxMs = 8000;
+#endif
     constexpr std::uint32_t kSpeechMinMs = 6000;
     constexpr std::uint32_t kSpeechMaxMs = 12000;
 
@@ -81,7 +83,9 @@ constexpr const char* kTag = "stackchan";
         return low + (esp_random() % (high - low + 1));
     };
 
+#if CONFIG_STACKCHAN_SERVO_ENABLED
     std::uint32_t next_pose_ms = 0;
+#endif
     std::uint32_t next_speech_ms = 2000; // first babble shortly after boot
 
     // Base-board battery monitor (INA226 on the internal I2C bus). Read here —
@@ -111,6 +115,7 @@ constexpr const char* kTag = "stackchan";
     // (all three at once) can't qualify.
     //   - kStrokePeakIntensity: a zone counts as "hit" at this intensity (3).
     //   - kStrokeGapMs: an all-quiet stretch this long ends the gesture.
+#if CONFIG_STACKCHAN_HEAD_TOUCH_ENABLED
     constexpr std::uint8_t kStrokePeakIntensity = 3;
     constexpr std::uint32_t kStrokeGapMs = 600;
     constexpr std::uint32_t kNadenadeCooldownMs = 4000;
@@ -118,19 +123,22 @@ constexpr const char* kTag = "stackchan";
     std::uint32_t stroke_active_ms = 0;   // last time any zone was non-zero
     std::uint32_t next_nadenade_ms = 0;   // earliest time we'll trigger again
     constexpr std::uint32_t kHeadPetRestoreDelayMs = 3000;
+#endif
+#if CONFIG_STACKCHAN_SERVO_ENABLED
     groki_motion::Limits motion_limits{
         .yaw_min_deg = kYawMinDeg,
         .yaw_max_deg = kYawMaxDeg,
         .pitch_min_deg = kPitchMinDeg,
         .pitch_max_deg = kPitchMaxDeg,
     };
-    bool head_pet_touch_active = false;
-    bool head_pet_restore_pending = false;
-    std::uint32_t head_pet_overlay_cmd = 0; // last overlay command this task published (token for a conditional clear)
+#endif
+    [[maybe_unused]] bool head_pet_touch_active = false;
+    [[maybe_unused]] bool head_pet_restore_pending = false;
+    [[maybe_unused]] std::uint32_t head_pet_overlay_cmd = 0; // last overlay command this task published (token for a conditional clear)
     std::uint32_t gesture_overlay_cmd = 0;  // last overlay from a screen gesture (token for a conditional clear)
-    float head_pet_prev_yaw = 0.0f;
-    float head_pet_prev_pitch = 0.0f;
-    std::uint32_t head_pet_restore_at_ms = 0;
+    [[maybe_unused]] float head_pet_prev_yaw = 0.0f;
+    [[maybe_unused]] float head_pet_prev_pitch = 0.0f;
+    [[maybe_unused]] std::uint32_t head_pet_restore_at_ms = 0;
 
     // Last-applied speaker volume percent. Watches the SharedState atom
     // so the device-UI's −/+ nudge buttons re-apply via the same
@@ -448,6 +456,7 @@ constexpr const char* kTag = "stackchan";
         // across the three zones. On a completed stroke, run a quick happy
         // head-wobble. The wobble blocks demo_loop's normal scheduling for
         // ~1.4 s but the render and servo tasks keep running.
+#if CONFIG_STACKCHAN_HEAD_TOUCH_ENABLED
         if (g_touch != nullptr && !wifi_warning_active && now_ms >= next_nadenade_ms) {
             const auto reading = g_touch->read();
             const std::uint8_t f = reading.front(), mid = reading.middle(), bk = reading.back();
@@ -489,13 +498,17 @@ constexpr const char* kTag = "stackchan";
                     balloon_in_flight.store(false, std::memory_order_release);
                 });
 
+#if CONFIG_STACKCHAN_SERVO_ENABLED
                 const auto pose = groki_motion::head_pet_pose(
                     head_pet_prev_yaw, head_pet_prev_pitch, motion_limits, esp_random());
                 g_state->servo.speed_override.store(pose.speed, std::memory_order_relaxed);
                 g_state->servo.target_yaw_deg.store(pose.yaw_deg, std::memory_order_relaxed);
                 g_state->servo.target_pitch_deg.store(pose.pitch_deg, std::memory_order_relaxed);
+#endif
                 next_speech_ms = now_ms + 1500;
+#if CONFIG_STACKCHAN_SERVO_ENABLED
                 next_pose_ms = std::max(next_pose_ms, now_ms + 2000);
+#endif
             } else if (!firmly_touched && head_pet_touch_active) {
                 head_pet_touch_active = false;
                 head_pet_restore_pending = true;
@@ -542,7 +555,7 @@ constexpr const char* kTag = "stackchan";
                          static_cast<unsigned>(stroke_hit_ms[2]));
                 stackchan::wifi_config::mcp_events::publish_touch_stroke(direction);
                 speech.stop();
-                const float prev_yaw = g_state->servo.target_yaw_deg.load(std::memory_order_relaxed);
+                [[maybe_unused]] const float prev_yaw = g_state->servo.target_yaw_deg.load(std::memory_order_relaxed);
 
                 g_state->request_face_overlay(avatar::Expression::Affection,
                                               avatar::ExpressionController::kDefaultOverlayHoldMs);
@@ -554,6 +567,7 @@ constexpr const char* kTag = "stackchan";
                 // Head-wobble writes servo targets — skip it entirely when an
                 // external source (ESP-NOW remote) owns the head; still show
                 // the happy face + balloon above.
+#if CONFIG_STACKCHAN_SERVO_ENABLED
                 if (!external_servo_control) {
                     // speed_override is consumed once: write it again before every target change.
                     constexpr std::uint32_t kHalfPeriodMs = 160;
@@ -569,6 +583,7 @@ constexpr const char* kTag = "stackchan";
                     g_state->servo.speed_override.store(0, std::memory_order_relaxed);
                 }
 
+#endif
                 stroke_hit_ms = {0, 0, 0};
                 stroke_active_ms = 0;
                 const std::uint32_t after_ms = static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
@@ -576,21 +591,27 @@ constexpr const char* kTag = "stackchan";
                 // Push back demo activity so the wobble doesn't fight a
                 // freshly-scheduled random pose / babble.
                 next_speech_ms = after_ms + 1500;
+#if CONFIG_STACKCHAN_SERVO_ENABLED
                 next_pose_ms = std::max(next_pose_ms, after_ms + 2000);
+#endif
                 continue;
             }
         }
 
+#endif
         if (head_pet_restore_pending && now_ms >= head_pet_restore_at_ms) {
             head_pet_restore_pending = false;
             if (g_state->clear_face_overlay_if(head_pet_overlay_cmd)) {
                 head_pet_overlay_cmd = 0;
             }
+#if CONFIG_STACKCHAN_SERVO_ENABLED
             g_state->servo.speed_override.store(200, std::memory_order_relaxed);
             g_state->servo.target_yaw_deg.store(head_pet_prev_yaw, std::memory_order_relaxed);
             g_state->servo.target_pitch_deg.store(head_pet_prev_pitch, std::memory_order_relaxed);
+#endif
         }
 
+#if CONFIG_STACKCHAN_SERVO_ENABLED
         // Idle head poses: the head moves on its own when nobody interacts with it.
         if (!external_servo_control && !head_pet_touch_active && !head_pet_restore_pending &&
             !g_state->servo.masked.load(std::memory_order_relaxed) &&
@@ -606,6 +627,7 @@ constexpr const char* kTag = "stackchan";
             next_pose_ms = now_ms + rand_range_ms(kPoseMinMs, kPoseMaxMs);
         }
 
+#endif
         vTaskDelay(pdMS_TO_TICKS(50));
     }
 }

@@ -32,6 +32,7 @@ public:
          std::optional<Si12tTouch>&& touch) noexcept
         : kind_{kind}, expander_{std::move(expander)}, touch_{std::move(touch)}
     {
+#if CONFIG_STACKCHAN_LED_ENABLED
         // Stack-chan ネコミミ NeoPixel (18 LEDs = 9 per ear) — present on
         // M5/Takao/AtomNyan bases, but the data line varies: CoreS3 uses
         // GPIO9 (free pin near the M-BUS), AtomNyan uses GPIO38 (the
@@ -48,6 +49,7 @@ public:
                              ? NekomimiLedStrip::kDataGpioAtomNyan
                              : NekomimiLedStrip::kDataGpioCoreS3;
         led_ = std::make_unique<NekomimiLedStrip>(gpio);
+#endif
     }
 
     BoardKind kind() const noexcept { return kind_; }
@@ -159,6 +161,7 @@ tl::expected<Board, Error> Board::begin()
     // IO expander at 0x6F (M5 base only). PY32 can take up to ~1.2 s after a
     // cold reset, so poll once every 200 ms for ~1.2 s before deciding.
     std::optional<Py32Expander> expander;
+#if CONFIG_STACKCHAN_PY32_ENABLED
     for (int attempt = 0; attempt < 6 && !expander; ++attempt) {
         vTaskDelay(pdMS_TO_TICKS(200));
         if (auto e = Py32Expander::probe(); e) {
@@ -166,8 +169,11 @@ tl::expected<Board, Error> Board::begin()
         }
     }
 
+#endif
     BoardKind kind = expander ? BoardKind::M5Base : BoardKind::TakaoBase;
+#if CONFIG_STACKCHAN_PY32_ENABLED
     if (kind == BoardKind::M5Base) {
+#if CONFIG_STACKCHAN_SERVO_ENABLED
         // Configure the servo-power EN pin (start OFF). A failure here is fatal
         // on the M5 base since the servos would never get power.
         if (auto r = expander->set_direction(Py32Expander::kPinServoPowerEnable, /*output=*/true); !r)
@@ -176,20 +182,24 @@ tl::expected<Board, Error> Board::begin()
             return tl::unexpected{r.error()};
         if (auto r = expander->digital_write(Py32Expander::kPinServoPowerEnable, false); !r)
             return tl::unexpected{r.error()};
+#endif
     } else {
         ESP_LOGI(kTag, "PY32 not found at 0x%02X -> Takao base (no servo-power / battery control)",
                  Py32Expander::kAddress);
     }
 
+#endif
     // Top-mounted touch sensor (Si12T at 0x68). Optional on either base — boot
     // anyway and just warn if it doesn't respond.
     std::optional<Si12tTouch> touch;
+#if CONFIG_STACKCHAN_HEAD_TOUCH_ENABLED
     if (auto t = Si12tTouch::probe(); t) {
         touch.emplace(std::move(*t));
     } else {
         ESP_LOGW(kTag, "Si12T touch sensor not found at 0x%02X", Si12tTouch::kAddress);
     }
 
+#endif
     Board board;
     board.impl_ = std::make_shared<Impl>(kind, std::move(expander), std::move(touch));
     // LED strip init. Earlier attempts left the strip dark because the host-
@@ -246,6 +256,9 @@ BoardProfile profile_for(BoardKind kind) noexcept
         p.touch_gaze_follow = true;
         break;
     }
+#if !CONFIG_STACKCHAN_SERVO_ENABLED
+    p.has_servo_bus = false;
+#endif
     return p;
 }
 
@@ -285,6 +298,7 @@ bool Board::has_battery() const noexcept
 
 tl::expected<void, Error> Board::set_servo_power(bool on)
 {
+#if CONFIG_STACKCHAN_PY32_ENABLED && CONFIG_STACKCHAN_SERVO_ENABLED
     auto& expander = impl_->expander();
     if (!expander) {
         // Takao base / Atom family / StopWatch: no PY32 servo-power
@@ -293,6 +307,9 @@ tl::expected<void, Error> Board::set_servo_power(bool on)
         return {};
     }
     return expander->digital_write(Py32Expander::kPinServoPowerEnable, on);
+#else
+    return {};
+#endif
 }
 
 Si12tTouch* Board::touch_sensor() noexcept

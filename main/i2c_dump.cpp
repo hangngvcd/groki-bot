@@ -45,7 +45,9 @@ constexpr KnownConst kKnownConsts[] = {
     { "AW9523",  0x58, 0x10, 0x23, "chip ID" },
     // PY32 register 0x02 is the FW version. On our base it reads 0x41 (BSP
     // build); a healthy boot from the same PY32 should give the same value.
+#if CONFIG_STACKCHAN_PY32_ENABLED
     { "PY32",    0x6F, 0x02, 0x41, "FW version" },
+#endif
 };
 
 // One register read goes through M5Unified, which uses the same internal I2C
@@ -169,7 +171,9 @@ void dump_internal_i2c_registers()
         { "AW9523",  0x58, 0x00, 0x13, 100'000 },
         // PY32 on the Stack-chan base. See docs/py32_ioexpander.md §2 — we
         // documented 0x00-0x40 as the used range (GPIO + ADC + PWM + LED).
+#if CONFIG_STACKCHAN_PY32_ENABLED
         { "PY32",    0x6F, 0x00, 0x41, 100'000 },
+#endif
     };
 
     ESP_LOGI(kTag, "internal-I2C register dump start");

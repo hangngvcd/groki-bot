@@ -8,6 +8,7 @@ idf_component_register(
     PRIV_INCLUDE_DIRS "."
     REQUIRES
         tl_expected
+        avatar_vm
     PRIV_REQUIRES
         esp_websocket_client
         esp_audio_codec

@@ -41,16 +41,24 @@
 #include "device_ui.hpp"
 #include "diag.hpp"
 #include "i2c_dump.hpp"
+#if CONFIG_STACKCHAN_LED_ENABLED
 #include "led_task.hpp"
+#endif
 #include "mic_lip_sync_task.hpp"
 #include "asr_probe.hpp"
 #include "qr_task.hpp"
 #include "render_task.hpp"
+#if CONFIG_STACKCHAN_ESPNOW_POC
 #include "espnow_poc/espnow_poc.hpp"
+#endif
+#if CONFIG_STACKCHAN_ESPNOW_REMOTE_ENABLED
 #include "espnow_remote/espnow_remote.hpp"
+#endif
 #include "screens.hpp"
 #include "servo_limits.hpp"
+#if CONFIG_STACKCHAN_SERVO_ENABLED
 #include "servo_task.hpp"
+#endif
 #include "settings_sinks.hpp"
 #include "shared_state.hpp"
 #include "speech.hpp"
@@ -61,8 +69,11 @@
 #endif
 #include "wifi_sta.hpp"
 
+#include <sdkconfig.h>
+#if CONFIG_STACKCHAN_JTTS_ENABLED
 #include <jtts/jtts.hpp>
-#ifdef CONFIG_TELEGRAM_PHASE1_ENABLED
+#endif
+#if CONFIG_STACKCHAN_TELEGRAM_ENABLED && CONFIG_TELEGRAM_PHASE1_ENABLED
 #include "telegram/telegram.hpp"
 #endif
 
@@ -82,11 +93,17 @@ constexpr bool kLedTaskDisabledForDebug = false;
 // Heap-allocate so the task argument outlives app_main's scope (the tasks run forever).
 stackchan::app::SharedState* g_state = nullptr;
 stackchan::app::RenderTaskArgs* g_render_args = nullptr;
+#if CONFIG_STACKCHAN_SERVO_ENABLED
 stackchan::app::ServoTaskArgs* g_servo_args = nullptr;
+#endif
+
 #if CONFIG_STACKCHAN_CONVERSATION_ENABLED
 stackchan::app::ConversationTaskArgs* g_conversation_args = nullptr;
 #endif
+#if CONFIG_STACKCHAN_LED_ENABLED
 stackchan::app::LedTaskArgs* g_led_args = nullptr;
+#endif
+
 
 
 
@@ -283,6 +300,7 @@ extern "C" void app_main()
     const bool espnow_mode = false;
 #endif
 
+#if CONFIG_STACKCHAN_CAMERA_ENABLED
     // Resident camera init (M5Base only; no-op elsewhere / slim builds).
     // Must run after the i2c dump (which uses In_I2C) and before any task
     // that touches In_I2C starts — see camera_service::init_resident.
@@ -293,11 +311,15 @@ extern "C" void app_main()
         ESP_LOGI(kTag, "camera: skipped (ASR mode owns internal RAM)");
     }
 
+#endif
     // Cache the jtts options used by the settings-page test-speak buttons
     // (BLE chr 0x2d + /api/jtts-say). Same JSON the demo_loop babble
     // parses, so the test voice matches the babble voice.
+#if CONFIG_STACKCHAN_JTTS_ENABLED
     stackchan::app::settings_sinks::set_say_options(stackchan::app::resolve_speech_options(
         cfg.jtts_config_json, stackchan::app::Speech::kSampleRate));
+#endif
+
 
     // Module Audio (M144, ES8388 codec): probe once at boot. With its
     // jumpers in Config B the codec listens on the M-BUS I2S; the host
@@ -536,6 +558,9 @@ extern "C" void app_main()
         cfg.jtts_idle_enabled = false;
         break;
     }
+#if !CONFIG_STACKCHAN_JTTS_ENABLED
+    cfg.jtts_idle_enabled = false;
+#endif
     ESP_LOGI(kTag, "operation_mode=%u (conv=%d jtts_idle=%d asr=%d espnow=%d)",
              static_cast<unsigned>(cfg.operation_mode),
              static_cast<int>(cfg.openai_enabled),
@@ -635,7 +660,7 @@ extern "C" void app_main()
     //  the conv-task gets first dibs on contiguous internal RAM for its 3 ×
     //  8 KB segment buffers + TLS handshake. See below.)
 
-#ifdef CONFIG_TELEGRAM_PHASE1_ENABLED
+#if CONFIG_STACKCHAN_TELEGRAM_ENABLED && CONFIG_TELEGRAM_PHASE1_ENABLED
     // Phase 1 throwaway: once Wi-Fi STA has an IP, fire ONE getUpdates request
     // and log the result. Confirms HTTPS to api.telegram.org + token validity
     // + JSON parse before we build the full polling loop in Phase 2. Token
@@ -687,7 +712,10 @@ extern "C" void app_main()
 
     // Camera capture / register sinks (no-op when the resident camera did
     // not come up; /api/status's has_camera derives from this registration).
+#if CONFIG_STACKCHAN_CAMERA_ENABLED
     stackchan::app::camera_service::register_sinks(*g_state);
+#endif
+
 
     // /mcp/* channel sinks + the settings-page test-speak buttons.
     stackchan::app::settings_sinks::register_mcp_sinks();
@@ -718,14 +746,17 @@ extern "C" void app_main()
     // Servo-bus availability comes from the profile (the Module Audio
     // override already revoked has_servo_bus where the I2S pin steal
     // applies — see the probe block above).
+#if CONFIG_STACKCHAN_SERVO_ENABLED || CONFIG_STACKCHAN_ESPNOW_REMOTE_ENABLED
     const bool no_servo_bus = !profile.has_servo_bus;
 
+#endif
     // Servo bring-up is only meaningful on boards that actually have a servo
     // bus (CoreS3 + M5/Takao). Atom-nyan has no servos in Phase 1 scope; skip
     // both the power-rail enable and the 1.5 s settle wait. Also gated by the
     // NVS-persisted master switch cfg.servo_enabled (settable from BLE / Wi-Fi
     // / on-device UI — distinct from SharedState::servo_enabled which is the
     // live torque toggle).
+#if CONFIG_STACKCHAN_SERVO_ENABLED
     if (!no_servo_bus && cfg.servo_enabled) {
         if (auto r = board.set_servo_power(true); !r) {
             ESP_LOGE(kTag, "set_servo_power(true) failed: %d", static_cast<int>(r.error()));
@@ -740,19 +771,23 @@ extern "C" void app_main()
         // ghost head-touch firings in the first few seconds. Force a
         // baseline update now (cheap: 4 I2C writes) so the chip starts
         // clean instead of waiting for FTC=10 s to drift back.
+#if CONFIG_STACKCHAN_HEAD_TOUCH_ENABLED
         if (auto* t = board.touch_sensor(); t != nullptr) {
             t->recalibrate();
         }
+#endif
     } else if (!cfg.servo_enabled) {
         ESP_LOGW(kTag, "servo VM rail OFF: cfg.servo_enabled=false (set via settings UI)");
     }
 
+#endif
     g_render_args = new stackchan::app::RenderTaskArgs{
         .display = &board.display(),
         .state = g_state,
         .circular_display = profile.circular_display,
     };
     const auto servo_limits = stackchan::app::parse_servo_limits(cfg.servo_limits_json);
+#if CONFIG_STACKCHAN_SERVO_ENABLED
     if (!no_servo_bus) {
         const auto sb = board.servo_bus_config();
         g_servo_args = new stackchan::app::ServoTaskArgs{
@@ -762,6 +797,7 @@ extern "C" void app_main()
             .limits = servo_limits,
         };
     }
+#endif
     stackchan::board::Si12tTouch* const head_touch = board.touch_sensor();
 
     // API key + provider: pick whichever backend the user configured. The
@@ -796,11 +832,21 @@ extern "C" void app_main()
 
 #if CONFIG_STACKCHAN_CONVERSATION_ENABLED
     g_conversation_args = new stackchan::app::ConversationTaskArgs{
-        .state = g_state, .limits = servo_limits, .api_key = api_key, .provider = cfg.provider, .touch = head_touch,
-        .xiaozhi_url = xiaozhi_url, .xiaozhi_token = xiaozhi_token,
+        .state = g_state,
+        .limits = servo_limits,
+        .api_key = api_key,
+        .provider = cfg.provider,
+        .touch = head_touch,
+        .xiaozhi_url = xiaozhi_url,
+        .xiaozhi_token = xiaozhi_token,
         .system_prompt = cfg.system_prompt.c_str(),
         .extra_headers = cfg.conv_extra_headers.c_str(),
-        .seg_buf = g_conv_seg_buf};
+        .seg_buf = g_conv_seg_buf,
+#if CONFIG_STACKCHAN_COMPANION_FACE
+        .head_control = profile.has_servo_bus,
+        .led_control = board.led_strip() != nullptr,
+#endif
+    };
 #else
     (void)api_key; (void)xiaozhi_url; (void)xiaozhi_token;
 #endif
@@ -811,12 +857,15 @@ extern "C" void app_main()
     // dispatch through screens:: from here on.
     stackchan::app::screens::init(board.display(), *g_state, profile);
     stackchan::app::start_render_task(*g_render_args);
+#if CONFIG_STACKCHAN_SERVO_ENABLED
     if (!no_servo_bus && cfg.servo_enabled && g_servo_args != nullptr) {
         stackchan::app::start_servo_task(*g_servo_args);
     }
+#endif
     // NeoPixel animation task. Driven by SharedState (led_mode / led_color /
     // led_brightness). Only spun up when the board actually has a strip
     // (CoreS3 = GPIO9, AtomNyan = GPIO38; both surface a NekomimiLedStrip).
+#if CONFIG_STACKCHAN_LED_ENABLED
     if (auto* strip = board.led_strip(); strip != nullptr && !kLedTaskDisabledForDebug) {
         g_led_args = new stackchan::app::LedTaskArgs{g_state, strip};
         stackchan::app::start_led_task(*g_led_args);
@@ -824,6 +873,7 @@ extern "C" void app_main()
         ESP_LOGW(kTag, "led_task intentionally NOT started (kLedTaskDisabledForDebug)");
     }
 
+#endif
     // ESP-NOW リモコン受信: WiFi(固定チャネル) + esp-now を起動し、受信ポーズを
     // servo 目標角へ写像する。角度は on-wire 生値が 0.1 度想定なので /10 して度に
     // する。servo タスクが台形速度で追従する (speed はゴール速度として素通し)。
@@ -1006,6 +1056,7 @@ extern "C" void app_main()
     // 諦めてロード (競合する httpd が無いので問題ない)。
     // ESP-NOW モードは httpd も TTS も使わないので、httpd 待ちもボイス ロードも
     // 飛ばして即 demo_loop へ (顔 + 頭部追従のみ)。
+#if CONFIG_STACKCHAN_JTTS_ENABLED
     if (!espnow_mode) {
         for (int i = 0; i < 80 && !stackchan::wifi_config::http_started(); ++i) {
             vTaskDelay(pdMS_TO_TICKS(500));
@@ -1027,6 +1078,7 @@ extern "C" void app_main()
         }
     }
 
+#endif
     // ASR モードの AFE 生成は httpd (+ HMM ボイス) の後まで遅延 — httpd が先に
     // 12 KiB 連続ブロックを取れるようにするため。タスク スタックは PSRAM。
     if (asr_mode) {

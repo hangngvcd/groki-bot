@@ -74,9 +74,11 @@ void LtTimer::announce(SharedState& state, Speech& speech,
                        const std::string& display, const std::string& reading)
 {
     state.set_balloon_text(display, kBalloonHoldMs);
+#if CONFIG_STACKCHAN_JTTS_ENABLED
     if (!speech.say(decode_utf8(reading))) {
         ESP_LOGW(kTag, "announcement synthesis failed: %s", reading.c_str());
     }
+#endif
 }
 
 void LtTimer::tick(SharedState& state, Speech& speech, std::uint32_t now_ms)

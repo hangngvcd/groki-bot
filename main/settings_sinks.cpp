@@ -49,9 +49,11 @@ std::uint8_t g_speaker_base_volume = 128;
 // uses the user's chosen voice / pitch / mora / formant rather than the
 // hard-coded female-child preset. Same options the demo_loop babble
 // uses (both go through resolve_speech_options on the same JSON).
+#if CONFIG_STACKCHAN_JTTS_ENABLED
 stackchan::jtts::Options g_say_opts{};
 bool g_say_opts_ready = false;
 
+#endif
 // Live face-config sink: invoked from the BLE host task on each FaceConfig
 // WRITE. Just stashes the raw JSON in SharedState (cheap, host-task-safe); the
 // render task parses + applies it. config_service guarantees g_state is set
@@ -184,6 +186,7 @@ std::uint16_t read_speaker_volume_pct()
 // gate) and the settings-page test-speak buttons (BLE chr + /api/jtts-say,
 // HTTP-auth gate). Returns immediately; the heap-owned string is freed
 // either by the worker or on task-create failure here.
+#if CONFIG_STACKCHAN_JTTS_ENABLED
 void start_say_worker(std::string_view kana_utf8)
 {
     auto* owned = new std::string{kana_utf8};
@@ -237,6 +240,7 @@ void start_say_worker(std::string_view kana_utf8)
     }
 }
 
+#endif
 // Render the last-turn audio metrics as JSON for BLE chr 0x1f + HTTP
 // `GET /api/metrics/audio`. Same getter is wired to both transports so
 // clients see the same payload regardless of how they connect. Returns
@@ -302,7 +306,9 @@ bool apply_avatar_bytecode(const std::uint8_t* data, std::size_t len)
 
 void say_kana(std::string_view kana_utf8)
 {
+#if CONFIG_STACKCHAN_JTTS_ENABLED
     start_say_worker(kana_utf8);
+#endif
 }
 
 namespace {
@@ -345,12 +351,14 @@ void set_speaker_base_volume(std::uint8_t base)
     g_speaker_base_volume = base;
 }
 
+#if CONFIG_STACKCHAN_JTTS_ENABLED
 void set_say_options(const stackchan::jtts::Options& opts)
 {
     g_say_opts = opts;
     g_say_opts_ready = true;
 }
 
+#endif
 void apply_speaker_volume(std::uint16_t pct) noexcept
 {
     if (pct > 200) pct = 200;
@@ -424,6 +432,7 @@ void register_avatar_bytecode_sinks()
     stackchan::config::set_avatar_bytecode_sink(&apply_avatar_bytecode);
     stackchan::wifi_config::set_avatar_bytecode_sink(&apply_avatar_bytecode);
 
+#if CONFIG_STACKCHAN_JTTS_ENABLED
     // 音声 DB (/api/voice-db、HTTP のみ — 数百 KB は BLE には大きすぎる)。
     stackchan::wifi_config::set_voice_db_sink(
         [](const std::uint8_t* data, std::size_t len) -> const char* {
@@ -447,6 +456,7 @@ void register_avatar_bytecode_sinks()
             const auto st = hmm_voice::status();
             return {st.loaded, st.stored_bytes, st.capacity};
         });
+#endif
 }
 
 void register_mcp_sinks()
@@ -481,6 +491,7 @@ void register_mcp_sinks()
             g_state->set_lt_config(json);
     });
 
+#if CONFIG_STACKCHAN_JTTS_ENABLED
     stackchan::wifi_config::set_mcp_say_kana_sink(
         [](std::string_view kana_utf8) { start_say_worker(kana_utf8); });
     // Settings-page "speak this" test buttons — same body as /mcp/say
@@ -489,6 +500,7 @@ void register_mcp_sinks()
     // jtts without setting up MCP.
     stackchan::config::set_jtts_say_kana_sink(&start_say_worker);
     stackchan::wifi_config::set_jtts_say_kana_sink(&start_say_worker);
+#endif
 }
 
 } // namespace stackchan::app::settings_sinks

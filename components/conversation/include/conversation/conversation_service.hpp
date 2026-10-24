@@ -14,6 +14,7 @@
 #include <tl/expected.hpp>
 
 #include "conversation/conversation_error.hpp"
+#include "avatar/expression.hpp"
 
 namespace stackchan::conversation {
 
@@ -59,6 +60,8 @@ struct ConversationConfig {
     std::uint32_t vad_silence_ms{500};
     std::uint32_t vad_prefix_padding_ms{300};
     float vad_threshold{0.5f};
+    bool head_control{true};
+    bool led_control{true};
 };
 
 enum class ConversationEventType : std::uint8_t {
@@ -96,6 +99,8 @@ enum class ConversationEventType : std::uint8_t {
     // the conv-task just hands off to its standard recovery path which
     // already saves+restores the handle.
     GoingAway,
+    // Opt-in companion face milestone, independent of audio playback timing.
+    FaceVoiceState,
 };
 
 struct ToolCall {
@@ -110,6 +115,7 @@ struct ToolCall {
 // the refcount is copied, not the samples.
 struct ConversationEvent {
     ConversationEventType type;
+    avatar::VoiceState face_voice_state{avatar::VoiceState::Idle};
     ConversationState state{ConversationState::Idle};        // for StateChanged
     std::string text;                                        // transcripts / text deltas
     std::shared_ptr<const std::vector<std::int16_t>> audio;  // PCM16 mono chunk

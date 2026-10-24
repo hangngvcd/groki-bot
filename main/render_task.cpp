@@ -14,6 +14,9 @@
 
 #include "aora_face.hpp"
 #include "avatar/avatar.hpp"
+#if CONFIG_STACKCHAN_COMPANION_FACE
+#include "avatar/companion_policy.hpp"
+#endif
 #include "avatar/canvas.hpp"
 #include "avatar/canvas_m5gfx.hpp"
 #include "face_config.hpp"
@@ -100,6 +103,12 @@ void render_task_entry(void* arg) {
     RichCanvas& canvas = *cv;
 
     avatar::Avatar avatar;
+#if CONFIG_STACKCHAN_COMPANION_FACE
+    avatar::CompanionPolicy companion{CONFIG_STACKCHAN_COMPANION_SLEEP_AFTER_MS};
+    auto& face = companion;
+#else
+    auto& face = avatar;
+#endif
     // The embedded Grok DSL is the only face. Clearing an uploaded bytecode
     // override reverts the VM to that firmware default.
 
@@ -188,6 +197,7 @@ void render_task_entry(void* arg) {
         // changing the mood, which refreshes the timestamp. Idle decay (bored after 2 min, sleepy after
         // 5 min) takes over after the fallback as usual.
         std::int32_t mood = args.state->face.expression.load(std::memory_order_relaxed);
+#if !CONFIG_STACKCHAN_COMPANION_FACE
         static std::uint32_t mood_set_ms = 0;
         constexpr std::uint32_t kMoodAutoClearMs = 45'000;
         if (mood != last_mood) {
@@ -196,14 +206,22 @@ void render_task_entry(void* arg) {
             args.state->face.expression.store(0, std::memory_order_relaxed);
             mood = 0;
         }
+#endif
+#if CONFIG_STACKCHAN_COMPANION_FACE
+        const auto status = state->conv.status.load(std::memory_order_relaxed);
+        // Only transport trouble counts as disconnected; Disabled / Yielded
+        // (BLE or Wi-Fi audio hand-off) keep the companion face.
+        companion.set_connected(status != ConvStatus::WaitingWifi && status != ConvStatus::Connecting &&
+                                status != ConvStatus::Reconnecting && status != ConvStatus::Error);
+#endif
         if (mood != last_mood) {
-            avatar.set_expression(static_cast<avatar::Expression>(mood));
+            face.set_expression(static_cast<avatar::Expression>(mood));
             last_mood = mood;
         }
         const std::int32_t voice =
             static_cast<std::int32_t>(args.state->conv.voice_state.load(std::memory_order_relaxed));
         if (voice != last_voice) {
-            avatar.set_voice_state(static_cast<avatar::VoiceState>(voice));
+            face.set_voice_state(static_cast<avatar::VoiceState>(voice));
             last_voice = voice;
         }
         // One atomic word per overlay command: a concurrent writer can never
@@ -212,17 +230,17 @@ void render_task_entry(void* arg) {
         if (overlay_cmd != last_overlay_cmd) {
             last_overlay_cmd = overlay_cmd;
             if ((overlay_cmd & app::SharedState::kOverlayValidBit) == 0) {
-                avatar.clear_overlay();
+                face.clear_overlay();
             } else {
                 const auto expr = static_cast<avatar::Expression>((overlay_cmd >> 15) & 0xFF);
                 const auto hold = overlay_cmd & 0x7FFFu;
-                avatar.set_overlay(expr, hold);
+                face.set_overlay(expr, hold);
             }
         }
         const std::uint32_t activity_seq = args.state->face.activity_seq.load(std::memory_order_relaxed);
         if (activity_seq != last_activity_seq) {
             last_activity_seq = activity_seq;
-            avatar.note_activity();
+            face.note_activity();
         }
         const float mouth_open = args.state->face.mouth_open.load(std::memory_order_relaxed);
         avatar.set_mouth_open(mouth_open);
@@ -231,7 +249,11 @@ void render_task_entry(void* arg) {
 
         const std::uint32_t balloon_version = args.state->balloon_version();
         if (balloon_version != last_balloon_version) {
-            if (args.state->balloon_visible()) {
+            if (args.state->balloon_visible()
+#if CONFIG_STACKCHAN_COMPANION_FACE
+                && avatar::CompanionPolicy::show_balloon()
+#endif
+            ) {
                 std::uint32_t hold_ms = 0;
                 args.state->snapshot_balloon(balloon_scratch, hold_ms);
                 avatar.set_balloon_text(balloon_scratch, hold_ms);
@@ -239,10 +261,25 @@ void render_task_entry(void* arg) {
             } else {
                 avatar.clear_balloon();
                 balloon_pending = false;
+#if CONFIG_STACKCHAN_COMPANION_FACE
+                // Hidden balloons still complete so demo/speech callbacks progress.
+                args.state->notify_balloon_complete();
+#endif
             }
             last_balloon_version = balloon_version;
         }
 
+#if CONFIG_STACKCHAN_COMPANION_FACE
+        {
+            // Push the policy's face only when it changes: set_overlay forces a full repaint.
+            static int last_companion_face = -1;
+            const auto companion_face = companion.resolve(now_ms);
+            if (static_cast<int>(companion_face) != last_companion_face) {
+                avatar.set_overlay(companion_face, 0);
+                last_companion_face = static_cast<int>(companion_face);
+            }
+        }
+#endif
         // Grok (Avatar VM) is the only face.
         {
             // aora eye rings: build this frame's eye shape from the expression weights after the previous

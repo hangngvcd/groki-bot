@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: 2026 Joseph Zhou
+# SPDX-License-Identifier: BSL-1.0
+# Append after the target and board defaults. Exercises every optional gate
+# without changing the existing board profiles. This is not a new board port.
+# Conversation, audio streaming and ASR retain the base board's values.
+CONFIG_STACKCHAN_SERVO_ENABLED=n
+CONFIG_STACKCHAN_HEAD_TOUCH_ENABLED=n
+CONFIG_STACKCHAN_PY32_ENABLED=n
+CONFIG_STACKCHAN_LED_ENABLED=n
+CONFIG_STACKCHAN_JTTS_ENABLED=n
+CONFIG_JTTS_ENABLE_HMM=n
+CONFIG_STACKCHAN_TELEGRAM_ENABLED=n
+CONFIG_TELEGRAM_PHASE1_ENABLED=n
+CONFIG_STACKCHAN_ESPNOW_POC=n
+CONFIG_STACKCHAN_ESPNOW_REMOTE_ENABLED=n
+CONFIG_STACKCHAN_CAMERA_ENABLED=n
+CONFIG_STACKCHAN_QR_TEST_AT_BOOT=n

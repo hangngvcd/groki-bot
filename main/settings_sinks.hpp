@@ -6,7 +6,10 @@
 
 #include <cstdint>
 
+#include <sdkconfig.h>
+#if CONFIG_STACKCHAN_JTTS_ENABLED
 #include <jtts/jtts.hpp>
+#endif
 
 #include "shared_state.hpp"
 
@@ -38,8 +41,10 @@ void set_speaker_base_volume(std::uint8_t base);
 // jtts options used by the settings-page test-speak buttons (BLE chr 0x2d +
 // /api/jtts-say) and /mcp/say. Cached from cfg.jtts_config_json at boot so
 // the test voice matches the demo_loop babble voice.
+#if CONFIG_STACKCHAN_JTTS_ENABLED
 void set_say_options(const stackchan::jtts::Options& opts);
 
+#endif
 // Live-apply the user's speaker_volume_pct (0..200) to the M5.Speaker
 // master volume and mirror into SharedState (when attached). No NVS write —
 // the caller handles persistence. One-touch mute overrides the percent to 0

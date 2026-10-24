@@ -27,6 +27,9 @@
 #include "esp_opus_dec.h"
 #include "esp_opus_enc.h"
 #include "conversation/control_dispatch.hpp"
+#if CONFIG_STACKCHAN_COMPANION_FACE
+#include "conversation/companion_control.hpp"
+#endif
 #include "psram_allocator.hpp"
 #include "ws_extra_headers.hpp"
 
@@ -622,6 +625,14 @@ private:
                 emit(ev);
             },
             [this](const char* type, const cJSON* root) {
+#if CONFIG_STACKCHAN_COMPANION_FACE
+                if (auto voice = companion_voice_state(type, root)) {
+                    ConversationEvent ev{};
+                    ev.type = ConversationEventType::FaceVoiceState;
+                    ev.face_voice_state = *voice;
+                    emit(ev);
+                }
+#endif
                 if (std::strcmp(type, "hello") == 0) {
                     handle_server_hello(root);
                 } else if (std::strcmp(type, "stt") == 0) {
@@ -637,7 +648,12 @@ private:
                              json_str(root, "message") ? json_str(root, "message") : "");
                 }
             },
-            [](const char* error) { ESP_LOGW(kTag, "%s", error); });
+            [](const char* error) { ESP_LOGW(kTag, "%s", error); }
+#if CONFIG_STACKCHAN_COMPANION_FACE
+            ,
+            {config_.head_control, config_.led_control}
+#endif
+        );
     }
 
     void handle_led(const cJSON* root)

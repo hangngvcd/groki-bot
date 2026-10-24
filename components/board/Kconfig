@@ -7,6 +7,30 @@
 
 menu "Stack-chan board"
 
+    config STACKCHAN_SERVO_ENABLED
+        bool "Enable SCS servo bus and head motion"
+        default y
+        help
+            Compile the servo driver/task and autonomous head poses. Disable on boards without servos.
+
+    config STACKCHAN_HEAD_TOUCH_ENABLED
+        bool "Enable Si12T head touch sensor"
+        default y
+        help
+            Probe and poll the Si12T head sensor. This is independent of LCD touch and face/IMU gestures.
+
+    config STACKCHAN_PY32_ENABLED
+        bool "Enable PY32 IO expander"
+        default y
+        help
+            Probe the base-board PY32 and control its servo power rail. Disable on boards without this expander.
+
+    config STACKCHAN_LED_ENABLED
+        bool "Enable NeoPixel LED strips"
+        default y
+        help
+            Compile the PY32 and RMT nekomimi LED backends and start the LED animation task.
+
     config STACKCHAN_CAMERA_ENABLED
         bool "Enable GC0308 DVP camera driver (CoreS3 only)"
         default n

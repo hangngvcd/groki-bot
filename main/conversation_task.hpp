@@ -47,6 +47,8 @@ struct ConversationTaskArgs {
     // hands ownership in via this field. Any nullptr entry disables the
     // conversation task. Lifetime is app_main's — conv-task never frees.
     std::array<std::int16_t*, kConversationSegmentBuffers> seg_buf{};
+    bool head_control = true;
+    bool led_control = true;
 };
 
 // Pinned to core 0. Owns the chosen ConversationService backend and drives

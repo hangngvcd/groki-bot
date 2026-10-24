@@ -1,3 +1,10 @@
+# Requirements are discovered before Kconfig is loaded. In the real pass,
+# disabled components expose headers only and produce no archive or objects.
+if(NOT CMAKE_BUILD_EARLY_EXPANSION AND NOT CONFIG_JTTS_ENABLE_HMM)
+    idf_component_register(INCLUDE_DIRS "include")
+    return()
+endif()
+
 idf_component_register(
     SRCS
         "lib/HTS_audio.c"
