@@ -80,7 +80,7 @@ def test_render(chars):
     assert all((x - 120) ** 2 + (y - 120) ** 2 <= 100**2 for x, y in ink)
     message = glyph_message(png)
     assert len(message["png"]) <= 32768
-    assert message["hold_ms"] == 5000
+    assert message["hold_ms"] == 10000
     assert base64.b64decode(message["png"]) == png
 
 
@@ -150,7 +150,7 @@ async def test_tool_device(monkeypatch, tmp_path, case):
             glyphs = [frame for frame in frames if frame.get("cmd") == "glyph"]
             if case == "copy":
                 assert result["shown"] is True and result["seconds"] == 5
-                assert glyphs and glyphs[0]["hold_ms"] == 5000
+                assert glyphs and glyphs[0]["hold_ms"] == 10000
                 assert len(glyphs) == 1
                 assert glyphs[0]["session_id"] == hello["session_id"]
                 assert Image.open(BytesIO(base64.b64decode(glyphs[0]["png"]))).size == (
@@ -226,5 +226,5 @@ def test_child_instructions_cover_both_modes(monkeypatch):
     monkeypatch.setenv("STACKCHAN_CHILD_PROFILE", "1")
     text = VoiceToolExecutor().instructions()
     assert "show_character" in text
-    assert "部首同結構" in text and "永遠唔顯示" in text and "5秒" in text
+    assert "部首同結構" in text and "永遠唔顯示" in text and "10秒" in text
     assert "粵拼" in text

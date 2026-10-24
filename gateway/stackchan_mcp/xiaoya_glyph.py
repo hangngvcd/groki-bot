@@ -16,9 +16,9 @@ from fontTools.ttLib import TTFont, TTLibError
 from PIL import Image, ImageDraw, ImageFont
 
 MAX_PNG_BYTES = 24 * 1024
-# Spec section 10, level 3: show the full character for 5 s, then hide it so
+# Spec section 10, level 3: show the full character for 10 s (parent chose 10 s), then hide it so
 # the child writes it herself.
-DEFAULT_HOLD_MS = 5000
+DEFAULT_HOLD_MS = 10000
 _FILES = {"kai": "FreeHKKai-4700.ttf", "sans": "NotoSansHK-Regular.otf"}
 
 

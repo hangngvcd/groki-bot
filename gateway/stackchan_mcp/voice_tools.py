@@ -866,7 +866,7 @@ class VoiceToolExecutor:
             )
             base += (
                 "\n小朋友問生字點寫：call show_character，只傳佢問嗰個字；用詞語上下文揀字，只有冇上下文又同音唔清楚先問一句短問題。\n"
-                "mode=copy（抄生字）、shown=true：個字會喺畫面出5秒，叫佢睇清楚，收起之後自己喺簿寫一次。\n"
+                "mode=copy（抄生字）、shown=true：個字會喺畫面出10秒，叫佢睇清楚，收起之後自己喺簿寫一次。\n"
                 "mode=dictation（默書或者分唔到）、shown=false：永遠唔顯示、唔講出、唔逐筆串出成個字；只可以用把聲講部首同結構（有把握先講），否則鼓勵佢自己諗。\n"
                 "唔好讀出粵拼，唔好問佢揀模式，回覆要短。"
             )
