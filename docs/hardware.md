@@ -121,3 +121,42 @@ cmake -S tools/face_render -B build-face-render -G Ninja && cmake --build build-
 ```
 
 Hardware visual sign-off remains for tickets 14/15 on-board.
+
+### SpotPear BOOT button
+
+For 小芽 on `BoardKind::SpotPear128Cam` (`CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM`),
+BOOT is the only interaction button; there is no touch. The firmware reads GPIO0
+(active low, external 10k pull-up) directly through the ESP-IDF GPIO driver;
+`M5.begin()` and `M5.BtnA` are not used. The Atom button overlay does not handle BOOT.
+
+| State | Short press (on release) | Hold for 5 seconds |
+| --- | --- | --- |
+| Companion idle / resting (sleepy) | Request gateway listening | Enter SoftAP |
+| Listening | No action | Enter SoftAP |
+| Thinking (pending reply, no audio yet) | Abort pending reply | Enter SoftAP |
+| Speaking | Abort and stop local playback | Enter SoftAP |
+| WaitingWifi / Connecting / Reconnecting / Error | Retry connection immediately | Enter SoftAP |
+| SoftAP provisioning | No action | Leave SoftAP |
+
+Listening sends XiaoZhi `{"session_id":...,"type":"listen","state":"detect","source":"button"}`
+without a `text` field, equivalent to wake-word detection. Thinking also aborts,
+to avoid a late stale reply. Abort discards late audio and TTS sentence events
+until the next TTS start. Retry interrupts the backoff; establishing a session
+still requires working Wi-Fi and a reachable gateway.
+
+The 5 s action fires once while held; releasing afterwards does not trigger a
+short press. SoftAP shows the existing Wi-Fi QR screen. This is **Wi-Fi
+provisioning only**: per the 2026-10-21 decision, all other parent settings go
+through Grok Bot, not device web pages.
+
+GPIO0 remains the ROM download strapping pin: holding BOOT during reset enters
+download mode. Firmware starts unarmed, ignoring even a boot-time hold longer
+than 5 s, until it observes release continuously for at least 100 ms. Press and
+release edges must each be stable for 30 ms. Short-press action uses the state
+at release. The dedicated poller runs every 10 ms; idle and sleepy share the
+same Listen action (the poller does not read render-private sleepy state).
+
+Still needs on-board verification (tickets 16/17): press-to-listen with the
+gateway's button-only mode; abort within 1 s without old/new reply audio mixing;
+SoftAP Wi-Fi QR scan on iPhone and long-press exit; boot with BOOT held enters
+ROM download mode, and a boot-time low never causes a firmware gesture.

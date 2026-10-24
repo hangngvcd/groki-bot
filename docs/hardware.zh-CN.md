@@ -1,5 +1,7 @@
 [English](hardware.md) | [中文](hardware.zh-CN.md) | [日本語](hardware.ja.md)
 
+SpotPear BOOT 按键操作与待验证项目见 [SpotPear BOOT button](hardware.md#spotpear-boot-button)。
+
 # 硬件规格
 
 

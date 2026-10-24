@@ -166,6 +166,10 @@ public:
     virtual tl::expected<void, ConversationError> submit_tool_result(std::string_view call_id,
                                                                      std::string_view output_json) = 0;
 
+    // Ask the backend to open a listening turn now, as if a wake word had been
+    // detected (button-to-talk). Default: no-op for backends without the notion.
+    virtual tl::expected<void, ConversationError> request_listen() { return {}; }
+
     // Interrupt the assistant's in-progress response (barge-in): stop the
     // backend generating/streaming and return the session to listening.
     virtual tl::expected<void, ConversationError> cancel_response() = 0;

@@ -362,6 +362,10 @@ public:
     // barge in (stop the reply, return to listening) — the intended way to
     // interrupt now that voice input is paused for the whole assistant turn.
     std::atomic<bool> barge_in_request{false};
+    // BOOT requests, consumed by the conversation task (never the GPIO poller).
+    std::atomic<bool> listen_request{false};
+    // Interrupt the current connection backoff for an immediate retry.
+    std::atomic<bool> reconnect_now{false};
 
     // --- Balloon (mutex + completion callback; render_task consumes) -------
 

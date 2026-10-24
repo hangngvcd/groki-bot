@@ -246,8 +246,36 @@ public:
         return {};
     }
 
+    // BOOT button (SpotPear 小芽): same envelope as a wake-word detection, so
+    // the gateway's button-only privacy mode opens its listening window.
+    tl::expected<void, ConversationError> request_listen()
+    {
+        cJSON* root = cJSON_CreateObject();
+        if (!session_id_.empty()) {
+            cJSON_AddStringToObject(root, "session_id", session_id_.c_str());
+        }
+        cJSON_AddStringToObject(root, "type", "listen");
+        cJSON_AddStringToObject(root, "state", "detect");
+        cJSON_AddStringToObject(root, "source", "button");
+        std::lock_guard lock{send_mutex_};
+        const bool ok = send_json_locked(root);
+        cJSON_Delete(root);
+        return ok ? tl::expected<void, ConversationError>{}
+                  : tl::unexpected{ConversationError::SendFailed};
+    }
+
     tl::expected<void, ConversationError> cancel_response()
     {
+#if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
+        // 小芽 BOOT abort: drop the aborted turn's late audio / TTS events until
+        // the next `tts start`, so the next reply never mixes with the old one.
+        // Other boards keep the previous behaviour.
+        std::lock_guard inbound_lock{inbound_mutex_};
+        drop_aborted_turn_.store(true);
+        // The aborted turn's TTS stop is discarded, so restore uplink readiness
+        // here rather than relying on that stale message to reopen the mic.
+        set_state(ConversationState::Listening);
+#endif
         // Barge-in: ask the server to abandon the in-progress reply.
         cJSON* root = cJSON_CreateObject();
         cJSON_AddStringToObject(root, "type", "abort");
@@ -608,6 +636,7 @@ private:
 
     void parse_control(const char* json, std::size_t len)
     {
+        std::lock_guard inbound_lock{inbound_mutex_};
         if (rx_log_count_ < 8) {
             const std::size_t snip = std::min<std::size_t>(len, 384);
             ESP_LOGI(kTag, "rx[%u/%uB]: %.*s%s", rx_log_count_, static_cast<unsigned>(len),
@@ -625,6 +654,13 @@ private:
                 emit(ev);
             },
             [this](const char* type, const cJSON* root) {
+                if (std::strcmp(type, "tts") == 0) {
+                    const char* phase = json_str(root, "state");
+                    if (phase != nullptr && std::strcmp(phase, "start") == 0)
+                        drop_aborted_turn_.store(false);
+                    else if (drop_aborted_turn_.load()) return;
+                }
+
 #if CONFIG_STACKCHAN_COMPANION_FACE
                 if (auto voice = companion_voice_state(type, root)) {
                     ConversationEvent ev{};
@@ -732,7 +768,8 @@ private:
 
     void handle_audio_frame(const std::uint8_t* opus, std::size_t len)
     {
-        if (decoder_ == nullptr || len == 0) return;
+        std::lock_guard inbound_lock{inbound_mutex_};
+        if (drop_aborted_turn_.load() || decoder_ == nullptr || len == 0) return;
 
         esp_audio_dec_in_raw_t raw{};
         raw.buffer = const_cast<std::uint8_t*>(opus);
@@ -876,6 +913,10 @@ private:
 
     esp_websocket_client_handle_t client_{nullptr};
     std::atomic<ConversationState> state_{ConversationState::Idle};
+    // Serialize abort with inbound callbacks so no old decoded audio can be
+    // enqueued after cancel_response returns and the coordinator flushes events.
+    std::mutex inbound_mutex_; // Lock before send_mutex_ when both are needed.
+    std::atomic<bool> drop_aborted_turn_{false}; // Cleared only by the next TTS start.
     std::mutex send_mutex_;
 
     bool hello_received_{false};
@@ -948,6 +989,11 @@ tl::expected<void, ConversationError>
 XiaoZhiClient::submit_tool_result(std::string_view call_id, std::string_view output_json)
 {
     return impl_->submit_tool_result(call_id, output_json);
+}
+
+tl::expected<void, ConversationError> XiaoZhiClient::request_listen()
+{
+    return impl_->request_listen();
 }
 
 tl::expected<void, ConversationError> XiaoZhiClient::cancel_response()
