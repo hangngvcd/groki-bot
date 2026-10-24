@@ -67,6 +67,7 @@ Confidence: **verified** = read from the SpotPear schematic and, where noted, ma
 Sources:
 - [S] SpotPear schematic ESP32S3-1.28inch-AI-CAM.pdf (rev A1, 2026-05-23), https://cdn.static.spotpear.cn/uploads/picture/learn/ESP32/ESP32S3-1.28-CAM/ESP32S3-1.28inch-AI-CAM.pdf (linked from the product wiki https://spotpear.cn/wiki/ESP32-S3-1.28-inch-Camera-LCD-Display-Deepseek.html)
 - [F] SpotPear factory firmware esp32-s3-1.28-cam-ov5640-CN.bin (16 MiB merged image): strings show xiaozhi board dir main/boards/sp-esp32-s3-1.28-cam, class Spotpear_ESP32_S3_1_28_CAM, BoxAudioCodec (ES8311 + ES7210), esp_lcd_gc9a01, SD card; bootloader header = 16 MB flash, DIO 80 MHz; partition table: ota_0 0x20000 size 0x3f0000, ota_1 0x410000 size 0x3f0000, assets 0x800000 0x600000, wallpaper 0xe00000 0x200000. The board source itself is NOT in upstream 78/xiaozhi-esp32 (only sp-esp32-s3-1.28-box, a sibling board without camera); SpotPear distributes it via a Baidu pan zip only.
+- [F2] factory flash dump disassembly (ota_0 at 0x20000; Spotpear_ESP32_S3_1_28_CAM::InitializeSpi/InitializeGc9a01Display at 0x42033919/0x42032f34): SPI3, MOSI 2, MISO -1, SCLK 4, max transfer 240*240*2, DMA auto; CS 5, DC 47, mode 0, 40 MHz, queue depth 10, 8-bit commands/parameters; reset GPIO -1 (SWRESET 0x01), BGR, 16 bpp, invert on, mirror X, display on, MADCTL 0x48. Registers 0x62/0x63 match M5GFX's GC9A01 init list. PwmBacklight(GPIO42, invert=true, 25 kHz).
 - [X] upstream 78/xiaozhi-esp32 main/boards/spotpear/sp-esp32-s3-1.28-box/config.h (commit aab98ab) — sibling board, same audio + display pins except LCD reset.
 
 | Function | GPIO | Confidence | Source/notes |
@@ -78,8 +79,8 @@ Sources:
 | LCD CS | 5 | verified | [S]; [X] |
 | LCD DC | 47 | verified | [S]; [X] |
 | LCD RST | none (RC power-on reset, 10k + 100nF) | verified from schematic | [S]; box variant uses GPIO38, but on CAM GPIO38 is camera D6 |
-| LCD backlight | 42 (PWM) | pin verified, polarity guessed | [S] LCD_BL=GP42 drives PMOS APM2307 either directly (R78, active-low) or via NPN (R79, active-high); assembly option. [X] box uses invert=true. Guess: inverted (active low). |
-| Panel geometry | 240x240, offset 0,0, round; xiaozhi box mirrors X | size verified, orientation guessed | [X]; skeleton uses rotation 0 without mirroring, check orientation on hardware (ticket 14) |
+| LCD backlight | 42 (PWM, 25 kHz) | pin and active-low polarity verified | [S] LCD_BL=GP42; R78/R79 assembly options; [F2] factory PwmBacklight(GPIO42, invert=true, 25 kHz) verifies active-low |
+| Panel geometry | 240x240, offset 0,0, round | size verified, orientation unconfirmed | [F2] factory sets invert on, BGR, SWRESET, mirror X + MADCTL 0x48; its text appeared mirrored on our unit, so we keep native orientation. Ours: rotation 0, invert on, SPI3 40 MHz |
 | Touch | connector has TP_*; TP_SDA/TP_SCL only via 0R/NC options to the shared I2C, TP_INT/TP_RST not routed to MCU | treat as no touch | [S] |
 | I2C (codecs + camera SCCB) SDA | 15 | verified | [S] SDA=GP15 (10k pull-up); [X] |
 | I2C SCL | 14 | verified | [S]; [X] |
@@ -93,6 +94,7 @@ Sources:
 | Speaker amp NS4150B enable (PA_CTRL) | 46, active high | verified pin, polarity from amp datasheet | [S] via R35 0R; [X] same. The skeleton does not call `M5.begin()` (which would drive GPIO46 high as a Capsule power-hold); PA control is ticket 14 |
 | BOOT button | 0, active low, 10k pull-up | verified | [S]; [X] |
 | Power key K1 | SAM8108 latch, not on a GPIO | verified | [S] |
+| Power hold | none | verified | [S] K1 -> SAM8108 ON/OFF latch -> Power_EN gates VCC_IN; no ESP GPIO. Factory firmware also drives GPIO3 high via RTC IO and low+hold on shutdown, but GPIO3 is camera D0 on the schematic and in the factory DVP config, so we do not drive it. |
 | Battery voltage ADC | 1 (ADC1_CH0) via divider | pin verified, divider ratio/curve unverified | [S] VBAT_ADC=GP1; [X] box uses ADC1_CH0 + raw ADC table 1980..2480 |
 | Charging status | not routed to MCU on CAM (MP2636 CHG only) | likely | [S]; box uses GPIO41 — GPIO41 on CAM goes to the TF-card area, unclear |
 | WS2812 LED | 48 via R63 0R/NC option (shared with camera D7 option) | assembly-dependent; treat as absent | [S] |
