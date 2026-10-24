@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Kenta IDA <fuga@fugafuga.org>
 // SPDX-License-Identifier: BSL-1.0
 
+#include "conversation/xiaoya_control.hpp"
 #include "conversation/xiaozhi_client.hpp"
 
 #include <atomic>
@@ -233,6 +234,18 @@ public:
         return {};
     }
 
+    bool send_json(std::string_view json) {
+        auto* root=cJSON_ParseWithLength(json.data(),json.size());
+        if (!root) return false;
+        std::lock_guard lock{send_mutex_};
+        if (const char* event=json_str(root,"event"); event && !std::strcmp(event,"local_speech")) {
+            const char* phase=json_str(root,"state");
+            local_speech_.store(phase && !std::strcmp(phase,"start"));
+        }
+        const bool ok=send_json_locked(root);
+        cJSON_Delete(root); return ok;
+    }
+
     tl::expected<void, ConversationError> commit_audio()
     {
         // Server-side VAD (listen mode=auto) detects turn boundaries.
@@ -246,7 +259,7 @@ public:
         return {};
     }
 
-    // BOOT button (SpotPear 小芽): same envelope as a wake-word detection, so
+    // BOOT button (SpotPear 鈴鈴 build): same envelope as a wake-word detection, so
     // the gateway's button-only privacy mode opens its listening window.
     tl::expected<void, ConversationError> request_listen()
     {
@@ -267,7 +280,7 @@ public:
     tl::expected<void, ConversationError> cancel_response()
     {
 #if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
-        // 小芽 BOOT abort: drop the aborted turn's late audio / TTS events until
+        // 鈴鈴 BOOT abort: drop the aborted turn's late audio / TTS events until
         // the next `tts start`, so the next reply never mixes with the old one.
         // Other boards keep the previous behaviour.
         std::lock_guard inbound_lock{inbound_mutex_};
@@ -669,7 +682,15 @@ private:
                     emit(ev);
                 }
 #endif
-                if (std::strcmp(type, "hello") == 0) {
+                if (std::strcmp(type, "xiaoya") == 0) {
+                    auto cmd=parse_xiaoya(root);
+                    if (cmd) {
+                        ConversationEvent ev{};
+                        ev.type=ConversationEventType::XiaoyaCommand;
+                        ev.xiaoya=*cmd;
+                        emit(ev);
+                    } else ESP_LOGW(kTag,"invalid xiaoya command ignored");
+                } else if (std::strcmp(type, "hello") == 0) {
                     handle_server_hello(root);
                 } else if (std::strcmp(type, "stt") == 0) {
                     emit_text(ConversationEventType::UserTranscript, json_str(root, "text"));
@@ -732,6 +753,9 @@ private:
         send_listen_start();
         // Session is live — the conversation task starts listening.
         set_state(ConversationState::Listening);
+        ConversationEvent ready{};
+        ready.type=ConversationEventType::SessionReady;
+        emit(ready);
     }
 
     void handle_tts(const cJSON* root)
@@ -832,10 +856,14 @@ private:
     {
         AudioChunk* chunk = nullptr;
         while (!sender_should_exit_.load(std::memory_order_acquire)) {
+            if (local_speech_.load()) enc_accum_.clear();
             if (xQueueReceive(audio_tx_queue_, &chunk, pdMS_TO_TICKS(100)) != pdTRUE) {
                 continue;
             }
             if (chunk == nullptr) break; // teardown sentinel
+            if (local_speech_.load()) {
+                heap_caps_free(chunk); chunk=nullptr; enc_accum_.clear(); continue;
+            }
             // Append to the 60 ms accumulator and flush whole Opus frames.
             enc_accum_.insert(enc_accum_.end(), chunk->data, chunk->data + chunk->len_samples);
             heap_caps_free(chunk);
@@ -882,6 +910,7 @@ private:
         int rc;
         {
             std::lock_guard lock{send_mutex_};
+            if (local_speech_.load()) return false;
             rc = esp_websocket_client_send_bin(
                 client_, reinterpret_cast<const char*>(enc_out_buf_.data()),
                 static_cast<int>(out.encoded_bytes), kSendTimeout);
@@ -918,6 +947,7 @@ private:
     std::mutex inbound_mutex_; // Lock before send_mutex_ when both are needed.
     std::atomic<bool> drop_aborted_turn_{false}; // Cleared only by the next TTS start.
     std::mutex send_mutex_;
+    std::atomic<bool> local_speech_{false};
 
     bool hello_received_{false};
     std::uint32_t audio_seq_{0};
@@ -1000,6 +1030,8 @@ tl::expected<void, ConversationError> XiaoZhiClient::cancel_response()
 {
     return impl_->cancel_response();
 }
+
+bool XiaoZhiClient::send_json(std::string_view json) { return impl_->send_json(json); }
 
 ConversationState XiaoZhiClient::state() const { return impl_->state(); }
 

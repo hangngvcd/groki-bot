@@ -1,5 +1,6 @@
 set(_main_priv_reqs
     board
+    lingling_assets
     avatar
     groki_motion
     conversation

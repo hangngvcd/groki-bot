@@ -20,6 +20,6 @@ target_include_directories(face_render PRIVATE "${CMAKE_CURRENT_BINARY_DIR}" "${
     "${ROOT}/components/tl_expected/expected/include")
 target_compile_options(face_render PRIVATE -Wall -Wextra)
 enable_testing()
-foreach(test safe_area sprout unchanged)
+foreach(test safe_area sprout unchanged forms)
     add_test(NAME ${test} COMMAND face_render --test ${test})
 endforeach()

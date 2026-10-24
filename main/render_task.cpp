@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Kenta IDA <fuga@fugafuga.org>
 // SPDX-License-Identifier: BSL-1.0
 
+#include <cstring>
+#include "lingling/assets.hpp"
+#include <set>
 #include "avatar_vm/design_scale.hpp"
 #include "render_task.hpp"
 
@@ -104,6 +107,46 @@ void render_task_entry(void* arg) {
     RichCanvas& canvas = *cv;
 
     avatar::Avatar avatar;
+    M5Canvas face_cache;
+    int cached_slot = -1;
+    bool cache_ok = false;
+    std::set<int> failed_slots;
+    const auto& pack = lingling::assets();
+    if (args.round_face_layout && cv == &buffered && canvas_w == 240 && canvas_h == 240) {
+        avatar.set_face_painter([&](RichCanvas&, const avatar::DrawContext& ctx) {
+            static constexpr const char* names[] = {"neutral", "happy", "sad", "angry", "doubt", "sleepy",
+                "listening", "thinking", "excited", "curious", "confused", "surprised", "dizzy", "affection", "bored"};
+            const auto expr = static_cast<unsigned>(ctx.expression);
+            if (expr >= 15) return false;
+            const int slot = ctx.form * 16 + expr;
+            if (failed_slots.count(slot)) return false;
+            if (slot != cached_slot) {
+                cached_slot = slot;
+                cache_ok = false;
+                auto e = lingling::find_face(pack, ctx.form, names[expr]);
+                if (e && e->kind == 1 && pack.verify(*e)) {
+                    // Only native 240x240 PNGs; reject a corrupt/oversize IHDR before decoding.
+                    const auto d = e->data;
+                    static constexpr std::uint8_t signature[] = {137,80,78,71,13,10,26,10};
+                    if (d.size() >= 33 && std::memcmp(d.data(), signature, 8) == 0 &&
+                        std::memcmp(d.data()+12, "IHDR", 4) == 0 &&
+                        d[16]==0 && d[17]==0 && d[18]==0 && d[19]==240 &&
+                        d[20]==0 && d[21]==0 && d[22]==0 && d[23]==240) {
+                        face_cache.setColorDepth(16);
+                        face_cache.setPsram(true);
+                        if (face_cache.getBuffer() || face_cache.createSprite(240, 240)) {
+                            face_cache.fillScreen(ctx.palette.background);
+                            cache_ok = face_cache.drawPng(d.data(), d.size(), 0, 0);
+                        }
+                    }
+                }
+                if (!cache_ok) failed_slots.insert(slot);
+            }
+            if (!cache_ok) return false;
+            face_cache.pushSprite(&buffered.sprite(), 0, 0);
+            return true;
+        });
+    }
 #if CONFIG_STACKCHAN_COMPANION_FACE
     avatar::CompanionPolicy companion{CONFIG_STACKCHAN_COMPANION_SLEEP_AFTER_MS};
     auto& face = companion;
@@ -296,6 +339,7 @@ void render_task_entry(void* arg) {
             avatar.set_eye_ring_buffer(ring_buf);
             // avatar.tick() opens the frame (begin_frame) and draws the face;
             // overlays compose into the same frame; end_frame() presents.
+            avatar.set_form(state->face.form.load(std::memory_order_relaxed));
             avatar.tick(now_ms, canvas);
         }
 

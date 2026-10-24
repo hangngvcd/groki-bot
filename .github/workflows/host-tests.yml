@@ -64,6 +64,17 @@ jobs:
           cmake --build build-san
           ctest --test-dir build-san --output-on-failure
 
+      # --- lingling_assets: LLAP asset pack parser + pack builder ---------
+      - name: lingling_assets host tests
+        working-directory: components/lingling_assets/test/host
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build
+          ctest --test-dir build --output-on-failure
+
+      - name: lingling asset pack builder tests
+        run: python3 -m unittest tools/lingling_assets/test_build_pack.py
+
       # --- avatar_vm: bytecode decoder + VM interpreter + fuzz -------------
       # Built twice: once plain (fast, exhaustive) and once under
       # ASan + UBSan so the fuzz harness proves memory safety on arbitrary

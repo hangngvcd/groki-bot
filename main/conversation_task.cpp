@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Kenta IDA <fuga@fugafuga.org>
 // SPDX-License-Identifier: BSL-1.0
 
+#include "lingling/assets.hpp"
+#include <nvs.h>
 #include "conversation_task.hpp"
 #if CONFIG_STACKCHAN_COMPANION_FACE
 #include "avatar/companion_policy.hpp"
@@ -359,6 +361,7 @@ public:
             if (state_.listen_request.exchange(false) && state_.conv.active.load() &&
                 local_ != Local::Speaking) {
                 if (client_->request_listen()) {
+                    turn_open_=true;
                     // Local wake feedback, independent of the gateway / MCP:
                     // show the listening face right away. Gateway milestones
                     // (stt -> Thinking, tts start/stop) take over from here.
@@ -383,17 +386,129 @@ public:
                 wake_face_since_ms_ = 0;
                 if (static_cast<avatar::VoiceState>(state_.conv.voice_state.load()) ==
                     avatar::VoiceState::Listening) {
+                    turn_open_=false;
                     ESP_LOGI(kTag, "wake: no gateway reply in %u ms, face back to idle",
                              static_cast<unsigned>(kWakeFaceTimeoutMs));
                     state_.set_voice_state(avatar::VoiceState::Idle);
                 }
             }
 #endif
+            service_lingling();
             service_state();
         }
     }
 
 private:
+    std::optional<conv::XiaoyaCommand> pending_form_;
+    std::vector<lingling::EvolutionStep> evolution_;
+    std::size_t evolution_next_{0};
+    std::uint32_t evolution_due_{0};
+    std::uint8_t evolution_target_{1};
+    bool pending_intro_{false};
+    bool turn_open_{false};
+    bool intro_checked_{false};
+
+    void persist_lingling(const char* key, std::uint8_t value) {
+        nvs_handle_t handle;
+        if (nvs_open("lingling", NVS_READWRITE, &handle) == ESP_OK) {
+            const auto error=nvs_set_u8(handle,key,value);
+            if (error != ESP_OK || nvs_commit(handle) != ESP_OK)
+                ESP_LOGW(kTag,"lingling NVS write failed: %s",key);
+            nvs_close(handle);
+        }
+    }
+    void apply_form(std::uint8_t form) {
+        state_.face.form.store(form);
+        persist_lingling("form",form);
+    }
+    bool play_local_clip(std::string_view name, const char* balloon = nullptr) {
+        const auto& pack=lingling::assets();
+        auto clip=pack.find(name);
+        if (!clip || clip->kind!=2 || !pack.verify(*clip)) return false;
+        // This task owns mic reads and uplink submission. Blocking here suspends both.
+        M5.Mic.end();
+        vTaskDelay(kI2sSettle);
+        client_->send_json(R"({"type":"xiaoya","event":"local_speech","state":"start"})");
+        const auto overlay=state_.request_face_overlay(avatar::Expression::Happy,0);
+        if (balloon) state_.set_balloon_text(balloon,0);
+        std::size_t pos=0,next=0;
+        const auto samples=clip->data.size()/2;
+        const auto started=now_ms();
+        auto mouth=[&] {
+            const auto at=std::size_t(now_ms()-started)*clip->sample_rate/1000;
+            const auto end=std::min<std::size_t>(samples,at+clip->sample_rate/50);
+            int peak=0;
+            for (auto i=at;i<end;++i) {
+                const auto lo=clip->data[i*2], hi=clip->data[i*2+1];
+                const auto value=static_cast<std::int16_t>(std::uint16_t(lo)|(std::uint16_t(hi)<<8));
+                peak=std::max(peak,std::abs(int(value)));
+            }
+            state_.face.mouth_open.store(float(peak)/32768.0f);
+        };
+        while (pos<samples) {
+            if (M5.Speaker.isPlaying(kSpeakerChannel)<kSegmentBuffers-1) {
+                const auto n=std::min(kSegmentSamples,samples-pos);
+                std::memcpy(seg_buf_[next],clip->data.data()+pos*2,n*2);
+                if (!M5.Speaker.playRaw(seg_buf_[next],n,clip->sample_rate,false,1,kSpeakerChannel,false)) {
+                    ESP_LOGW(kTag,"local clip speaker failed");
+                    break;
+                }
+                pos+=n; next=(next+1)%kSegmentBuffers;
+            }
+            mouth(); vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        while (M5.Speaker.isPlaying(kSpeakerChannel)>0) {
+            mouth(); vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        M5.Speaker.end();
+        vTaskDelay(kI2sSettle);
+        client_->send_json(R"({"type":"xiaoya","event":"local_speech","state":"stop"})");
+        state_.face.mouth_open.store(0);
+        state_.clear_face_overlay_if(overlay);
+        enter_listening();
+        return pos==samples;
+    }
+    void service_lingling() {
+        if (local_!=Local::Listening || turn_open_) return;
+        if (pending_form_) {
+            const auto cmd=*pending_form_; pending_form_.reset();
+            const auto from=cmd.from ? cmd.from : state_.face.form.load();
+            evolution_=lingling::plan_evolution(from,cmd.form);
+            evolution_next_=0; evolution_due_=now_ms(); evolution_target_=cmd.form;
+            if (evolution_.empty()) apply_form(cmd.form);
+        }
+        if (evolution_next_<evolution_.size()) {
+            if (static_cast<std::int32_t>(now_ms()-evolution_due_)<0) return;
+            apply_form(evolution_[evolution_next_++].form);
+            state_.request_face_overlay(avatar::Expression::Excited,700);
+            const auto gap=evolution_next_<evolution_.size() ?
+                evolution_[evolution_next_].at_ms-evolution_[evolution_next_-1].at_ms : 500u;
+            evolution_due_=now_ms()+gap;
+            return; // Let the render task show the final Excited pose before praise.
+        }
+        if (!evolution_.empty()) {
+            if (static_cast<std::int32_t>(now_ms()-evolution_due_)<0) return;
+            evolution_.clear();
+            static constexpr const char* praise[]={"", "",
+                "你專心做完一樣，我長出翼仔喇！", "你一直堅持，我嘅翼都大咗喇！",
+                "今日全部做晒，你好有耐性！記得俾爸爸睇吓。"};
+            if (!play_local_clip("vo.evolve.f"+std::to_string(evolution_target_)))
+                state_.set_balloon_text(praise[evolution_target_],0);
+        }
+        if (pending_intro_ && local_==Local::Listening && !turn_open_) {
+            pending_intro_=false;
+            static constexpr const char* kIntroText =
+                "娜娜你好！我係鈴鈴，一隻會慢慢長大嘅白貓仔。你做功課嗰陣我會陪住你，有嘢想問就叫我個名，或者撳一下個掣。";
+            if (play_local_clip("vo.intro.1", kIntroText)) {
+                persist_lingling("intro_done",1);
+            } else {
+                // No voice pack flashed yet: show the text only and keep the flag unset,
+                // so the spoken intro still plays once after the pack is flashed.
+                state_.set_balloon_text(kIntroText, 0);
+            }
+        }
+    }
+
     // ---- event bridge: WS task -> this task --------------------------------
 
     void enqueue_event(const conv::ConversationEvent& ev)
@@ -879,6 +994,7 @@ private:
 
     void enter_listening()
     {
+        turn_open_=false;
         M5.Speaker.end();
         vTaskDelay(kI2sSettle);
         state_.face.mouth_open.store(0.0f, std::memory_order_relaxed);
@@ -1028,7 +1144,25 @@ private:
     void handle_event(const conv::ConversationEvent& ev)
     {
         switch (ev.type) {
+        case conv::ConversationEventType::SessionReady:
+            client_->send_json("{\"type\":\"xiaoya\",\"event\":\"form_state\",\"form\":"+
+                                   std::to_string(state_.face.form.load())+"}");
+            break;
+        case conv::ConversationEventType::XiaoyaCommand:
+            if (ev.xiaoya) {
+                if (ev.xiaoya->kind==conv::XiaoyaCommand::Kind::Intro) pending_intro_=true;
+                else {
+                    evolution_.clear(); evolution_next_=0;
+                    const auto cmd=*ev.xiaoya;
+                    const auto from=cmd.from ? cmd.from : state_.face.form.load();
+                    if (!cmd.animate || cmd.form<=from) {
+                        pending_form_.reset(); apply_form(cmd.form);
+                    } else pending_form_=cmd;
+                }
+            }
+            break;
         case conv::ConversationEventType::FaceVoiceState:
+            turn_open_=ev.face_voice_state!=avatar::VoiceState::Idle;
 #if CONFIG_STACKCHAN_COMPANION_FACE
             state_.set_voice_state(ev.face_voice_state);
 #endif
@@ -1042,6 +1176,16 @@ private:
             // local state machine owns mic/speaker timing.
             if (local_ == Local::Init && ev.state == conv::ConversationState::Listening) {
                 ESP_LOGI(kTag, "session ready");
+                turn_open_=false;
+                if (!intro_checked_) {
+                    intro_checked_=true;
+                    std::uint8_t done=0;
+                    nvs_handle_t handle;
+                    if (nvs_open("lingling",NVS_READONLY,&handle)==ESP_OK) {
+                        nvs_get_u8(handle,"intro_done",&done); nvs_close(handle);
+                    }
+                    if (!done) pending_intro_=true;
+                }
 #if CONFIG_STACKCHAN_COMPANION_FACE
                 state_.set_voice_state(avatar::VoiceState::Idle);
                 state_.face.expression.store(static_cast<int>(avatar::Expression::Neutral), std::memory_order_relaxed);
@@ -1073,6 +1217,7 @@ private:
             break;
 
         case conv::ConversationEventType::SpeechStarted:
+            turn_open_=true;
             ESP_LOGI(kTag, "user speech started");
             state_.note_face_activity();
             // The user is actually talking to us — this is the listening
@@ -1325,6 +1470,8 @@ private:
         M5.Mic.end();
         vTaskDelay(kI2sSettle);
 
+        client_->send_json(R"({"type":"xiaoya","event":"local_speech","state":"start"})");
+
         // Pre-compute peak envelope so the avatar mouth opens in sync with the
         // utterance even though we're not running the normal service_playback.
         const std::size_t env_window = kKatakotoRate * kEnvelopeStepMs / 1000u;
@@ -1370,6 +1517,7 @@ private:
         M5.Speaker.end();
         vTaskDelay(kI2sSettle);
         state_.face.mouth_open.store(0.0f, std::memory_order_relaxed);
+        client_->send_json(R"({"type":"xiaoya","event":"local_speech","state":"stop"})");
         return R"({"ok":true})";
 #else
         return R"({"ok":false,"error":"Japanese TTS disabled"})";

@@ -244,6 +244,17 @@ fn draw()
   end
   let base_r = sz(100) * body_scale_mix * breath
 
+  if sprout > 0.5 then
+    if form > 1.5 then
+      let wing = sz(7 + form * 2)
+      let flap = (bre - 10) / 10 * sz(3)
+      fill_ellipse(cx - base_r * 0.94, cy - sz(14) - flap, wing, sz(19 + form * 2), 0xDFFF)
+      fill_ellipse(cx + base_r * 0.94, cy - sz(14) - flap, wing, sz(19 + form * 2), 0xDFFF)
+      fill_triangle(cx - base_r, cy, cx - base_r - wing, cy - sz(26) - flap, cx - base_r + wing, cy - sz(12), 0xFFFF)
+      fill_triangle(cx + base_r, cy, cx + base_r + wing, cy - sz(26) - flap, cx + base_r - wing, cy - sz(12), 0xFFFF)
+    end
+  end
+
   if talk > 0.05 then
     fill_ellipse(cx, cy, base_r * sx, base_r * sy, body)
   else
@@ -251,7 +262,7 @@ fn draw()
   end
 
   -- Xiaoya's sprout follows the head, with a breathing lean and speech lift.
-  if sprout > 0.5 then
+  if sprout > 0.5 and form < 2.5 then
     let lean = (bre - 10) / 10 * sz(3)
     let root_y = cy - base_r
     let tip_x = cx + lean
@@ -268,6 +279,22 @@ fn draw()
     let right_y = joint_y - sz(7) + lean * 0.4
     fill_triangle(tip_x, joint_y, tip_x + sz(9), joint_y - sz(9), right_x, right_y, 0x7E4A)
     fill_triangle(tip_x, joint_y, right_x, right_y, tip_x + sz(9), joint_y - sz(1), 0x7E4A)
+  end
+
+  if sprout > 0.5 then
+    let top = cy - base_r
+    if form > 2.5 then
+      if form < 3.5 then
+        fill_triangle(cx, top - sz(13), cx - sz(7), top - sz(5), cx + sz(7), top - sz(5), 0x07FF)
+        fill_triangle(cx, top + sz(3), cx - sz(7), top - sz(5), cx + sz(7), top - sz(5), 0x05B5)
+      else
+        fill_triangle(cx - sz(12), top + sz(2), cx - sz(14), top - sz(10), cx, top + sz(2), 0xFEA0)
+        fill_triangle(cx + sz(12), top + sz(2), cx + sz(14), top - sz(10), cx, top + sz(2), 0xFEA0)
+        fill_triangle(cx - sz(8), top + sz(2), cx, top - sz(14), cx + sz(8), top + sz(2), 0xFFE0)
+        fill_triangle(cx, top - sz(21), cx - sz(4), top - sz(13), cx + sz(4), top - sz(13), 0xFFE0)
+        fill_triangle(cx - sz(4), top - sz(18), cx + sz(4), top - sz(18), cx, top - sz(10), 0xFFE0)
+      end
+    end
   end
 
   -- Sleeping zzz trail floating up past the top-right edge (aora emotion 00 睡眠, "sleep").

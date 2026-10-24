@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Kenta IDA <fuga@fugafuga.org>
 // SPDX-License-Identifier: BSL-1.0
 
+#include "lingling/assets.hpp"
+#include <nvs.h>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -579,6 +581,14 @@ extern "C" void app_main()
     // the entire audio session is silently dropped — every subsequent
     // audio_data write sees g_audio_sink == nullptr and bails.
     g_state = new stackchan::app::SharedState{};
+    (void)lingling::assets();
+    nvs_handle_t lingling_nvs;
+    if (nvs_open("lingling", NVS_READONLY, &lingling_nvs) == ESP_OK) {
+        std::uint8_t form = 1;
+        if (nvs_get_u8(lingling_nvs, "form", &form) == ESP_OK && form >= 1 && form <= 4)
+            g_state->face.form.store(form);
+        nvs_close(lingling_nvs);
+    }
     stackchan::app::settings_sinks::attach_state(*g_state);
     // Seed the speaker volume atom from NVS. apply_speaker_volume was
     // already called before g_state existed (the boot arpeggio block,

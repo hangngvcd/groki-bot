@@ -44,6 +44,7 @@ inline float read_var(Var v, const avatar::Canvas& canvas, const avatar::DrawCon
                       const avatar::FaceTuning& t, float scale)
 {
     switch (v) {
+    case Var::Form: return static_cast<float>(ctx.form);
     case Var::Sprout: return ctx.sprout_visible ? 1.0f : 0.0f;
     case Var::CanvasW: return static_cast<float>(canvas.width());
     case Var::CanvasH: return static_cast<float>(canvas.height());
@@ -186,7 +187,7 @@ tl::expected<void, VmError> Vm::run(const Bytecode& bc, avatar::Canvas& canvas,
         case Op::PushVar: {
             if (pc + 1 > code_size) return tl::unexpected(VmError::Truncated);
             const std::uint8_t id = code[pc++];
-            if (id > static_cast<std::uint8_t>(Var::Sprout)) {
+            if (id > static_cast<std::uint8_t>(Var::Form)) {
                 return tl::unexpected(VmError::BadVarId);
             }
             auto r = push(read_var(static_cast<Var>(id), canvas, ctx, tuning, scale));

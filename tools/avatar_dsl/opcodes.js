@@ -42,6 +42,7 @@ export const Op = Object.freeze({
 // Context variable IDs.
 export const Var = Object.freeze({
   sprout: 0xE5,
+  form: 0xE6,
   canvas_w: 0x00,
   canvas_h: 0x01,
   canvas_scale: 0x02,

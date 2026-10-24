@@ -46,6 +46,7 @@ public:
                                                              std::string_view output_json) override;
     tl::expected<void, ConversationError> request_listen() override;
     tl::expected<void, ConversationError> cancel_response() override;
+    bool send_json(std::string_view json) override;
     ConversationState state() const override;
     std::uint32_t tx_evicted_chunks() const override;
 

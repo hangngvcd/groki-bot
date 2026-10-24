@@ -65,3 +65,8 @@ target_include_directories(conversation_test_boot_button PRIVATE
 target_link_libraries(conversation_test_boot_button PRIVATE cjson_host)
 target_compile_options(conversation_test_boot_button PRIVATE -Wall -Wextra)
 add_test(NAME boot_button COMMAND conversation_test_boot_button)
+
+add_executable(conversation_test_xiaoya test_xiaoya.cpp)
+target_include_directories(conversation_test_xiaoya PRIVATE ${CONVERSATION_ROOT}/include)
+target_link_libraries(conversation_test_xiaoya PRIVATE cjson_host)
+add_test(NAME xiaoya COMMAND conversation_test_xiaoya)

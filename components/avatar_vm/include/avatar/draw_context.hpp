@@ -13,6 +13,7 @@
 namespace stackchan::avatar {
 
 struct DrawContext {
+    std::uint8_t form = 1;
     bool sprout_visible = false;
     // 0 selects automatic design_scale(canvas).
     float layout_scale = 0.0f;

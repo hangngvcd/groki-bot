@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Joseph Zhou
 // SPDX-FileCopyrightText: 2026 Kenta IDA <fuga@fugafuga.org> (canvas adapter)
 // SPDX-License-Identifier: BSL-1.0
+#include <cstdlib>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -62,7 +63,7 @@ void require(bool ok, const std::string& message)
 {
     if (!ok) throw std::runtime_error(message);
 }
-Frame render(bool round, int expression, float mouth, std::uint32_t time, bool sprout = true)
+Frame render(bool round, int expression, float mouth, std::uint32_t time, bool sprout = true, int form = 1)
 {
     M5Canvas buffer;
     const int w = round ? 240 : 320;
@@ -74,6 +75,7 @@ Frame render(bool round, int expression, float mouth, std::uint32_t time, bool s
     ctx.expression_blend = ctx.expression_hold_blend = ctx.expression_hold2_blend = 1;
     ctx.eye_open_ratio = 1;
     ctx.mouth_open_ratio = mouth;
+    ctx.form = form;
     ctx.now_ms = time;
     ctx.breath = std::sin(time * 0.001f);
     ctx.sprout_visible = round && sprout;
@@ -208,6 +210,28 @@ void test(const std::string& name)
             for (std::size_t i = 0; i < f.ring.size(); i += 2)
                 require(std::hypot(f.ring[i] - 120, f.ring[i+1] - 120) < 110, "eye outside body region");
         }
+    } else if (name == "forms") {
+        auto f1 = render(true, 0, 0, 6000);
+        for (int form = 2; form <= 4; ++form) {
+            for (int e = 0; e < 15; ++e) for (float mouth : {0.0f, 0.7f})
+                for (std::uint32_t t=0;t<9000;t+=1700) {
+                    auto state=render(true,e,mouth,t,true,form);
+                    for (int y=0;y<240;++y) for(int x=0;x<240;++x) {
+                        const auto pixel=state.pixels[y*240+x];
+                        require(!pixel || std::hypot(x-119.5,y-119.5)<=116, "form state outside safe area");
+                        if (form>=3) require(pixel!=0x7e4a && pixel!=0x5c08, "sprout in adult state");
+                    }
+                }
+            auto f = render(true, 0, 0, 6000, true, form);
+            int outside = 0;
+            for (int y=0;y<240;++y) for(int x=0;x<240;++x) {
+                auto pixel=f.pixels[y*240+x];
+                if (pixel && !f1.pixels[y*240+x] && x<35) ++outside;
+                require(!pixel || std::hypot(x-119.5,y-119.5)<=116, "form outside safe area");
+                if (form>=3) require(pixel!=0x7e4a && pixel!=0x5c08, "sprout in adult form");
+            }
+            require(outside>0, "missing wings");
+        }
     } else if (name == "sprout") {
         for (std::size_t i = 0; i < states.size(); ++i)
             green_x(render(true, states[i], i == 3 ? 0.7f : 0, 6000));
@@ -236,16 +260,17 @@ int main(int argc, char** argv)
         require(argc == 2, "usage: face_render <out_dir>");
         std::filesystem::path dir(argv[1]);
         std::filesystem::create_directories(dir);
+        const int form = std::getenv("FACE_FORM") ? std::clamp(std::atoi(std::getenv("FACE_FORM")),1,4) : 1;
         std::vector<Frame> frames;
         for (int e = 0; e < 15; ++e) {
-            auto f = render(true, e, 0, 6000);
+            auto f = render(true, e, 0, 6000, true, form);
             auto file = "spotpear128cam_" + std::string(e < 10 ? "0" : "") +
                 std::to_string(e) + "_" + names[e] + ".png";
             png(dir / file, f, true);
             frames.push_back(std::move(f));
         }
         for (std::size_t i = 0; i < states.size(); ++i) {
-            auto f = render(true, states[i], i == 3 ? 0.7f : 0, 6000);
+            auto f = render(true, states[i], i == 3 ? 0.7f : 0, 6000, true, form);
             png(dir / ("spotpear128cam_state_" + std::string(state_names[i]) + ".png"), f, true);
             frames.push_back(std::move(f));
         }
