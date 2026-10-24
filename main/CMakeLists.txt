@@ -36,6 +36,7 @@ set(_main_srcs
     "camera_service.cpp"
     "captive_portal.cpp"
     "demo_loop.cpp"
+    "flash_worker.cpp"
     "boot_button_task.cpp"
     "device_ui.cpp"
     "diag.cpp"

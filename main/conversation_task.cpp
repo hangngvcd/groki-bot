@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: BSL-1.0
 
 #include "lingling/assets.hpp"
-#include <nvs.h>
+#include "flash_worker.hpp"
 #include "conversation_task.hpp"
 #if CONFIG_STACKCHAN_COMPANION_FACE
 #include "avatar/companion_policy.hpp"
@@ -409,14 +409,13 @@ private:
     bool turn_open_{false};
     bool intro_checked_{false};
 
+    // Ticket 15d: this task's stack is in PSRAM, so it must never touch NVS /
+    // flash itself (cache_utils.c:127 esp_task_stack_is_sane_cache_disabled
+    // panic ~1.5 s after session ready = the intro_done write; reboot loop on
+    // b48d892 / 01ad5b6). flash_worker runs the op on an internal-RAM stack.
     void persist_lingling(const char* key, std::uint8_t value) {
-        nvs_handle_t handle;
-        if (nvs_open("lingling", NVS_READWRITE, &handle) == ESP_OK) {
-            const auto error=nvs_set_u8(handle,key,value);
-            if (error != ESP_OK || nvs_commit(handle) != ESP_OK)
-                ESP_LOGW(kTag,"lingling NVS write failed: %s",key);
-            nvs_close(handle);
-        }
+        if (!flash_worker::nvs_write_u8("lingling",key,value))
+            ESP_LOGW(kTag,"lingling NVS write failed: %s",key);
     }
     void apply_form(std::uint8_t form) {
         if (form<1 || form>4) { ESP_LOGW(kTag,"lingling: bad form %u ignored",unsigned(form)); return; }
@@ -1223,10 +1222,8 @@ private:
                 if (!intro_checked_) {
                     intro_checked_=true;
                     std::uint8_t done=0;
-                    nvs_handle_t handle;
-                    if (nvs_open("lingling",NVS_READONLY,&handle)==ESP_OK) {
-                        nvs_get_u8(handle,"intro_done",&done); nvs_close(handle);
-                    }
+                    // NVS reads also disable the flash cache: off this PSRAM stack too.
+                    (void)flash_worker::nvs_read_u8("lingling","intro_done",done);
                     if (!done) pending_intro_=true;
                 }
 #if CONFIG_STACKCHAN_COMPANION_FACE
@@ -1697,8 +1694,10 @@ void conversation_task_entry(void* arg)
 
 void start_conversation_task(ConversationTaskArgs& args)
 {
-    // Stack in PSRAM to save internal RAM: this task is a TLS/WS read-write loop with no flash
-    // writes (same as the say_worker / asr PSRAM stacks), so 8 KiB go back to internal RAM.
+    // Stack in PSRAM to save internal RAM: this task is a TLS/WS read-write loop. It must NOT
+    // call nvs_* / esp_partition_* / esp_flash_* directly (flash ops assert an internal stack);
+    // every NVS access goes through flash_worker (ticket 15d). Start the worker first.
+    (void)flash_worker::start();
     constexpr UBaseType_t kCaps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
     xTaskCreatePinnedToCoreWithCaps(conversation_task_entry, "conversation", 8192, &args, 5, nullptr,
                                     0, kCaps);

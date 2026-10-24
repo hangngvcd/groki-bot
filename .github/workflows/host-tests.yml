@@ -44,7 +44,7 @@ jobs:
           g++ --version | head -1
 
       - name: Release asset and OTA partition tests
-        run: python3 -m unittest script.test_release_board tools.test_check_ota_headroom
+        run: python3 -m unittest script.test_release_board tools.test_check_ota_headroom tools.test_flash_stack_guard
 
       - name: Release OTA host tests
         working-directory: components/wifi_config_service/test/host
