@@ -7,7 +7,7 @@ from stackchan_mcp.cloud_proxy import CloudConnectionInfo
 from stackchan_mcp.gbot_voice_proxy import GbotVoiceProxy
 from stackchan_mcp.wake_gate import (
     SherpaOnnxKeywordSpotter,
-    XIAOBAI_WAKE_KEYWORD,
+    LINGLING_WAKE_KEYWORD,
     create_wake_gate_from_env,
     parse_keyword_variants,
 )
@@ -21,15 +21,15 @@ class VariantSpotter(FakeKeywordSpotter):
         super().__init__()
         self.result = result
         self.matcher = SherpaOnnxKeywordSpotter.__new__(SherpaOnnxKeywordSpotter)
-        self.matcher._phrase = "小白"
-        self.matcher._variants = parse_keyword_variants(XIAOBAI_WAKE_KEYWORD)
+        self.matcher._phrase = "鈴鈴"
+        self.matcher._variants = parse_keyword_variants(LINGLING_WAKE_KEYWORD)
 
     def detect(self, pcm):
         return self.matcher._result_matches(self.result)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("result,hit", [("小白小白", True), ("unrelated", False)])
+@pytest.mark.parametrize("result,hit", [("鈴鈴", True), ("小白", False), ("unrelated", False)])
 async def test_variant_controls_forwarding(monkeypatch, result, hit):
     monkeypatch.setenv("STACKCHAN_WAKE_WORD", "1")
     monkeypatch.setenv("STACKCHAN_BUTTON_ONLY_LISTEN", "1")

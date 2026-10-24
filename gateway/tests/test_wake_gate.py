@@ -9,6 +9,7 @@ import pytest
 from stackchan_mcp.wake_gate import (
     HEY_GROKI_WAKE_KEYWORD,
     KWS_MODEL_NAME,
+    LINGLING_WAKE_KEYWORD,
     XIAOBAI_WAKE_KEYWORD,
     WakeWordUnavailable,
     _default_model_root,
@@ -635,6 +636,20 @@ def test_xiaobai_env_and_explicit_override(monkeypatch):
     assert _keyword_from_env() == XIAOBAI_WAKE_KEYWORD
     monkeypatch.setenv("STACKCHAN_WAKE_KEYWORD", "S UW1 @custom")
     assert _keyword_from_env() == "S UW1 @custom"
+
+
+def test_lingling_preset(monkeypatch):
+    _clear_wake_env(monkeypatch)
+    for phrase in ("鈴鈴", "铃铃"):
+        monkeypatch.setenv("STACKCHAN_WAKE_PHRASE", phrase)
+        assert _keyword_from_env() == LINGLING_WAKE_KEYWORD
+    assert keywords_file_body(LINGLING_WAKE_KEYWORD) == (
+        "l íng l íng :1 #0.05 @鈴鈴\nl ìng l ìng :1 #0.05 @鈴鈴\n"
+    )
+    variants = parse_keyword_variants(LINGLING_WAKE_KEYWORD)
+    assert [v.tag for v in variants] == ["鈴鈴", "鈴鈴"]
+    monkeypatch.setenv("STACKCHAN_WAKE_KEYWORD", "l íng @custom")
+    assert _keyword_from_env() == "l íng @custom"
 
 
 def test_validate_keyword_tokens():

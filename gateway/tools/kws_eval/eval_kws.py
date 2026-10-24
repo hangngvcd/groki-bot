@@ -46,6 +46,14 @@ VARIANTS = {
     "L6_ling2_ling1": ("l íng l īng @鈴鈴", "鈴鈴"),
     "L7_en_lih_ng": ("L IH1 NG L IH1 NG @鈴鈴", "鈴鈴"),
     "L8_en_liy_ng": ("L IY1 NG L IY1 NG @鈴鈴", "鈴鈴"),
+    # combos: Mandarin líng líng (cn/tw voices) + Cantonese-ish lìng lìng (hk voices).
+    "C1_l2s1_l4s1": ("l íng l íng :1 #0.05 @鈴鈴\nl ìng l ìng :1 #0.05 @鈴鈴", "鈴鈴"),
+    "C2_l2s1_l4s3": ("l íng l íng :1 #0.05 @鈴鈴\nl ìng l ìng :3 #0.05 @鈴鈴", "鈴鈴"),
+    "C3_l2s1_l4s1_l42s1": (
+        "l íng l íng :1 #0.05 @鈴鈴\nl ìng l ìng :1 #0.05 @鈴鈴\nl ìng l íng :1 #0.05 @鈴鈴",
+        "鈴鈴",
+    ),
+    "C4_l2s1_l4s3_t02": ("l íng l íng :1 #0.2 @鈴鈴\nl ìng l ìng :3 #0.2 @鈴鈴", "鈴鈴"),
 }
 MODEL = _model_dir_from_env()
 CHUNK = 3200  # 100 ms @16k s16

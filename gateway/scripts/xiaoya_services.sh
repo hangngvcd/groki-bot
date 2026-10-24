@@ -83,7 +83,7 @@ validate() {
     put STACKCHAN_BUTTON_ONLY_LISTEN 1
     put STACKCHAN_CHILD_PROFILE 1
     put STACKCHAN_VOICE_BACKEND gbot
-    put STACKCHAN_WAKE_PHRASE 小白
+    put STACKCHAN_WAKE_PHRASE 鈴鈴
     put STACKCHAN_PARENT_API 1
     put STACKCHAN_USB_DISABLE 1
     uv_bin=$(get UV_BIN); uv_bin=${uv_bin:-$(command -v uv || printf /opt/homebrew/bin/uv)}
