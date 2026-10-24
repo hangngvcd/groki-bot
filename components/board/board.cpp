@@ -319,7 +319,7 @@ BoardProfile profile_for(BoardKind kind) noexcept
         p.circular_display = true;
         p.round_face_layout = true;
         p.button_overlay_ui = true; // No touch; BOOT gestures: main/boot_button_task.cpp.
-        p.speaker_base_volume = 180; // ~70 % (xiaozhi factory default output volume 70).
+        p.speaker_base_volume = 255; // full digital scale; DAC +12 dB sets the ceiling.
         break;
     case BoardKind::StopWatch:
         p.speaker_magnification = 16; // ES8311 → AW8737A input attenuator

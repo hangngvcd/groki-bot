@@ -53,7 +53,7 @@ constexpr std::uint8_t kEs7210MicGain = 0x1A;
 // prime suspect for the USB brownout reboot loop. 0 dB is the factory
 // ceiling (xiaozhi's volume 100); the user / parent volume (default 40 %)
 // scales M5.Speaker's master volume below it.
-constexpr std::uint8_t kEs8311DacVolume = 0xBF;
+constexpr std::uint8_t kEs8311DacVolume = 0xD7;  // +12 dB: 0 dB was far too quiet on the NS4150B (parent, 22:09)
 // Soft start: the DAC volume ramps up after the PA is enabled so the amp
 // never sees a full-scale step (pop + inrush on USB power).
 constexpr std::uint8_t kDacRampStep = 0x18;
