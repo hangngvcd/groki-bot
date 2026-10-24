@@ -149,7 +149,7 @@ async def test_tool_device(monkeypatch, tmp_path, case):
                     break
             glyphs = [frame for frame in frames if frame.get("cmd") == "glyph"]
             if case == "copy":
-                assert result["shown"] is True and result["seconds"] == 5
+                assert result["shown"] is True and result["seconds"] == 10
                 assert glyphs and glyphs[0]["hold_ms"] == 10000
                 assert len(glyphs) == 1
                 assert glyphs[0]["session_id"] == hello["session_id"]
