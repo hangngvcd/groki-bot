@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BSL-1.0
 
 #include "lingling/assets.hpp"
+#include "diag.hpp"
 #include "flash_worker.hpp"
 #include "panic_breadcrumb.hpp"
 #include "conversation_task.hpp"
@@ -54,6 +55,8 @@ namespace {
 namespace conv = stackchan::conversation;
 
 constexpr const char* kTag = "conv-task";
+// PSRAM stack (see start_conversation_task). Ticket 15h logs its HWM per session.
+constexpr std::uint32_t kConversationTaskStack = 8192;
 
 // Audio rates depend on the selected provider:
 //   OpenAI Realtime: µ-law @ 8 kHz both directions (encoded inside the
@@ -1274,6 +1277,13 @@ private:
                                         ? ",\"panic\":\"" + std::string(panic_breadcrumb_text()) + "\""
                                         : std::string())+
                                    ",\"uptime_ms\":"+std::to_string(now_ms())+"}");
+            // Ticket 15h: stack headroom of this (PSRAM-stack) task after each
+            // (re)connect — the recover path runs deep inside handle_event.
+            ESP_LOGI(kTag, "conversation stack hwm after session ready: %u B of %u B (reconnects=%u)",
+                     static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)),
+                     static_cast<unsigned>(kConversationTaskStack),
+                     static_cast<unsigned>(state_.conv.reconnects.load(std::memory_order_relaxed)));
+            diag_stack_hwm();
             break;
         case conv::ConversationEventType::XiaoyaCommand:
             if (ev.xiaoya) {
@@ -1790,7 +1800,7 @@ void start_conversation_task(ConversationTaskArgs& args)
     // every NVS access goes through flash_worker (ticket 15d). Start the worker first.
     (void)flash_worker::start();
     constexpr UBaseType_t kCaps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
-    xTaskCreatePinnedToCoreWithCaps(conversation_task_entry, "conversation", 8192, &args, 5, nullptr,
+    xTaskCreatePinnedToCoreWithCaps(conversation_task_entry, "conversation", kConversationTaskStack, &args, 5, nullptr,
                                     0, kCaps);
 }
 
