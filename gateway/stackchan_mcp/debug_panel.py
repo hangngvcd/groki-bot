@@ -175,7 +175,9 @@ function render(st) {
 }
 async function tick() {
   try {
-    const resp = await fetch("/debug/status", { cache: "no-store" });
+    const token = new URLSearchParams(location.hash.slice(1)).get("token");
+    const headers = token ? { Authorization: "Bearer " + token } : {};
+    const resp = await fetch("/debug/status", { cache: "no-store", headers });
     render(await resp.json());
   } catch (e) {
     document.getElementById("updated").innerHTML =

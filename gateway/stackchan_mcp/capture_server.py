@@ -10,10 +10,13 @@ can view the image via the Read tool.
 
 from __future__ import annotations
 
+import hmac
+import ipaddress
 import inspect
 import json
 import logging
 import os
+import re
 import time
 from collections.abc import Awaitable, Callable
 
@@ -36,9 +39,42 @@ INJECT_TOKEN_KEY = web.AppKey("inject_token", str)
 DEBUG_STATUS_KEY = web.AppKey("debug_status", DebugStatus)
 
 
+def capture_bind_host(host: str | None = None) -> str:
+    """Keep child debug HTTP local while leaving the device WS host alone."""
+    return (
+        "127.0.0.1"
+        if child_profile.enabled()
+        else (os.getenv("HOST", "0.0.0.0") if host is None else host)
+    )
+
+
+@web.middleware
+async def child_debug_guard(request: web.Request, handler):
+    if child_profile.enabled() and request.path.startswith("/debug/"):
+        try:
+            loopback = ipaddress.ip_address(request.remote or "").is_loopback
+        except ValueError:
+            loopback = False
+        host = request.headers.get("Host", "")
+        if not loopback or not re.fullmatch(
+            r"(?:127\.0\.0\.1|localhost|\[::1\])(?::[0-9]+)?", host, re.I
+        ):
+            return web.json_response({"error": "Forbidden"}, status=403)
+        token = request.app[INJECT_TOKEN_KEY]
+        if (
+            request.path != "/debug/panel"
+            and token
+            and not _is_authorized(request.headers.get("Authorization", ""), token)
+        ):
+            return web.json_response({"error": "Unauthorized"}, status=401)
+    return await handler(request)
+
+
 def _is_authorized(auth_header: str, expected_token: str) -> bool:
     """Return whether the bearer auth header matches the expected token."""
-    return auth_header == f"Bearer {expected_token}"
+    return hmac.compare_digest(
+        auth_header.encode("utf-8"), f"Bearer {expected_token}".encode("utf-8")
+    )
 
 
 async def handle_capture(request: web.Request) -> web.Response:
@@ -136,7 +172,7 @@ async def handle_inject_text(request: web.Request) -> web.Response:
 
 
 async def handle_debug_status(request: web.Request) -> web.Response:
-    """Return the gateway status snapshot as JSON (read-only, no auth)."""
+    """Return the gateway status snapshot as JSON (read-only; guarded in child profile)."""
     return web.json_response(request.app[DEBUG_STATUS_KEY].snapshot())
 
 
@@ -152,7 +188,7 @@ def create_capture_app(
     debug_status: DebugStatus | None = None,
 ) -> web.Application:
     """Create the HTTP capture application."""
-    app = web.Application()
+    app = web.Application(middlewares=[child_debug_guard])
     app[CAPTURE_TOKEN_KEY] = capture_token
     app[INJECT_TOKEN_KEY] = (
         os.getenv("STACKCHAN_TOKEN", "").strip() if child_profile.enabled() else capture_token

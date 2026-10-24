@@ -51,6 +51,7 @@ from .wake_gate import (
     WakeGate,
     button_only_listen_enabled,
     create_wake_gate_from_env,
+    is_explicit_listen_request,
 )
 
 logger = logging.getLogger(__name__)
@@ -359,6 +360,7 @@ class GeminiVoiceProxy:
                 gate = create_wake_gate_from_env()
                 self._wake_gate = gate
             gate.button_only = True
+            gate.close()
         mode = getattr(gate, "listening_mode", "wake_word") if gate else "pass_through"
         self._status.listening_mode = mode
         logger.info("Gateway listening mode: %s", mode)
@@ -509,6 +511,8 @@ class GeminiVoiceProxy:
         if not self.connected:
             return False
         msg_type = message.get("type", "")
+        if button_only_listen_enabled():
+            msg_type = str(msg_type).strip().lower()
         if msg_type == "abort":
             interrupt = getattr(self._bridge, "interrupt", None)
             if interrupt is not None:
@@ -517,6 +521,14 @@ class GeminiVoiceProxy:
                 await self._abort_in_flight_tts()
         elif msg_type == "listen":
             state = message.get("state", "")
+            if button_only_listen_enabled():
+                state = str(state).strip().lower()
+                if state in {"start", "detect"} and not is_explicit_listen_request(message):
+                    logger.debug(
+                        "button-only: ignoring listen state=%s mode=%s (not a button press)",
+                        state, message.get("mode", ""),
+                    )
+                    return True
             if state in {"start", "detect"} and button_only_listen_enabled():
                 gate = self._maybe_rebuild_wake_gate()
                 if gate is not None:
@@ -553,6 +565,9 @@ class GeminiVoiceProxy:
 
     def _configure_wake_gate(self, gate: WakeGate | None) -> None:
         if gate is not None:
+            if button_only_listen_enabled():
+                gate.button_only = True
+                gate.close()
             gate.is_tts_active = lambda: self._tts_active
         self._wake_gate = gate
 

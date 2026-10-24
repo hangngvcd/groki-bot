@@ -72,7 +72,10 @@ def _no_proxy_opener() -> urllib.request.OpenerDirector:
 
 
 def _default_fetch_json(url: str, *, timeout: float) -> Any:
-    with _no_proxy_opener().open(url, timeout=timeout) as resp:
+    token = os.getenv("STACKCHAN_TOKEN", "").strip()
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    request = urllib.request.Request(url, headers=headers)
+    with _no_proxy_opener().open(request, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 

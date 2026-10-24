@@ -17,7 +17,7 @@ from aiohttp import web
 from aiohttp.web_log import AccessLogger
 
 from . import child_profile
-from .capture_server import create_capture_app
+from .capture_server import capture_bind_host, create_capture_app
 from .cloud_proxy import CloudProxy, DEFAULT_CLOUD_URL
 from .device_emotion import IDLE_EMOTION, LISTENING_EMOTION, face_to_device_emotion
 from .demo_reactions import DemoReactions
@@ -397,13 +397,19 @@ class Gateway:
             access_log_class=TrackQuietAccessLogger,
         )
         await self._http_runner.setup()
-        site = web.TCPSite(self._http_runner, host, capture_port)
+        capture_host = capture_bind_host(host)
+        site = web.TCPSite(self._http_runner, capture_host, capture_port)
         await site.start()
 
+        if child_profile.enabled():
+            logger.info(
+                "child profile: debug/capture HTTP bound to 127.0.0.1:%d (HOST ignored)",
+                capture_port,
+            )
         self._running = True
         logger.info(
             "Gateway started: WS on %s:%d, capture on %s:%d, vision_url=%s, voice_backend=%s",
-            host, ws_port, host, capture_port, self.vision_url,
+            host, ws_port, capture_host, capture_port, self.vision_url,
             self.voice_proxy_url if self.voice_backend == "xiaozhi" else self.voice_backend,
         )
         # /track is up; now launch the face tracker that posts to it.

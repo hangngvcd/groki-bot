@@ -197,7 +197,13 @@ Set `STACKCHAN_BUTTON_ONLY_LISTEN=1` in `.env` and restart to enable this
 mode for either `gbot` or `gemini`. The default is `0`, preserving existing
 behavior. With wake word disabled (`STACKCHAN_WAKE_WORD=0`) or no usable
 KWS model, microphone audio stays local until the device sends XiaoZhi
-`listen` with state `start` or `detect` (for example, a button press).
+`listen` with `state:detect` and `source:button` (the BOOT button), or
+`state:start` and `mode:manual` (explicit push-to-talk / hold-to-talk).
+These are the only messages that count as a button press; values are compared
+case-insensitively after trimming whitespace. The firmware's automatic
+`listen start mode:auto` on every connect/reconnect is ignored, as are
+`mode:realtime`, a start without a mode, and detect without `source:button`.
+Each new session starts with a dormant wake gate.
 Audio recorded before the button press is discarded. Forwarding stops after
 `STACKCHAN_WAKE_IDLE_S` of silence (default 30 seconds), using the existing
 wake gate activity threshold and listening window. With a working KWS model,
@@ -209,6 +215,13 @@ The startup log and status page show `button_only`, `wake_word_or_button`,
 `wake_gate.listening_mode`.
 
 ### Child profile (optional)
+
+In child profile, debug/capture HTTP binds only to `127.0.0.1` (ignoring `HOST`);
+ESP32 WebSocket binding is unchanged. Debug status contains no conversation text
+or tool error text. When `STACKCHAN_TOKEN` is set, status and text injection require
+Bearer authentication; injection is disabled without a token. Open the panel at
+`http://127.0.0.1:8766/debug/panel#token=...` (use your token). The panel sends the
+token in an Authorization header, never in the query string.
 
 Set `STACKCHAN_CHILD_PROFILE=1` in `.env` and restart. The default is `0`,
 preserving existing behavior. The gateway overrides conflicting settings;
