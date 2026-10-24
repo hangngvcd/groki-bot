@@ -503,16 +503,64 @@ class GeminiVoiceProxy:
     def handle_xiaoya_event(self, message: dict[str, Any]) -> None:
         """鈴鈴 device events.
 
-        ``local_speech`` start/stop brackets a clip the device plays by itself
-        (vo.intro.1, form praise lines): the wake gate ignores the wake word
-        meanwhile and for the 0.5 s tail.
+        ``local_speech`` start/stop brackets a clip or animation the device
+        plays by itself (vo.intro.1, level-up + praise line): the wake gate
+        ignores the wake word meanwhile and for the 0.5 s tail.
+
+        ``intro_tts``: the device has no vo.intro.1 clip, so the gateway
+        speaks the intro line once with free edge-tts (never the live model).
+        The device has already stored its intro flag, so this never repeats
+        on boot; if edge-tts is unavailable the intro is simply skipped.
         """
-        if str(message.get("event", "")).strip().lower() != "local_speech":
+        event = str(message.get("event", "")).strip().lower()
+        if event == "intro_tts":
+            self._spawn_intro_tts()
+            return
+        if event != "local_speech":
             return
         state = str(message.get("state", "")).strip().lower()
         gate = self._wake_gate
         if gate is not None and state in {"start", "stop"}:
             gate.set_local_speech(state == "start")
+
+    def _spawn_intro_tts(self) -> None:
+        provider = self._edge_tts
+        if provider is None:
+            logger.info("鈴鈴 intro: no clip and edge-tts unavailable; skipped")
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        task = loop.create_task(self._speak_intro_tts(provider), name="lingling-intro-tts")
+        self._tts_tasks.add(task)
+        task.add_done_callback(self._on_tts_task_done)
+
+    async def _speak_intro_tts(self, provider) -> None:
+        from .xiaoya_forms import INTRO_TEXT, INTRO_VOICE  # noqa: PLC0415
+
+        factory = self.edge_tts_provider_factory or EdgeTTSProvider
+        gate = self._wake_gate
+        if gate is not None:
+            gate.set_local_speech(True)
+        try:
+            speaker = factory(
+                codec=provider.codec,
+                send_to_device=provider.send_to_device,
+                voice=INTRO_VOICE,
+                send_lock=provider.send_lock,
+                tts_start_delay_s=provider.tts_start_delay_s,
+                frame_interval_s=provider.frame_interval_s,
+                on_device_state=provider.on_device_state,
+            )
+            result = await speaker.speak_text(INTRO_TEXT)
+            if not result.get("ok"):
+                logger.warning("鈴鈴 intro edge-tts failed (%s); skipped", result.get("error"))
+        except Exception:
+            logger.warning("鈴鈴 intro edge-tts failed; skipped", exc_info=True)
+        finally:
+            if gate is not None:
+                gate.set_local_speech(False)
 
     async def send_device_json(self, message: dict[str, Any]) -> bool:
         """Handle a JSON envelope coming from the device.

@@ -17,7 +17,9 @@ this text.
 4. Optional: if the bot can use local stdio MCP servers, register one server
    named `xiaoya-parent` with command `~/.stackchan/bin/stackchan-parent` and
    argument `mcp`. Tools: `xiaoya_status`, `xiaoya_get_settings`,
-   `xiaoya_set_setting(key, value)`, `xiaoya_homework_progress(done, total)`, `xiaoya_replay_intro()`.
+   `xiaoya_set_setting(key, value)`, `xiaoya_homework_list()`,
+   `xiaoya_homework_add(titles)`, `xiaoya_homework_remove(items)`,
+   `xiaoya_homework_redo(items)`, `xiaoya_replay_intro()`.
    The shell commands below work without it.
 5. Nothing secret goes into the bot: the CLI reads the parent token from
    `~/.stackchan/parent_token` on the Mac itself. Do not paste the token,
@@ -63,13 +65,18 @@ this text.
 5. 命令報錯（例如超出範圍）就照講錯喺邊，問家長要唔要改過個值。
 家長講得含糊（例如「細聲啲」）就提議一個具體數值，再確認。
 
-## 功課進度同鈴鈴形態
-鈴鈴每日由「小苗貓」開始，跟今日功課進度長大：做完三分一 →「小翼貓」，三分二 →「寶石貓」，全部做完 →「星冠貓」。只會升唔會跌，半夜自動返「小苗貓」。
-- 睇進度：~/.stackchan/bin/stackchan-parent homework
-- 家長講「今日 5 樣做完 2 樣」：同家長確認「今日功課 2/5，啱唔啱？」，啱先執行
-  ~/.stackchan/bin/stackchan-parent homework 2 5
-  （有 MCP 就用 xiaoya_homework_progress，done=2 total=5）
-- 只可以用家長講嘅數字，唔好自己估；唔好因為小朋友講「做完喇」就改。
+## 功課清單同鈴鈴形態
+今日功課清單放喺 gateway。娜娜每做完一項，會自己同鈴鈴講，鈴鈴確認後記低；gateway 跟清單計鈴鈴形態：做完三分一 →「小翼貓」，三分二 →「寶石貓」，全部做完 →「星冠貓」。只會升唔會跌（加功課、要求重做都唔會跌），半夜清單清空、返「小苗貓」。
+你**唔會**報功課進度，亦冇工具可以報；你只係喺家長加／刪功課嗰陣改清單。
+- 睇清單：~/.stackchan/bin/stackchan-parent homework
+- 家長話加功課（例如「今日有中文作文同數學 p.12」）：同家長確認「加『中文作文』同『數學 p.12』，啱唔啱？」，啱先執行
+  ~/.stackchan/bin/stackchan-parent homework add "中文作文" "數學 p.12"
+  （有 MCP 就用 xiaoya_homework_add，titles=["中文作文", "數學 p.12"]）
+- 家長話刪一項：確認後執行 ~/.stackchan/bin/stackchan-parent homework remove "數學"（可以用 #編號）
+  （有 MCP 就用 xiaoya_homework_remove）
+- 家長話某項要重做：確認後執行 ~/.stackchan/bin/stackchan-parent homework redo "中文作文"
+  （有 MCP 就用 xiaoya_homework_redo）
+- 唔好幫娜娜剔「做完」；唔好自己估功課名；家長冇講就唔好改清單。
 
 ## 重播自我介紹
 家長想再聽鈴鈴自我介紹：確認後執行 ~/.stackchan/bin/stackchan-parent intro（有 MCP 就用 xiaoya_replay_intro）。答「鈴鈴未連線」就照講，唔好重試第二種方法。

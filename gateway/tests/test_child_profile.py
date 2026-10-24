@@ -165,6 +165,8 @@ async def test_gbot_receives_only_child_catalog(child, monkeypatch, native_end):
             "send_task",
             "search_conversations",
             "end_the_call" if native_end else "end_conversation",
+            "homework_list",
+            "homework_done",
         }
         executor_factory.assert_called_once()
         mac.assert_not_called()
@@ -181,6 +183,8 @@ def test_gemini_child_catalog_excludes_search_and_other_tools(child):
         for declaration in tool.function_declarations or []
     } == {
         "end_conversation",
+        "homework_list",
+        "homework_done",
     }
 
 
@@ -194,7 +198,9 @@ async def test_extensions_cannot_broaden_child_catalog(child):
     executor = voice_tools.VoiceToolExecutor(extensions=(extension,))
     try:
         assert {entry["name"] for entry in executor.declarations()} == {
-            "end_conversation"
+            "end_conversation",
+            "homework_list",
+            "homework_done",
         }
         assert (await executor.execute("camera_capture", {}))["ok"] is False
         dispatch.assert_not_awaited()

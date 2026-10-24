@@ -125,19 +125,38 @@ async def run_mcp(client):
         except RuntimeError as exc:
             return {"ok": False, "error": str(exc)}
 
-    @server.tool()
-    async def xiaoya_homework_progress(done: int, total: int) -> dict:
-        """Report today's homework progress (done of total items).
-
-        鈴鈴's growth form follows it: F2 at 1/3, F3 at 2/3, F4 when all done.
-        Only call with numbers the parent or the homework list confirmed.
-        """
+    async def homework(values=None):
         try:
-            return await asyncio.to_thread(
-                client.call, "homework-progress", {"done": done, "total": total}
-            )
+            return await asyncio.to_thread(client.call, "homework", values)
         except RuntimeError as exc:
             return {"ok": False, "error": str(exc)}
+
+    @server.tool()
+    async def xiaoya_homework_list() -> dict:
+        """Read today's homework list, how many 娜娜 has done, and 鈴鈴's form."""
+        return await homework()
+
+    @server.tool()
+    async def xiaoya_homework_add(titles: list[str]) -> dict:
+        """Add homework items to today's list, only when the parent says so.
+
+        Progress is NOT reported here: 娜娜 marks items done herself and the
+        gateway recomputes 鈴鈴's form.  Adding never lowers the form.
+        """
+        return await homework({"add": titles})
+
+    @server.tool()
+    async def xiaoya_homework_remove(items: list[str]) -> dict:
+        """Remove homework items (by #id or title) when the parent says so."""
+        return await homework({"remove": items})
+
+    @server.tool()
+    async def xiaoya_homework_redo(items: list[str]) -> dict:
+        """Mark items (by #id or title) as needing a redo, when the parent asks.
+
+        The item becomes pending again; 鈴鈴's form does not go down.
+        """
+        return await homework({"redo": items})
 
     @server.tool()
     async def xiaoya_replay_intro() -> dict:
@@ -163,8 +182,8 @@ def main(argv=None):
             command.add_argument("key")
             command.add_argument("value")
         if name == "homework":
-            command.add_argument("done", nargs="?", type=int)
-            command.add_argument("total", nargs="?", type=int)
+            command.add_argument("action", nargs="?", choices=("list", "add", "remove", "redo"), default="list")
+            command.add_argument("items", nargs="*")
     args = parser.parse_args(argv)
     try:
         client = ParentClient(args.url)
@@ -176,14 +195,23 @@ def main(argv=None):
             print(json.dumps(data, ensure_ascii=False, indent=2))
             return 0 if data.get("ok") else 1
         if args.command == "homework":
-            if (args.done is None) != (args.total is None):
-                raise ValueError("用法：homework [做完數 總數] / usage: homework [DONE TOTAL]")
-            values = (
-                None if args.done is None else {"done": args.done, "total": args.total}
-            )
-            data = client.call("homework-progress", values)
-            print(json.dumps(data, ensure_ascii=False, indent=2))
-            return 0
+            if args.action == "list":
+                if args.items:
+                    raise ValueError("用法：homework [list|add|remove|redo] [項目...]")
+                values = None
+            elif not args.items:
+                raise ValueError(f"用法：homework {args.action} 項目... / usage: homework {args.action} ITEM...")
+            else:
+                values = {args.action: args.items}
+            data = client.call("homework", values)
+            if data.get("ok"):
+                forms = data["forms"]
+                for item in forms["items"]:
+                    print(f"#{item['id']} {'✓' if item['done'] else '·'} {item['title']}")
+                print(f"今日 {forms['done']}/{forms['total']} 項；鈴鈴：F{forms['form']} {forms['form_name_zh']}")
+            else:
+                print(json.dumps(data, ensure_ascii=False, indent=2))
+            return 0 if data.get("ok") else 1
         values = (
             {args.key: cli_value(args.key, args.value)}
             if args.command == "set"

@@ -206,13 +206,23 @@ def create_parent_app(token, settings=None, debug_status=None, forms=None):
         return web.json_response({"ok": True, "forms": forms.snapshot()})
 
     async def post_homework(request):
+        # The parent assistant only edits the list (dad adds / removes / asks
+        # for a redo).  Progress itself comes from 娜娜 marking items done.
         try:
             body = await request.json()
-            if not isinstance(body, dict):
-                raise ValueError("Expected {done, total}")
-            snapshot = forms.update_progress(
-                body.get("done"), body.get("total"), source="parent-api"
-            )
+            if not isinstance(body, dict) or len(body) != 1:
+                raise ValueError('Expected one of {"add": [...]}, {"remove": [...]}, {"redo": [...]}')
+            (op, value), = body.items()
+            if op == "add":
+                snapshot = forms.add_items(value, source="parent-api")
+            elif op == "remove":
+                snapshot = forms.remove_items(value, source="parent-api")
+            elif op == "redo":
+                snapshot = forms.redo_items(value, source="parent-api")
+            else:
+                raise ValueError("op: expected add / remove / redo")
+        except LookupError as exc:
+            return web.json_response({"ok": False, "error": str(exc).strip("'\"")}, status=404)
         except (ValueError, TypeError) as exc:
             return web.json_response({"ok": False, "error": str(exc)}, status=400)
         return web.json_response({"ok": True, "forms": snapshot})
@@ -228,8 +238,8 @@ def create_parent_app(token, settings=None, debug_status=None, forms=None):
     app.router.add_get("/parent/v1/status", status)
     app.router.add_get("/parent/v1/settings", get_settings)
     app.router.add_post("/parent/v1/settings", post_settings)
-    app.router.add_get("/parent/v1/homework-progress", get_homework)
-    app.router.add_post("/parent/v1/homework-progress", post_homework)
+    app.router.add_get("/parent/v1/homework", get_homework)
+    app.router.add_post("/parent/v1/homework", post_homework)
     app.router.add_post("/parent/v1/intro", post_intro)
     return app
 
