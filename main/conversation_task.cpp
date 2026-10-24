@@ -21,6 +21,7 @@
 #include <cJSON.h>
 #include <esp_heap_caps.h>
 #include <esp_log.h>
+#include <esp_system.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/idf_additions.h>
@@ -418,22 +419,47 @@ private:
         }
     }
     void apply_form(std::uint8_t form) {
-        state_.face.form.store(form);
-        persist_lingling("form",form);
+        if (form<1 || form>4) { ESP_LOGW(kTag,"lingling: bad form %u ignored",unsigned(form)); return; }
+        const auto old=state_.face.form.exchange(form);
+        if (old!=form) persist_lingling("form",form);  // no NVS write on a same-form resend
+    }
+    static const char* reset_reason_name(esp_reset_reason_t r) {
+        switch (r) {
+        case ESP_RST_POWERON: return "poweron";
+        case ESP_RST_EXT: return "ext";
+        case ESP_RST_SW: return "sw";
+        case ESP_RST_PANIC: return "panic";
+        case ESP_RST_INT_WDT: return "int_wdt";
+        case ESP_RST_TASK_WDT: return "task_wdt";
+        case ESP_RST_WDT: return "wdt";
+        case ESP_RST_DEEPSLEEP: return "deepsleep";
+        case ESP_RST_BROWNOUT: return "brownout";
+        case ESP_RST_SDIO: return "sdio";
+        case ESP_RST_USB: return "usb";
+        case ESP_RST_JTAG: return "jtag";
+        default: return "unknown";
+        }
     }
     bool play_local_clip(std::string_view name, const char* balloon = nullptr) {
         const auto& pack=lingling::assets();
         auto clip=pack.find(name);
         if (!clip || clip->kind!=2 || !pack.verify(*clip)) return false;
         // This task owns mic reads and uplink submission. Blocking here suspends both.
+        const auto samples=clip->data.size()/2;
+        if (!clip->sample_rate || !samples) return false;
+        ESP_LOGI(kTag,"lingling clip %.*s start (%u ms, heap %u, psram %u)",int(name.size()),name.data(),
+                 unsigned(samples*1000/clip->sample_rate),unsigned(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                 unsigned(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
         M5.Mic.end();
         vTaskDelay(kI2sSettle);
         client_->send_json(R"({"type":"xiaoya","event":"local_speech","state":"start"})");
         const auto overlay=state_.request_face_overlay(avatar::Expression::Happy,0);
         if (balloon) state_.set_balloon_text(balloon,0);
         std::size_t pos=0,next=0;
-        const auto samples=clip->data.size()/2;
         const auto started=now_ms();
+        // Hard cap so a stuck speaker can never pin this task: clip length + 2 s.
+        const auto deadline=started+std::uint32_t(samples*1000/clip->sample_rate)+2000;
+        auto overdue=[&] { return static_cast<std::int32_t>(now_ms()-deadline)>=0; };
         auto mouth=[&] {
             const auto at=std::size_t(now_ms()-started)*clip->sample_rate/1000;
             const auto end=std::min<std::size_t>(samples,at+clip->sample_rate/50);
@@ -456,11 +482,14 @@ private:
                 pos+=n; next=(next+1)%kSegmentBuffers;
             }
             mouth(); vTaskDelay(pdMS_TO_TICKS(10));
+            if (overdue()) { ESP_LOGW(kTag,"local clip overdue; stopping"); break; }
         }
-        while (M5.Speaker.isPlaying(kSpeakerChannel)>0) {
+        while (M5.Speaker.isPlaying(kSpeakerChannel)>0 && !overdue()) {
             mouth(); vTaskDelay(pdMS_TO_TICKS(10));
         }
+        M5.Speaker.stop(kSpeakerChannel);
         M5.Speaker.end();
+        ESP_LOGI(kTag,"lingling clip %.*s end (%s)",int(name.size()),name.data(),pos==samples ? "complete" : "cut");
         vTaskDelay(kI2sSettle);
         client_->send_json(R"({"type":"xiaoya","event":"local_speech","state":"stop"})");
         state_.face.mouth_open.store(0);
@@ -499,12 +528,16 @@ private:
             pending_intro_=false;
             static constexpr const char* kIntroText =
                 "娜娜你好！我係鈴鈴，一隻會慢慢長大嘅白貓仔。你做功課嗰陣我會陪住你，有嘢想問就叫我個名，或者撳一下個掣。";
-            if (play_local_clip("vo.intro.1", kIntroText)) {
-                persist_lingling("intro_done",1);
-            } else {
-                // No voice pack flashed yet: show the text only and keep the flag unset,
-                // so the spoken intro still plays once after the pack is flashed.
-                state_.set_balloon_text(kIntroText, 0);
+            // Ticket 15c: mark the intro done BEFORE playing. The old order (flag
+            // only after a complete playback) replayed the clip on every boot when
+            // the board reset mid-clip — the loud reboot loop on b48d892.
+            persist_lingling("intro_done",1);
+            (void)kIntroText;
+            if (!play_local_clip("vo.intro.1")) {
+                // No clip in the pack: the gateway speaks the line once with
+                // edge-tts (or skips it). Never repeated, no text balloon.
+                ESP_LOGI(kTag,"lingling intro: no clip; asking gateway TTS");
+                client_->send_json(R"({"type":"xiaoya","event":"intro_tts"})");
             }
         }
     }
@@ -1145,13 +1178,23 @@ private:
     {
         switch (ev.type) {
         case conv::ConversationEventType::SessionReady:
+            // form_state doubles as the boot telemetry: reset reason (brownout /
+            // panic / wdt ... — visible on the gateway without a serial cable)
+            // and the current speaker volume.
             client_->send_json("{\"type\":\"xiaoya\",\"event\":\"form_state\",\"form\":"+
-                                   std::to_string(state_.face.form.load())+"}");
+                                   std::to_string(state_.face.form.load())+
+                                   ",\"volume\":"+std::to_string(state_.speaker.volume_pct.load())+
+                                   ",\"reset_reason\":\""+reset_reason_name(esp_reset_reason())+"\""+
+                                   ",\"uptime_ms\":"+std::to_string(now_ms())+"}");
             break;
         case conv::ConversationEventType::XiaoyaCommand:
             if (ev.xiaoya) {
                 if (ev.xiaoya->kind==conv::XiaoyaCommand::Kind::Intro) pending_intro_=true;
-                else {
+                else if (ev.xiaoya->kind==conv::XiaoyaCommand::Kind::Volume) {
+                    // demo_loop sees the change, applies M5.Speaker volume and persists it.
+                    ESP_LOGI(kTag,"lingling: volume %u %% (gateway)",unsigned(ev.xiaoya->volume));
+                    state_.speaker.volume_pct.store(ev.xiaoya->volume);
+                } else {
                     evolution_.clear(); evolution_next_=0;
                     const auto cmd=*ev.xiaoya;
                     const auto from=cmd.from ? cmd.from : state_.face.form.load();

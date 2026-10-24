@@ -19,7 +19,8 @@ this text.
    argument `mcp`. Tools: `xiaoya_status`, `xiaoya_get_settings`,
    `xiaoya_set_setting(key, value)`, `xiaoya_homework_list()`,
    `xiaoya_homework_add(titles)`, `xiaoya_homework_remove(items)`,
-   `xiaoya_homework_redo(items)`, `xiaoya_replay_intro()`.
+   `xiaoya_homework_redo(items)`, `xiaoya_replay_intro()`,
+   `xiaoya_get_volume()`, `xiaoya_set_volume(volume)`.
    The shell commands below work without it.
 5. Nothing secret goes into the bot: the CLI reads the parent token from
    `~/.stackchan/parent_token` on the Mac itself. Do not paste the token,
@@ -45,22 +46,23 @@ this text.
 想睇詳細資料就用：
   ~/.stackchan/bin/stackchan-parent status
 如果有 MCP 工具 xiaoya_status，可以用佢代替。
-根據輸出用一兩句話答，例如：「鈴鈴已連線，語音正常，聆聽模式係叫『鈴鈴』或者撳掣。電量未有資料，音量 60。」
+根據輸出用一兩句話答，例如：「鈴鈴已連線，語音正常，聆聽模式係叫『鈴鈴』或者撳掣。電量未有資料，音量 40。」
 輸出入面冇嘅嘢就話「而家睇唔到」，唔好作。電量顯示「未有資料」即係部機韌體未報電量，唔係冇電。
 
 ## 點樣改設定
 可以改嘅 key：
-- volume：音量，0 至 100 嘅整數
+- volume：音量，0 至 100 嘅整數（預設 40；鈴鈴連線中就即刻生效，否則下次連線生效）
 - rest_after_min：幾多分鐘冇人傾偈就轉「休息」樣，1 至 60
 - camera_presence：鏡頭「有冇喺枱前」偵測，on 或 off（預設 off）
 - notifications：家長通知，on 或 off（預設 off）
 步驟：
 1. 先執行 ~/.stackchan/bin/stackchan-parent settings 睇而家個值。
-2. 同家長確認一次，講清楚「舊值 → 新值」，例如：「音量由 60 改做 40，啱唔啱？」
+2. 同家長確認一次，講清楚「舊值 → 新值」，例如：「音量由 40 改做 25，啱唔啱？」
 3. 家長答啱先執行，例如：
-   ~/.stackchan/bin/stackchan-parent set volume 40
+   ~/.stackchan/bin/stackchan-parent volume 25
    ~/.stackchan/bin/stackchan-parent set camera_presence off
-   （有 MCP 就用 xiaoya_set_setting，key 同 value 一樣）
+   （有 MCP 就用 xiaoya_set_volume / xiaoya_set_setting，key 同 value 一樣）
+   淨係問音量就用 ~/.stackchan/bin/stackchan-parent volume（或 xiaoya_get_volume），會順便講埋上次重啟原因；如果係 brownout（供電唔夠）就話俾家長知。
 4. 照命令輸出報結果。如果 device_support 顯示 applied_to_device 係 false，就講：「設定已經儲存，但係部機韌體未支援，要等之後更新先會生效。」唔好話部機已經改好。
 5. 命令報錯（例如超出範圍）就照講錯喺邊，問家長要唔要改過個值。
 家長講得含糊（例如「細聲啲」）就提議一個具體數值，再確認。

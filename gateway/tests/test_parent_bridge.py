@@ -27,16 +27,16 @@ def store(tmp_path):
 
 def test_settings(store, caplog, monkeypatch):
     assert store.get() == dict(
-        volume=60, rest_after_min=5, camera_presence=False, notifications=False
+        volume=40, rest_after_min=5, camera_presence=False, notifications=False
     )
     events = []
     store.add_listener(lambda settings, keys: events.append((settings, keys)))
     with caplog.at_level(logging.INFO):
-        result = store.set("volume", 40, source="parent-api")
-    assert result["changed"] == {"volume": {"old": 60, "new": 40}}
-    assert "Parent setting changed: volume 60 -> 40 (source=parent-api)" in caplog.text
+        result = store.set("volume", 55, source="parent-api")
+    assert result["changed"] == {"volume": {"old": 40, "new": 55}}
+    assert "Parent setting changed: volume 40 -> 55 (source=parent-api)" in caplog.text
     assert events[0][1] == {"volume"}
-    assert ParentSettings(store.path).get()["volume"] == 40
+    assert ParentSettings(store.path).get()["volume"] == 55
     assert store.path.stat().st_mode & 0o777 == 0o600
     assert store.path.parent.stat().st_mode & 0o777 == 0o700
     original = store.path.read_text()
@@ -48,7 +48,7 @@ def test_settings(store, caplog, monkeypatch):
     with pytest.raises(OSError):
         store.set("volume", 30, source="test")
     assert store.path.read_text() == original
-    assert store.get()["volume"] == 40
+    assert store.get()["volume"] == 55
     assert not list(store.path.parent.glob(".parent-settings-*"))
 
 
@@ -71,7 +71,7 @@ def test_settings(store, caplog, monkeypatch):
 def test_invalid_atomic(store, values):
     with pytest.raises(ValueError):
         store.update(values, source="test")
-    assert store.get()["volume"] == 60
+    assert store.get()["volume"] == 40
     assert not store.path.exists()
 
 
@@ -79,22 +79,24 @@ def test_corrupt(store, caplog):
     store.path.parent.mkdir()
     store.path.write_text("{broken")
     with caplog.at_level(logging.WARNING):
-        assert ParentSettings(store.path).get()["volume"] == 60
+        assert ParentSettings(store.path).get()["volume"] == 40
     assert "corrupt" in caplog.text
     store.path.write_text('{"volume": 30, "notifications": "false"}')
-    assert ParentSettings(store.path).get()["volume"] == 60
+    assert ParentSettings(store.path).get()["volume"] == 40
 
 
 @pytest.mark.asyncio
 async def test_pushers(store):
     pusher = AsyncMock()
     store.register_pusher("volume", pusher)
-    store.set("volume", 40, source="test")
+    store.set("volume", 30, source="test")
     await asyncio.gather(*store._tasks)
-    pusher.assert_awaited_once_with(40)
+    pusher.assert_awaited_once_with(30)
     await store.push_to_device()
     assert pusher.await_count == 2
-    assert all(not item["applied_to_device"] for item in device_support().values())
+    support = device_support()
+    assert support["volume"]["applied_to_device"]  # ticket 15c: xiaoya volume cmd
+    assert all(not item["applied_to_device"] for key, item in support.items() if key != "volume")
 
 
 def test_pure_status(store):
@@ -153,7 +155,7 @@ async def test_api_and_cli(store, monkeypatch, caplog, capsys):
         ]:
             assert (await client.get(url, headers=headers)).status == expected
         with caplog.at_level(logging.INFO):
-            response = await client.post(url, headers=auth, json={"volume": 40})
+            response = await client.post(url, headers=auth, json={"volume": 45})
         assert response.status == 200
         assert "source=parent-api" in caplog.text
         assert (
@@ -161,7 +163,7 @@ async def test_api_and_cli(store, monkeypatch, caplog, capsys):
                 url, headers=auth, json={"volume": 30, "notifications": "on"}
             )
         ).status == 400
-        assert store.get()["volume"] == 40
+        assert store.get()["volume"] == 45
         response = await client.get("/parent/v1/status", headers=auth)
         assert "device_id" not in await response.text()
         base = str(client.make_url("")).rstrip("/")
@@ -225,6 +227,7 @@ async def test_voice_catalogs(monkeypatch, child):
             names = {tool["name"] for tool in executor.declarations()}
             assert not names & {
                 "xiaoya_set_setting",
+                "xiaoya_set_volume",
                 "set_setting",
                 "set_settings",
                 "set_volume",
@@ -282,11 +285,11 @@ async def test_handlers_without_sockets(store, monkeypatch):
     assert (await request("GET", path, {**auth, "Origin": "null"})).status == 403
     assert (await request("GET", path, {**auth, "Host": "evil"})).status == 403
     assert (await request("GET", path, auth, remote="192.168.1.2")).status == 403
-    response = await request("POST", path, auth, {"volume": 40})
+    response = await request("POST", path, auth, {"volume": 45})
     assert response.status == 200
-    assert json.loads(response.text)["changed"]["volume"]["new"] == 40
+    assert json.loads(response.text)["changed"]["volume"]["new"] == 45
     assert (await request("POST", path, auth, {"volume": 10, "bad": 1})).status == 400
-    assert store.get()["volume"] == 40
+    assert store.get()["volume"] == 45
     response = await request("GET", "/parent/v1/status", auth)
     assert response.status == 200
     assert "transcripts" not in response.text and "device_id" not in response.text
@@ -355,3 +358,30 @@ def test_singleton(tmp_path, monkeypatch):
     reset_parent_settings()
     assert get_parent_settings() is not first
     reset_parent_settings()
+
+
+@pytest.mark.asyncio
+async def test_parent_mcp_volume_tools(monkeypatch):
+    from mcp.server.fastmcp import FastMCP
+    from stackchan_mcp.parent_cli import run_mcp
+
+    calls = []
+
+    class Client:
+        def call(self, endpoint, values=None):
+            calls.append((endpoint, values))
+            return {"ok": True, "volume": (values or {}).get("volume", 40)}
+
+    seen = {}
+
+    async def fake_run(self):
+        seen["names"] = {tool.name for tool in await self.list_tools()}
+        seen["get"] = await self.call_tool("xiaoya_get_volume", {})
+        seen["set"] = await self.call_tool("xiaoya_set_volume", {"volume": 25})
+        seen["bad"] = await self.call_tool("xiaoya_set_volume", {"volume": 150})
+
+    monkeypatch.setattr(FastMCP, "run_stdio_async", fake_run)
+    await run_mcp(Client())
+    assert {"xiaoya_get_volume", "xiaoya_set_volume"} <= seen["names"]
+    assert calls == [("volume", None), ("volume", {"volume": 25})]
+    assert "0..100" in str(seen["bad"])

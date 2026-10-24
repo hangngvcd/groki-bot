@@ -147,6 +147,7 @@ def create_parent_app(token, settings=None, debug_status=None, forms=None):
     settings = settings if settings is not None else get_parent_settings()
     debug_status = debug_status if debug_status is not None else get_debug_status()
     forms = forms if forms is not None else get_xiaoya_forms()
+    settings.register_pusher("volume", forms.send_volume)
 
     @web.middleware
     async def guard(request, handler):
@@ -234,6 +235,38 @@ def create_parent_app(token, settings=None, debug_status=None, forms=None):
             )
         return web.json_response({"ok": True})
 
+    def volume_payload():
+        report = forms.snapshot().get("device", {})
+        return {
+            "ok": True,
+            "volume": settings.get()["volume"],
+            "device_connected": forms.session_ready,
+            "device_volume": report.get("volume"),
+            "last_reset_reason": report.get("reset_reason"),
+            "last_boot_report_at": report.get("at"),
+        }
+
+    async def get_volume(request):
+        return web.json_response(volume_payload())
+
+    async def post_volume(request):
+        # {"volume": 0..100}; stored as the parent "volume" setting and sent to
+        # 鈴鈴 now (if connected) and again on every reconnect.
+        try:
+            body = await request.json()
+            if not isinstance(body, dict) or set(body) != {"volume"}:
+                raise ValueError('Expected {"volume": 0..100}')
+            result = settings.update({"volume": body["volume"]}, source="parent-api")
+        except (ValueError, TypeError) as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+        return web.json_response(
+            {
+                **volume_payload(),
+                "changed": result["changed"],
+                "applies": "now" if forms.session_ready else "next_connect",
+            }
+        )
+
     app = web.Application(middlewares=[guard])
     app.router.add_get("/parent/v1/status", status)
     app.router.add_get("/parent/v1/settings", get_settings)
@@ -241,6 +274,8 @@ def create_parent_app(token, settings=None, debug_status=None, forms=None):
     app.router.add_get("/parent/v1/homework", get_homework)
     app.router.add_post("/parent/v1/homework", post_homework)
     app.router.add_post("/parent/v1/intro", post_intro)
+    app.router.add_get("/parent/v1/volume", get_volume)
+    app.router.add_post("/parent/v1/volume", post_volume)
     return app
 
 

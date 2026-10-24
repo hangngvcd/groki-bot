@@ -16,7 +16,7 @@ SCHEMA = {
         "type": "integer",
         "min": 0,
         "max": 100,
-        "default": 60,
+        "default": 40,
         "description_zh": "音量",
     },
     "rest_after_min": {
@@ -38,21 +38,31 @@ SCHEMA = {
     },
 }
 TICKETS = {
-    "volume": "16",
     "rest_after_min": "12/15",
     "camera_presence": "23",
     "notifications": "19",
 }
 
 
+# Settings the gateway sends to the device (ticket 15c: volume via
+# {"type": "xiaoya", "cmd": "volume", "volume": N}, re-sent on every connect).
+APPLIED = {
+    "volume": "sent to 鈴鈴 now if connected, otherwise on her next connect",
+}
+
+
 def device_support():
-    return {
-        key: {
-            "applied_to_device": False,
-            "reason": f"stored; firmware has no message yet (ticket {ticket})",
+    support = {key: {"applied_to_device": True, "reason": reason} for key, reason in APPLIED.items()}
+    support.update(
+        {
+            key: {
+                "applied_to_device": False,
+                "reason": f"stored; firmware has no message yet (ticket {ticket})",
+            }
+            for key, ticket in TICKETS.items()
         }
-        for key, ticket in TICKETS.items()
-    }
+    )
+    return support
 
 
 def validate(values):

@@ -18,6 +18,15 @@ int main() {
         R"({"cmd":"intro","force":false})", R"({"cmd":"other"})"}) assert(!parse(json));
     cmd=parse(R"({"cmd":"intro","force":true})");
     assert(cmd && cmd->kind==XiaoyaCommand::Kind::Intro && cmd->force);
+    cmd=parse(R"({"cmd":"volume","volume":40})");
+    assert(cmd && cmd->kind==XiaoyaCommand::Kind::Volume && cmd->volume==40);
+    cmd=parse(R"({"cmd":"volume","volume":0})");
+    assert(cmd && cmd->kind==XiaoyaCommand::Kind::Volume && cmd->volume==0);
+    cmd=parse(R"({"cmd":"volume","volume":100})");
+    assert(cmd && cmd->volume==100);
+    for (auto json : {R"({"cmd":"volume"})", R"({"cmd":"volume","volume":101})",
+        R"({"cmd":"volume","volume":-1})", R"({"cmd":"volume","volume":40.5})",
+        R"({"cmd":"volume","volume":"40"})"}) assert(!parse(json));
     bool received=false;
     const char* json=R"({"type":"xiaoya","cmd":"form","form":"f4"})";
     parse_control(json,std::strlen(json),[](const HeadCommand&){ assert(false); },

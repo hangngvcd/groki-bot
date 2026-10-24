@@ -3,6 +3,7 @@
 
 import asyncio
 import json
+import logging
 import stat
 
 from aiohttp.test_utils import TestClient, TestServer
@@ -69,7 +70,7 @@ def day():
 
 @pytest.fixture
 def forms(tmp_path, day):
-    return XiaoyaForms(tmp_path / "private" / "forms.json", today=day)
+    return XiaoyaForms(tmp_path / "private" / "forms.json", today=day, volume_source=lambda: 40)
 
 
 @pytest.mark.asyncio
@@ -289,7 +290,9 @@ async def test_form_pushed_when_device_reports_session_ready(forms):
     forms.note_device_event({"type": "xiaoya", "event": "form_state", "form": 1})
     for _ in range(5):
         await asyncio.sleep(0)
-    assert sent and sent[-1]["cmd"] == "form" and sent[-1]["form"] == 1
+    cmds = [m["cmd"] for m in sent]
+    assert "form" in cmds and next(m for m in sent if m["cmd"] == "form")["form"] == 1
+    assert {"type": "xiaoya", "cmd": "volume", "volume": 40} in sent
     forms.unregister_sender(sender)
 
 
@@ -333,3 +336,91 @@ def test_intro_text_matches_clip_script():
 
     lines = json.loads((Path(__file__).parents[2] / "tools/lingling_assets/lines.json").read_text())
     assert lines["clips"]["vo.intro.1"] == INTRO_TEXT and lines["voice"] == INTRO_VOICE
+
+
+async def _drain():
+    for _ in range(10):
+        await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_boot_report_logged_and_volume_resent(forms, caplog):
+    sent = []
+
+    async def sender(message):
+        sent.append(message)
+
+    forms.register_sender(sender, push=False)
+    # Before session ready nothing is sent (the device may still be booting).
+    assert await forms.send_volume(70) is False and sent == []
+    with caplog.at_level(logging.INFO):
+        forms.note_device_event(
+            {"type": "xiaoya", "event": "form_state", "form": 1, "volume": 100,
+             "reset_reason": "brownout", "uptime_ms": 11500}
+        )
+        await _drain()
+    assert any(r.levelno == logging.WARNING and "reset_reason=brownout" in r.getMessage()
+               for r in caplog.records)
+    assert {"type": "xiaoya", "cmd": "volume", "volume": 40} in sent
+    device = forms.snapshot()["device"]
+    assert device["reset_reason"] == "brownout" and device["volume"] == 100
+    assert forms.session_ready
+    sent.clear()
+    assert await forms.send_volume(15) is True
+    assert sent == [{"type": "xiaoya", "cmd": "volume", "volume": 15}]
+    forms.unregister_sender(sender)
+    assert not forms.session_ready and await forms.send_volume(15) is False
+    with caplog.at_level(logging.INFO):
+        forms.note_device_event({"type": "xiaoya", "event": "form_state", "form": 1,
+                                 "reset_reason": "poweron"})
+    assert not any(r.levelno == logging.WARNING and "poweron" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.parametrize("bad", [-1, 101, 40.5, "40", True, None])
+def test_volume_message_validation(bad):
+    from stackchan_mcp.xiaoya_forms import volume_message
+
+    with pytest.raises(ValueError):
+        volume_message(bad)
+    assert volume_message(0) == {"type": "xiaoya", "cmd": "volume", "volume": 0}
+
+
+@pytest.mark.asyncio
+async def test_volume_api_cli(tmp_path, monkeypatch, forms, capsys):
+    monkeypatch.setenv("STACKCHAN_PARENT_TOKEN", "parent-secret")
+    settings = ParentSettings(tmp_path / "settings.json")
+    app = create_parent_app("parent-secret", settings, forms=forms)
+    sent = []
+
+    async def sender(message):
+        sent.append(message)
+
+    async with TestClient(TestServer(app)) as client:
+        url = "/parent/v1/volume"
+        auth = {"Authorization": "Bearer parent-secret"}
+        assert (await client.get(url)).status == 401
+        body = await (await client.get(url, headers=auth)).json()
+        assert body["volume"] == 40 and body["device_connected"] is False
+        for bad in ({"volume": 101}, {"volume": "50"}, {"volume": 5, "x": 1}, {}, [5]):
+            assert (await client.post(url, headers=auth, json=bad)).status == 400
+        offline = await (await client.post(url, headers=auth, json={"volume": 25})).json()
+        assert offline["volume"] == 25 and offline["applies"] == "next_connect"
+        assert settings.get()["volume"] == 25 and sent == []
+        forms.register_sender(sender, push=False)
+        forms.note_device_event({"type": "xiaoya", "event": "form_state", "form": 1,
+                                 "volume": 40, "reset_reason": "poweron"})
+        await _drain()
+        live = await (await client.post(url, headers=auth, json={"volume": 30})).json()
+        await _drain()
+        assert live["applies"] == "now" and live["last_reset_reason"] == "poweron"
+        assert sent[-1] == {"type": "xiaoya", "cmd": "volume", "volume": 30}
+        base = str(client.make_url("")).rstrip("/")
+        assert await asyncio.to_thread(main, ["--url", base, "volume", "20"]) == 0
+        out = capsys.readouterr().out
+        assert "音量 20" in out and "已即時套用" in out
+        await _drain()
+        assert sent[-1]["volume"] == 20
+        assert await asyncio.to_thread(main, ["--url", base, "volume"]) == 0
+        assert "poweron" in capsys.readouterr().out
+        assert await asyncio.to_thread(main, ["--url", base, "volume", "150"]) == 1
+        forms.unregister_sender(sender)

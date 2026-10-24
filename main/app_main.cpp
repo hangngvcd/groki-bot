@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BSL-1.0
 
 #include "lingling/assets.hpp"
+#include <driver/gpio.h>
 #include <nvs.h>
 #include <algorithm>
 #include <array>
@@ -189,6 +190,12 @@ extern "C" void app_main()
     // (a task hogged the CPU). Note: opening the serial port with the repo's
     // monitor_log.py pulses DTR/RTS and shows up here as a USB/external reset,
     // so use `make monitor` (stays attached) to catch a *natural* crash reason.
+#if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
+    // Ticket 15c: NS4150B PA (GPIO46) off first thing (also done in a static
+    // initialiser in spotpear_audio.cpp); only speaker playback raises it.
+    gpio_set_direction(GPIO_NUM_46, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_NUM_46, 0);
+#endif
     ESP_LOGW(kTag, "reset reason: %d", static_cast<int>(esp_reset_reason()));
 
     // Log every failed heap alloc (size + caps + caller + remaining heap).
@@ -481,8 +488,29 @@ extern "C" void app_main()
     stackchan::app::settings_sinks::set_speaker_base_volume(spk_base_volume);
     // Apply the user's gain (cfg already loaded above). 0..200 % → byte
     // is clamped at 255 so boards already at 255 are unchanged at 100 %.
+    // 鈴鈴 (ticket 15c): one-time default of 40 % on the SpotPear board. The
+    // stock default (100 % of base 180) at the old +32 dB DAC gain was very
+    // loud and browned the board out on USB. Runs once per device (NVS
+    // lingling/vol_init); later changes come from the parent via the
+    // gateway ({"type":"xiaoya","cmd":"volume"}) or the BLE / device UI.
+    if (board.kind() == stackchan::board::BoardKind::SpotPear128Cam) {
+        constexpr std::uint16_t kLinglingDefaultVolumePct = 40;
+        nvs_handle_t vol_nvs;
+        if (nvs_open("lingling", NVS_READWRITE, &vol_nvs) == ESP_OK) {
+            std::uint8_t vol_init = 0;
+            if (nvs_get_u8(vol_nvs, "vol_init", &vol_init) != ESP_OK || vol_init == 0) {
+                cfg.speaker_volume_pct = kLinglingDefaultVolumePct;
+                (void)stackchan::config::store::save_speaker_volume(kLinglingDefaultVolumePct);
+                if (nvs_set_u8(vol_nvs, "vol_init", 1) == ESP_OK) (void)nvs_commit(vol_nvs);
+                ESP_LOGI(kTag, "lingling: default speaker volume %u %%",
+                         static_cast<unsigned>(kLinglingDefaultVolumePct));
+            }
+            nvs_close(vol_nvs);
+        }
+    }
     stackchan::app::settings_sinks::apply_speaker_volume(cfg.speaker_volume_pct);
-    if (cfg.startup_arpeggio_enabled) {
+    // 鈴鈴 boots silently (ticket 15c): no startup chime on the SpotPear board.
+    if (cfg.startup_arpeggio_enabled && board.kind() != stackchan::board::BoardKind::SpotPear128Cam) {
         for (float freq : {523.25f, 659.25f, 783.99f}) { // C5 – E5 – G5
             M5.Speaker.tone(freq, 150);
             vTaskDelay(pdMS_TO_TICKS(180));
@@ -502,7 +530,9 @@ extern "C" void app_main()
     // contention instead). If this probe is also silent while the
     // arpeggio (48 kHz tone) was audible, the codec / I2S clock chain
     // doesn't like the 16 kHz fs.
-    {
+    // Ticket 15c: skipped on 鈴鈴 (SpotPear) — at the old +32 dB DAC gain this
+    // 300 ms near-full-scale 440 Hz beep was the loud noise on every boot.
+    if (board.kind() != stackchan::board::BoardKind::SpotPear128Cam) {
         constexpr std::uint32_t kProbeRate = 16'000;
         constexpr std::size_t kProbeSamples = kProbeRate * 300 / 1000; // 300 ms
         // PSRAM, freed after use: a function-local static array would keep these 9.4 KiB of internal RAM

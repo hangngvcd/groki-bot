@@ -13,6 +13,12 @@ inline std::optional<XiaoyaCommand> parse_xiaoya(const cJSON* root) {
         if (!cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(root,"force"))) return {};
         out.kind=XiaoyaCommand::Kind::Intro; out.force=true; return out;
     }
+    if (!std::strcmp(cmd->valuestring,"volume")) {
+        // {"type":"xiaoya","cmd":"volume","volume":40} — parent-set speaker volume.
+        const auto* v=cJSON_GetObjectItemCaseSensitive(root,"volume");
+        if (!cJSON_IsNumber(v) || v->valuedouble<0 || v->valuedouble>100 || v->valuedouble!=v->valueint) return {};
+        out.kind=XiaoyaCommand::Kind::Volume; out.volume=static_cast<std::uint8_t>(v->valueint); return out;
+    }
     if (std::strcmp(cmd->valuestring,"form")) return {};
     auto form=[](const cJSON* v)->int {
         if (cJSON_IsNumber(v) && v->valuedouble>=1 && v->valuedouble<=4 && v->valuedouble==v->valueint) return v->valueint;

@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <string>
 
+#include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <esp_psram.h>
 #include <esp_timer.h>
@@ -121,6 +122,15 @@ void render_task_entry(void* arg) {
             const int slot = ctx.form * 16 + expr;
             if (failed_slots.count(slot)) return false;
             if (slot != cached_slot) {
+                // Ticket 15c guard: PNG decode (zlib window + line buffers) needs
+                // ~50 KB; under memory pressure use the drawn face this frame and
+                // retry later instead of risking an allocation failure mid-decode.
+                if (heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT) < 64 * 1024 ||
+                    heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < 16 * 1024) {
+                    cached_slot = -1;
+                    cache_ok = false;
+                    return false;
+                }
                 cached_slot = slot;
                 cache_ok = false;
                 auto e = lingling::find_face(pack, ctx.form, names[expr]);

@@ -25,6 +25,13 @@ int main() {
         assert(!pack.parse(bytes.data(),bytes.size())); assert(pack.count()==0);
         assert(!pack.find("face.f1.neutral"));
     };
+    { // Ticket 15c: an erased (0xFF) or zeroed pack region is "no pack", never a crash.
+        std::vector<std::uint8_t> erased(4096,0xFF), zero(4096,0);
+        assert(!pack.parse(erased.data(),erased.size()) && pack.count()==0);
+        assert(!pack.parse(zero.data(),zero.size()) && !pack.find("vo.intro.1"));
+        assert(!lingling::find_face(pack,1,"neutral"));
+        assert(!pack.parse(nullptr,0) && !pack.parse(valid.data(),15));
+    }
     invalid(0,0); // magic
     invalid(4,2); // version
     invalid(8,73); invalid(8,15); // pack length

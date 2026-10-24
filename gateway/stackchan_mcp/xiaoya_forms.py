@@ -25,6 +25,13 @@ State lives in ``~/.stackchan/xiaoya_forms.json`` (override:
 Device message (gateway -> device, XiaoZhi text frame)::
 
     {"type": "xiaoya", "cmd": "form", "form": 3, "from": 1, "animate": true}
+    {"type": "xiaoya", "cmd": "volume", "volume": 40}
+
+The device's ``form_state`` event (session ready) also carries boot telemetry:
+``reset_reason`` (poweron / brownout / panic / task_wdt ...), ``volume`` and
+``uptime_ms``; the gateway logs it and keeps the latest copy for the parent
+status.  The parent volume setting (parent_settings ``volume``) is re-sent on
+every session-ready, so the parent's choice wins over on-device changes.
 """
 
 from __future__ import annotations
@@ -38,7 +45,7 @@ from pathlib import Path
 import tempfile
 from typing import Any, Awaitable, Callable
 
-from .parent_settings import private_directory
+from .parent_settings import get_parent_settings, private_directory
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +111,15 @@ INTRO_VOICE = "zh-HK-HiuGaaiNeural"
 INTRO_MESSAGE: dict[str, Any] = {"type": "xiaoya", "cmd": "intro", "force": True}
 
 
+ABNORMAL_RESETS = {"brownout", "panic", "task_wdt", "int_wdt", "wdt"}
+
+
+def volume_message(volume: int) -> dict[str, Any]:
+    if type(volume) is not int or not 0 <= volume <= 100:
+        raise ValueError("volume: expected 0..100")
+    return {"type": "xiaoya", "cmd": "volume", "volume": volume}
+
+
 def form_message(form: int, previous: int, animate: bool) -> dict[str, Any]:
     return {
         "type": "xiaoya",
@@ -115,13 +131,21 @@ def form_message(form: int, previous: int, animate: bool) -> dict[str, Any]:
 
 
 class XiaoyaForms:
-    def __init__(self, path: str | os.PathLike | None = None, today: Callable[[], str] = _today):
+    def __init__(
+        self,
+        path: str | os.PathLike | None = None,
+        today: Callable[[], str] = _today,
+        volume_source: Callable[[], int] | None = None,
+    ):
         self.path = Path(
             path or os.getenv("STACKCHAN_XIAOYA_FORMS_PATH", "~/.stackchan/xiaoya_forms.json")
         ).expanduser()
         self._today = today
         self._state = self._fresh(today())
         self._sender: Sender | None = None
+        self._session_ready = False
+        self._volume_source = volume_source or (lambda: get_parent_settings().get()["volume"])
+        self.device_report: dict[str, Any] = {}
         self._tasks: set[asyncio.Task] = set()
         self._midnight_task: asyncio.Task | None = None
         try:
@@ -206,6 +230,7 @@ class XiaoyaForms:
             "announced_form": self._state["announced_form"],
             "form_name_zh": FORM_NAMES_ZH[form],
             "device_connected": self._sender is not None,
+            "device": dict(self.device_report),
         }
 
     # -- inputs --------------------------------------------------------------
@@ -291,8 +316,23 @@ class XiaoyaForms:
         if message.get("event") == "form_state":
             # Sent by the device once its session is ready: the safe moment to
             # (re)send the current form, after hello / MCP initialize.
-            logger.info("鈴鈴 device reports form=%s", message.get("form"))
+            reason = str(message.get("reset_reason", "unknown"))[:16]
+            report = {
+                "form": message.get("form"),
+                "volume": message.get("volume"),
+                "reset_reason": reason,
+                "uptime_ms": message.get("uptime_ms"),
+                "at": _dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+            }
+            self.device_report = report
+            log = logger.warning if reason in ABNORMAL_RESETS else logger.info
+            log(
+                "鈴鈴 device reports form=%s volume=%s reset_reason=%s uptime_ms=%s",
+                report["form"], report["volume"], reason, report["uptime_ms"],
+            )
+            self._session_ready = True
             self._schedule_push(force=True)
+            self._schedule(self.send_volume())
 
     # -- device output -------------------------------------------------------
 
@@ -304,12 +344,14 @@ class XiaoyaForms:
         MCP initialize handshake.
         """
         self._sender = sender
+        self._session_ready = push
         self._start_midnight_loop()
         return self._schedule_push(force=True) if push else None
 
     def unregister_sender(self, sender: Sender | None = None) -> None:
         if sender is None or self._sender == sender:
             self._sender = None
+            self._session_ready = False
             if self._midnight_task is not None:
                 self._midnight_task.cancel()
                 self._midnight_task = None
@@ -350,17 +392,43 @@ class XiaoyaForms:
             return False
         return True
 
-    def _schedule_push(self, force: bool = False) -> asyncio.Task | None:
-        if self._sender is None:
-            return None
+    async def send_volume(self, volume: int | None = None) -> bool:
+        """Send the parent volume (0..100) to the device once its session is ready.
+
+        Registered as the parent-settings ``volume`` pusher, and called on every
+        ``form_state`` so a rebooted device gets the parent's value back.
+        """
+        sender = self._sender
+        if sender is None or not self._session_ready:
+            return False
+        try:
+            message = volume_message(self._volume_source() if volume is None else volume)
+            await sender(message)
+        except Exception:
+            logger.warning("鈴鈴 volume push failed; will retry on reconnect", exc_info=True)
+            return False
+        logger.info("鈴鈴 volume -> %d%%", message["volume"])
+        return True
+
+    @property
+    def session_ready(self) -> bool:
+        return self._sender is not None and self._session_ready
+
+    def _schedule(self, coro) -> asyncio.Task | None:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
+            coro.close()
             return None
-        task = loop.create_task(self.push(force=force))
+        task = loop.create_task(coro)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return task
+
+    def _schedule_push(self, force: bool = False) -> asyncio.Task | None:
+        if self._sender is None:
+            return None
+        return self._schedule(self.push(force=force))
 
     def _start_midnight_loop(self) -> None:
         if self._midnight_task is not None and not self._midnight_task.done():
@@ -387,6 +455,7 @@ def get_xiaoya_forms() -> XiaoyaForms:
     global _forms
     if _forms is None:
         _forms = XiaoyaForms()
+        get_parent_settings().register_pusher("volume", _forms.send_volume)
     return _forms
 
 

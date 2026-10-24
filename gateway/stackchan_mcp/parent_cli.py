@@ -159,6 +159,28 @@ async def run_mcp(client):
         return await homework({"redo": items})
 
     @server.tool()
+    async def xiaoya_get_volume() -> dict:
+        """Read 鈴鈴's speaker volume (0-100), what the device last reported and
+        its last reset reason (e.g. brownout)."""
+        try:
+            return await asyncio.to_thread(client.call, "volume")
+        except RuntimeError as exc:
+            return {"ok": False, "error": str(exc)}
+
+    @server.tool()
+    async def xiaoya_set_volume(volume: int) -> dict:
+        """Set 鈴鈴's speaker volume 0-100 (default 40) after the parent asked.
+
+        Applied immediately if she is connected, otherwise on her next connect.
+        """
+        if type(volume) is not int or not 0 <= volume <= 100:
+            return {"ok": False, "error": "音量要係 0 至 100 / volume must be 0..100"}
+        try:
+            return await asyncio.to_thread(client.call, "volume", {"volume": volume})
+        except RuntimeError as exc:
+            return {"ok": False, "error": str(exc)}
+
+    @server.tool()
     async def xiaoya_replay_intro() -> dict:
         """Ask 鈴鈴 to play her pre-recorded self-intro again (parent asked)."""
         try:
@@ -173,7 +195,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="小芽家長助手（鈴鈴）/ parent settings")
     parser.add_argument("--url", default="http://127.0.0.1:18772")
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("status", "settings", "set", "homework", "intro", "mcp"):
+    for name in ("status", "settings", "set", "homework", "intro", "volume", "mcp"):
         command = commands.add_parser(name)
         command.add_argument("--url", default=argparse.SUPPRESS)
         if name == "status":
@@ -181,6 +203,8 @@ def main(argv=None):
         if name == "set":
             command.add_argument("key")
             command.add_argument("value")
+        if name == "volume":
+            command.add_argument("value", nargs="?", type=int)
         if name == "homework":
             command.add_argument("action", nargs="?", choices=("list", "add", "remove", "redo"), default="list")
             command.add_argument("items", nargs="*")
@@ -190,6 +214,17 @@ def main(argv=None):
         if args.command == "mcp":
             asyncio.run(run_mcp(client))
             return 0
+        if args.command == "volume":
+            if args.value is not None and not 0 <= args.value <= 100:
+                raise ValueError("音量要係 0 至 100 / volume must be 0..100")
+            data = client.call("volume", None if args.value is None else {"volume": args.value})
+            if data.get("ok"):
+                where = {"now": "已即時套用", "next_connect": "鈴鈴下次連線時套用"}.get(data.get("applies"), "")
+                print(f"音量 {data['volume']}" + (f"（{where}）" if where else "")
+                      + f"；裝置回報 {data.get('device_volume')}；上次重啟原因 {data.get('last_reset_reason')}")
+            else:
+                print(json.dumps(data, ensure_ascii=False, indent=2))
+            return 0 if data.get("ok") else 1
         if args.command == "intro":
             data = client.call("intro", {})
             print(json.dumps(data, ensure_ascii=False, indent=2))

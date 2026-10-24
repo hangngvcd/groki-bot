@@ -47,9 +47,18 @@ constexpr i2s_port_t kI2sPort = I2S_NUM_1; // Shared, half-duplex (CoreS3 patter
 // ES7210 MIC1/MIC2 PGA: 0x10 = enable, low nibble = gain step (0x0A = 30 dB).
 // 30 dB matches the factory BoxAudioCodec input gain [F].
 constexpr std::uint8_t kEs7210MicGain = 0x1A;
-// ES8311 DAC digital volume. 0xFF = +32 dB, as M5Unified's ECHO BASE path
-// (magnification 1); the user volume slider scales M5.Speaker's master volume.
-constexpr std::uint8_t kEs8311DacVolume = 0xFF;
+// ES8311 DAC digital volume: 0.5 dB steps, 0x00 = -95.5 dB, 0xBF = 0 dB,
+// 0xFF = +32 dB. Ticket 15c: the old 0xFF (+32 dB, the M5Unified ECHO BASE
+// value) drove the NS4150B into hard clipping — very loud on 鈴鈴 and the
+// prime suspect for the USB brownout reboot loop. 0 dB is the factory
+// ceiling (xiaozhi's volume 100); the user / parent volume (default 40 %)
+// scales M5.Speaker's master volume below it.
+constexpr std::uint8_t kEs8311DacVolume = 0xBF;
+// Soft start: the DAC volume ramps up after the PA is enabled so the amp
+// never sees a full-scale step (pop + inrush on USB power).
+constexpr std::uint8_t kDacRampStep = 0x18;
+constexpr TickType_t kDacRampDelay = pdMS_TO_TICKS(2);
+constexpr TickType_t kPaSettle = pdMS_TO_TICKS(5);
 
 struct Reg {
     std::uint8_t reg;
@@ -82,11 +91,19 @@ bool speaker_enable_cb(void*, bool enabled)
             {0x0D, 0x01}, // SYSTEM: power up analog circuitry
             {0x12, 0x00}, // SYSTEM: power up DAC
             {0x13, 0x10}, // SYSTEM: enable HP/line output drive
-            {0x32, kEs8311DacVolume}, // DAC volume
+            {0x32, 0x00}, // DAC volume muted; ramped up below (soft start)
             {0x37, 0x08}, // DAC: bypass equalizer
         };
         write_regs(kEs8311, on, sizeof(on) / sizeof(on[0]));
         gpio_set_level(pins::pa_enable, 1);
+        vTaskDelay(kPaSettle);
+        for (unsigned v = kDacRampStep; v < kEs8311DacVolume; v += kDacRampStep) {
+            const Reg step{0x32, static_cast<std::uint8_t>(v)};
+            write_regs(kEs8311, &step, 1);
+            vTaskDelay(kDacRampDelay);
+        }
+        static constexpr Reg full{0x32, kEs8311DacVolume};
+        write_regs(kEs8311, &full, 1);
     } else {
         gpio_set_level(pins::pa_enable, 0);
         static constexpr Reg off[] = {
@@ -151,14 +168,26 @@ struct MicCallbackAccess : m5::Mic_Class {
     static constexpr auto set = &MicCallbackAccess::setCallback;
 };
 
+void pa_force_low() noexcept
+{
+    gpio_reset_pin(pins::pa_enable);
+    gpio_set_direction(pins::pa_enable, GPIO_MODE_OUTPUT);
+    gpio_pulldown_en(pins::pa_enable);
+    gpio_set_level(pins::pa_enable, 0);
+}
+
+// Ticket 15c: drive the NS4150B PA enable LOW as early as the app can — this
+// static initialiser runs in do_global_ctors, before app_main / display init —
+// so the amp never amplifies I2S/codec noise while the board boots. It stays
+// low except inside speaker_enable_cb(true) (actual playback).
+[[maybe_unused]] const bool g_pa_low_at_boot = (pa_force_low(), true);
+
 } // namespace
 
 void spotpear_audio_begin() noexcept
 {
     // PA off until the first playback (avoids a pop while the codec is unset).
-    gpio_reset_pin(pins::pa_enable);
-    gpio_set_direction(pins::pa_enable, GPIO_MODE_OUTPUT);
-    gpio_set_level(pins::pa_enable, 0);
+    pa_force_low();
 
     if (!M5.In_I2C.begin(I2C_NUM_1, pins::i2c_sda, pins::i2c_scl)) {
         ESP_LOGE(kTag, "I2C begin failed (port 1 sda=%d scl=%d)", static_cast<int>(pins::i2c_sda),

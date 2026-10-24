@@ -38,6 +38,8 @@ All HTTP calls require `Authorization: Bearer <parent token>`:
 | GET /parent/v1/status | Allowlisted device, voice, wake and settings status; summary_zh |
 | GET /parent/v1/settings | Settings, validation schema and device_support |
 | POST /parent/v1/settings | JSON object of settings; atomic validation; changed old/new values |
+| GET /parent/v1/volume | `{volume, device_connected, device_volume, last_reset_reason, last_boot_report_at}` |
+| POST /parent/v1/volume | `{"volume": 0..100}`; same store as `set volume`; `applies` is `now` or `next_connect` |
 
 CLI (default URL `http://127.0.0.1:18772`; override with `--url`):
 
@@ -46,17 +48,20 @@ stackchan-parent status
 stackchan-parent status --text
 stackchan-parent settings
 stackchan-parent set volume 40
+stackchan-parent volume          # read volume + last reset reason
+stackchan-parent volume 30       # set 0..100
 stackchan-parent set camera_presence off
 stackchan-parent mcp
 ```
 
 The optional stdio MCP wrapper exposes `xiaoya_status`, `xiaoya_get_settings`
-and `xiaoya_set_setting(key, value)` over the same HTTP API. It does not start
+`xiaoya_set_setting(key, value)`, `xiaoya_get_volume()` and
+`xiaoya_set_volume(volume)` over the same HTTP API. It does not start
 the gateway. Bad authentication and unavailable API cause nonzero CLI exits.
 
 | Setting | Type / range | Default | Consumer ticket |
 | --- | --- | --- | --- |
-| volume | integer 0–100 | 60 | 16 |
+| volume | integer 0–100 | 40 | 15c — **applied**: sent as `{"type":"xiaoya","cmd":"volume","volume":N}` now and on every session-ready |
 | rest_after_min | integer 1–60 minutes without interaction before resting/Sleepy face | 5 | 12/15 |
 | camera_presence | boolean | false | 23 |
 | notifications | boolean | false | 19 |
@@ -68,8 +73,11 @@ mode 0700. **Stored does not mean applied to the robot.** Protocol v1 currently
 has no messages for these settings; device_support reports the pending ticket.
 No new protocol message types are introduced.
 
-Ticket 16 should consume volume through the pusher registry when firmware has
-an approved mechanism. Ticket 19 should call `DebugStatus.on_device_battery`
+Volume (ticket 15c) is pushed through the pusher registry; the parent value is
+re-sent on every device session-ready, so it overrides any on-device change.
+The device's session-ready `form_state` event also reports `reset_reason`
+(poweron / brownout / panic / task_wdt …), `volume` and `uptime_ms`; brownout,
+panic and watchdog resets are logged as warnings. Ticket 19 should call `DebugStatus.on_device_battery`
 when battery reporting exists and consume notifications from this store.
 Ticket 23 should consume camera_presence, preserving its off default. Ticket 21
 should install `~/.stackchan/bin/stackchan-parent`, configure the separate
