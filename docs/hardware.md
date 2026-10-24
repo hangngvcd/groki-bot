@@ -129,14 +129,34 @@ BOOT is the only interaction button; there is no touch. The firmware reads GPIO0
 (active low, external 10k pull-up) directly through the ESP-IDF GPIO driver;
 `M5.begin()` and `M5.BtnA` are not used. The Atom button overlay does not handle BOOT.
 
-| State | Short press (on release) | Hold for 5 seconds |
-| --- | --- | --- |
-| Companion idle / resting (sleepy) | Request gateway listening | Enter SoftAP |
-| Listening | No action | Enter SoftAP |
-| Thinking (pending reply, no audio yet) | Abort pending reply | Enter SoftAP |
-| Speaking | Abort and stop local playback | Enter SoftAP |
-| WaitingWifi / Connecting / Reconnecting / Error | Retry connection immediately | Enter SoftAP |
-| SoftAP provisioning | No action | Leave SoftAP |
+| State | Short press | Double press | Hold for 5 seconds |
+| --- | --- | --- | --- |
+| Companion idle / resting (sleepy) | Request gateway listening after window | Start local 小休 | Enter SoftAP |
+| ShortBreak (小休) | Request gateway listening after window | End local 小休 | Enter SoftAP |
+| Listening | No action | No action | Enter SoftAP |
+| Thinking (pending reply, no audio yet) | Abort pending reply immediately on release | Two independent short presses | Enter SoftAP |
+| Speaking | Abort and stop local playback immediately on release | Two independent short presses | Enter SoftAP |
+| WaitingWifi / Connecting / Reconnecting / Error | Retry immediately on release | Two independent retries | Enter SoftAP |
+| SoftAP provisioning | No action | No action | Leave SoftAP |
+
+Idle, resting and break singles wait 350 ms after the raw release edge (first
+poll at 350–360 ms). A second press whose raw press edge falls within that window
+(inclusive) and then survives the 30 ms debounce forms a double; its short release starts/ends the break using the current mode.
+A long second press wins and cancels the pending gesture. There is no triple
+press: a third press starts a new gesture (double + single). Pending singles
+use the mode at expiry: listen in idle/resting/break, retry if disconnected,
+and otherwise drop, never abort a newly started reply.
+
+Every armed, debounced press-down except provisioning requests a click; this
+will mask the single-press delay. Click sound and break completion audio await
+ticket 16: the SpotPear skeleton has no ES8311/PA audio output initialised yet.
+The click must sound within about 50 ms of press-down. Natural break expiry
+plays one chime and 「小休完喇，準備好就撳一下我。」 once, then returns to the
+companion face with no nagging. Early end has no completion announcement.
+Breaks default to five minutes; the real duration is a pending parent setting
+via Grok Bot / parent API. Break state stays local (spec 4.4 / ticket 27), with
+no new gateway messages or face expressions. Conversation takes precedence
+so 小芽 can still talk during a break.
 
 Listening sends XiaoZhi `{"session_id":...,"type":"listen","state":"detect","source":"button"}`
 without a `text` field, equivalent to wake-word detection. Thinking also aborts,
@@ -152,7 +172,7 @@ through Grok Bot, not device web pages.
 GPIO0 remains the ROM download strapping pin: holding BOOT during reset enters
 download mode. Firmware starts unarmed, ignoring even a boot-time hold longer
 than 5 s, until it observes release continuously for at least 100 ms. Press and
-release edges must each be stable for 30 ms. Short-press action uses the state
+release edges must each be stable for 30 ms. Immediate short-press actions use the state
 at release. The dedicated poller runs every 10 ms; idle and sleepy share the
 same Listen action (the poller does not read render-private sleepy state).
 

@@ -364,6 +364,9 @@ public:
     std::atomic<bool> barge_in_request{false};
     // BOOT requests, consumed by the conversation task (never the GPIO poller).
     std::atomic<bool> listen_request{false};
+    // Local SpotPear short break; BOOT task is the sole writer. Available to
+    // future UI readers; session-only, no gateway messages or visual changes.
+    std::atomic<bool> short_break_active{false};
     // Interrupt the current connection backoff for an immediate retry.
     std::atomic<bool> reconnect_now{false};
 
