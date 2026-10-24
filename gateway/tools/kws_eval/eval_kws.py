@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline KWS sweep for 「小白」 using the gateway's own wake_gate.SherpaOnnxKeywordSpotter
+"""Offline KWS sweep for the wake word (鈴鈴 / legacy 小白) using the gateway's own wake_gate.SherpaOnnxKeywordSpotter
 (same code path as gateway/scripts/kws_offline_repro.py: 100 ms chunks, +1 s trailing silence).
 
 Run from gateway/:  uv run --extra wakeword python tools/kws_eval/eval_kws.py \
@@ -36,6 +36,16 @@ VARIANTS = {
     ),
     "F2_inline_E4": ("S UW1 B AA1 S UW1 B AA1 :10 #0.02 @小白小白", "小白小白"),
     "V7_long_canto": ("s iū b ái s iū b ái @小白小白", "小白小白"),
+    # 鈴鈴 (ling4 ling4 in Cantonese, líng líng in Mandarin).  Tokens exist in the model:
+    # l, íng, ìng, īng, ǐng, ing; English L IH1 IY1 NG.
+    "L1_ling2_ling2": ("l íng l íng @鈴鈴", "鈴鈴"),
+    "L2_ling4_ling4": ("l ìng l ìng @鈴鈴", "鈴鈴"),
+    "L3_ling1_ling1": ("l īng l īng @鈴鈴", "鈴鈴"),
+    "L4_ling4_ling2": ("l ìng l íng @鈴鈴", "鈴鈴"),
+    "L5_ling3_ling3": ("l ǐng l ǐng @鈴鈴", "鈴鈴"),
+    "L6_ling2_ling1": ("l íng l īng @鈴鈴", "鈴鈴"),
+    "L7_en_lih_ng": ("L IH1 NG L IH1 NG @鈴鈴", "鈴鈴"),
+    "L8_en_liy_ng": ("L IY1 NG L IY1 NG @鈴鈴", "鈴鈴"),
 }
 MODEL = _model_dir_from_env()
 CHUNK = 3200  # 100 ms @16k s16

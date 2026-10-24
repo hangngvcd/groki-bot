@@ -46,9 +46,10 @@ for r in sorted(res, key=lambda r: (r["variant"], r["thr"], r["score"])):
     )
     rows.append(row)
 neg_min = res[0]["neg_s"] / 60
-print(f"Negative audio: {neg_min:.1f} min total\n")
+print(f"Negative audio: {neg_min:.1f} min total")
+print("Sentence ids follow gen_positive.py TEXT_SETS (鈴鈴: t1 鈴鈴, t2 喂，鈴鈴！, t3 鈴鈴，我想做功課).\n")
 print(
-    "| variant | thr | score | HK hit% | CN hit% | TW hit% | HK「小白」 | HK「小白小白」 | HK「小白，我想做功課」 | HK clean/noise/reverb | false: Canto / Mand / noise+music | false per hour |"
+    "| variant | thr | score | HK hit% | CN hit% | TW hit% | HK t1 | HK t2 | HK t3 | HK clean/noise/reverb | false: Canto / Mand / noise+music | false per hour |"
 )
 print("|---|---|---|---|---|---|---|---|---|---|---|---|")
 for r in rows:

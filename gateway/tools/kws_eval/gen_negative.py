@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
-"""Generate ~30 min of everyday household/TV speech without 「小白」 (near words included),
-plus noise/music, as 16 kHz mono s16 WAV.  Usage: python gen_negative.py CORPUS.txt OUT_DIR"""
+"""Generate everyday household/TV speech without the wake words (near words included),
+plus noise/music, as 16 kHz mono s16 WAV.
+Usage: python gen_negative.py CORPUS.txt OUT_DIR [--speech-only] [--allow-homophones]
+
+The default corpus must not contain 小白 / 鈴鈴 / 玲玲. homophone_corpus.txt deliberately
+contains same-sound words (零零, 玲玲) and is generated with --allow-homophones --speech-only
+into its own folder so its triggers are counted separately."""
 
 import asyncio
 import subprocess
@@ -25,7 +30,10 @@ corpus = [
     for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
     if line.strip()
 ]
-assert not any("小白" in line for line in corpus)
+FLAGS = set(sys.argv[3:])
+WAKE_WORDS = ("小白", "鈴鈴", "玲玲")
+if "--allow-homophones" not in FLAGS:
+    assert not any(w in line for line in corpus for w in WAKE_WORDS), "corpus contains a wake word"
 OUT = Path(sys.argv[2]).resolve()
 OUT.mkdir(parents=True, exist_ok=True)
 READS = [
@@ -97,6 +105,9 @@ async def main():
         ff("-f", "concat", "-safe", "0", "-i", str(lst), "-c", "copy", str(name))
         for p in parts:
             p.unlink()
+    if "--speech-only" in FLAGS:
+        (OUT / "list.txt").unlink(missing_ok=True)
+        return
     # one read with background pink noise (TV hiss / fan)
     src = OUT / "speech__HiuGaaiNeural__+0%.wav"
     ff(

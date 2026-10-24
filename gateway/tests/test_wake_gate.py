@@ -280,7 +280,7 @@ def test_listening_does_not_close_while_tts_active() -> None:
         clock=clock,
     )
 
-    gate.process(_pcm(1200))
+    gate.open()  # woken while quiet; 鈴鈴 then talks (self-muting ignores wake words during TTS)
     clock.advance(20.0)
     still_open = gate.process(_pcm(50))
 
@@ -329,7 +329,8 @@ def test_listening_closes_after_tts_stuck_timeout() -> None:
         clock=clock,
     )
 
-    gate.process(_pcm(1200))
+    gate.open()  # woken while quiet; 鈴鈴 then talks (self-muting ignores wake words during TTS)
+    gate.process(_pcm(1200))  # TTS starts being tracked at t=0
     clock.advance(11.0)
     closed = gate.process(_pcm(50))
 
@@ -349,7 +350,7 @@ def test_max_listening_window_resets_after_tts_ends() -> None:
         clock=clock,
     )
 
-    gate.process(_pcm(1200))
+    gate.open()  # woken while quiet; 鈴鈴 then talks (self-muting ignores wake words during TTS)
     clock.advance(8.0)
     still_open = gate.process(_pcm(50))
     assert still_open.closed is False

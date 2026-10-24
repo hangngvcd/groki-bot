@@ -508,6 +508,16 @@ class GeminiVoiceProxy:
         observes ``abort`` to clear any in-flight encoder buffer so the
         next utterance starts clean.
         """
+        if str(message.get("type", "")).strip().lower() == "xiaoya":
+            # 鈴鈴 device events.  local_speech start/stop brackets a clip the
+            # device plays by itself (vo.intro.1, form praise lines): the wake
+            # gate ignores the wake word meanwhile and for the 0.5 s tail.
+            if str(message.get("event", "")).strip().lower() == "local_speech":
+                state = str(message.get("state", "")).strip().lower()
+                gate = self._wake_gate
+                if gate is not None and state in {"start", "stop"}:
+                    gate.set_local_speech(state == "start")
+            return True
         if not self.connected:
             return False
         msg_type = message.get("type", "")

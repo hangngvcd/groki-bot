@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Generate synthetic 「小白」 positive clips (16 kHz mono s16 WAV) with edge-tts + ffmpeg.
-Usage: python gen_positive.py OUT_DIR
+"""Generate synthetic wake-word positive clips (16 kHz mono s16 WAV) with edge-tts + ffmpeg.
+Usage: python gen_positive.py OUT_DIR [WORD]   (WORD: 鈴鈴 (default) or 小白)
 Variants: voice x text x rate x pitch, then clean / noise(SNR~10dB) / reverb copies."""
 
 import asyncio
@@ -33,7 +33,14 @@ VOICES = {
     ],
     "tw": ["zh-TW-HsiaoChenNeural", "zh-TW-YunJheNeural"],
 }
-TEXTS = {"t1": "小白", "t2": "小白小白", "t3": "小白，我想做功課"}
+TEXT_SETS = {
+    "鈴鈴": {"t1": "鈴鈴", "t2": "喂，鈴鈴！", "t3": "鈴鈴，我想做功課"},
+    "小白": {"t1": "小白", "t2": "小白小白", "t3": "小白，我想做功課"},
+}
+WORD = sys.argv[2] if len(sys.argv) > 2 else "鈴鈴"
+if WORD not in TEXT_SETS:
+    raise SystemExit(f"unknown wake word {WORD!r}; choose one of {sorted(TEXT_SETS)}")
+TEXTS = TEXT_SETS[WORD]
 RATES = ["-15%", "+0%", "+20%"]
 PITCHES = ["+0Hz", "+40Hz"]  # +40Hz ~ higher, more child-like
 SEM = asyncio.Semaphore(4)
