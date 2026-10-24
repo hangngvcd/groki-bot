@@ -169,6 +169,18 @@ async def test_gbot_receives_only_child_catalog(child, monkeypatch, native_end):
             "homework_done",
             "show_character",
         }
+        assert config["turn_detection"] == {
+            "type": "server_vad",
+            "silence_duration_ms": 1300,
+            "prefix_padding_ms": 300,
+        }
+        transcription = config["audio"]["input"]["transcription"]
+        assert transcription["language_hint"] == "yue"
+        assert {"鈴鈴", "娜娜", "Elena"} <= set(transcription["keyterms"])
+        assert len(transcription["keyterms"]) <= 100
+        assert "娜娜" in config["instructions"]
+        assert "永遠唔好叫佢講普通話" in config["instructions"]
+        assert "工具規則" in config["instructions"]
         executor_factory.assert_called_once()
         mac.assert_not_called()
     finally:

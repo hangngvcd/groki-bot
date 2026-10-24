@@ -28,10 +28,16 @@ class GbotVoiceProxy(GeminiVoiceProxy):
         return "native"
 
     def _make_bridge(self, esp32, **kwargs):
-        return (self.bridge_factory or GbotVoiceBridge)(
+        bridge = (self.bridge_factory or GbotVoiceBridge)(
             esp32=esp32,
             tool_executor=self.voice_tool_executor,
             tool_executor_factory=self.voice_tool_executor_factory,
             tool_extensions=self.voice_tool_extensions,
             **kwargs,
         )
+        # Half-duplex: once `tts start` went out, server VAD must not barge in.
+        try:
+            bridge.playback_active = lambda: self._tts_active
+        except Exception:
+            pass
+        return bridge

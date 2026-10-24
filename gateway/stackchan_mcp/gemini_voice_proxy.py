@@ -201,6 +201,7 @@ class GeminiVoiceProxy:
     _turn_rx_first: float | None = None
     _turn_rx_last: float | None = None
     _turn_rx_bytes: int = 0
+    _turn_frames_sent: int = 0
     _turn_rx_stalls: int = 0
     _turn_rx_max_gap: float = 0.0
 
@@ -1083,6 +1084,7 @@ class GeminiVoiceProxy:
                 if self._send_to_device is not None:
                     async with self._send_lock:
                         await self._send_to_device(frame)
+                    self._turn_frames_sent += 1
                     if self._speak_text_active:
                         self._speak_text_frames += 1
             except Exception as exc:
@@ -1123,6 +1125,7 @@ class GeminiVoiceProxy:
             logger.warning("tts.start envelope failed: %s", exc)
             return False
         self._tts_active = True
+        self._turn_frames_sent = 0
         self._status.on_tts_state(True)
         # Switch the avatar to a "talking" expression so the face doesn't freeze
         # while Gemini speaks (firmware stops the idle loop in Speaking state).
@@ -1442,6 +1445,14 @@ class GeminiVoiceProxy:
         """
         self._tts_generation += 1
         was_active = self._tts_active
+        if was_active:
+            logger.info(
+                "tts abort played_ms~%.0f (frames=%d) received_ms=%.0f queued_frames=%d",
+                self._turn_frames_sent * self.device_frame_pace_ms,
+                self._turn_frames_sent,
+                self._turn_rx_bytes / 48.0,
+                self._frame_queue.qsize() if self._frame_queue is not None else 0,
+            )
         if self._codec is not None:
             self._codec.reset_encode_buffer()
         await self._cancel_tts_tasks()
