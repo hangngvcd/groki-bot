@@ -38,6 +38,15 @@ namespace stackchan::conversation {
 
 namespace {
 
+// Ticket 15f/15f2: the round companion plays a local wake chime and drives its
+// status ring from the gateway's `led` frames, so those frames must reach the
+// app even though the board has no LED strip (led_control=false).
+#if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM && CONFIG_STACKCHAN_COMPANION_FACE
+constexpr bool kLedStatusCue = true;
+#else
+constexpr bool kLedStatusCue = false;
+#endif
+
 constexpr const char* kTag = "xiaozhi";
 
 // Uplink Opus: 16 kHz mono, 60 ms frames (= 960 samples) as required by the
@@ -607,12 +616,12 @@ private:
         cJSON_AddStringToObject(root, "transport", "websocket");
         cJSON* features = cJSON_AddObjectToObject(root, "features");
         cJSON_AddBoolToObject(features, "mcp", false);
-#if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM && CONFIG_STACKCHAN_COMPANION_FACE
+        if (kLedStatusCue) {
         // Ticket 15f: this firmware plays its own wake chime (half-duplex, mic
         // off) when the gateway's cyan status light arrives; a gateway that
         // honours this flag skips its TTS wake beep so there is one chime.
         cJSON_AddBoolToObject(features, "local_wake_chime", true);
-#endif
+        }
         cJSON* ap = cJSON_AddObjectToObject(root, "audio_params");
         cJSON_AddStringToObject(ap, "format", "opus");
         cJSON_AddNumberToObject(ap, "sample_rate", kUplinkSampleRate);
@@ -726,7 +735,7 @@ private:
             [](const char* error) { ESP_LOGW(kTag, "%s", error); }
 #if CONFIG_STACKCHAN_COMPANION_FACE
             ,
-            {config_.head_control, config_.led_control}
+            {config_.head_control, config_.led_control, kLedStatusCue}
 #endif
         );
     }

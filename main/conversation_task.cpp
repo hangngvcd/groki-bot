@@ -404,6 +404,19 @@ public:
                 }
             }
 #endif
+#if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
+            if (pending_chime_ms_ != 0) {
+                const auto age = now_ms() - pending_chime_ms_;
+                if (age > kChimeDeferMs || !wake_cue_.open) {
+                    ESP_LOGI(kTag, "wake chime (deferred): dropped, %s",
+                             wake_cue_.open ? "listening did not resume in time" : "gate closed");
+                    pending_chime_ms_ = 0;
+                } else if (local_ == Local::Listening) {
+                    pending_chime_ms_ = 0;
+                    play_wake_chime("deferred");
+                }
+            }
+#endif
             service_lingling();
             service_state();
         }
@@ -517,7 +530,24 @@ private:
     // while muted so a muted device doesn't drop ~260 ms of mic for nothing.
     void play_wake_chime(const char* why) {
 #if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
-        if (local_!=Local::Listening || state_.speaker.muted.load(std::memory_order_relaxed)) return;
+        if (local_!=Local::Listening) {
+            if (local_==Local::Yielded) {
+                ESP_LOGI(kTag,"wake chime (%s): skipped, audio yielded",why);
+                return;
+            }
+            // e.g. the session's first cyan racing "listen start", or a wake
+            // while the previous reply is still draining: play it as soon as
+            // the mic is back (within kChimeDeferMs) instead of dropping it.
+            pending_chime_ms_=now_ms() | 1u;
+            ESP_LOGI(kTag,"wake chime (%s): deferred, local state %d is not Listening yet",why,
+                     static_cast<int>(local_));
+            return;
+        }
+        if (state_.speaker.muted.load(std::memory_order_relaxed)) {
+            ESP_LOGI(kTag,"wake chime (%s): skipped, speaker muted",why);
+            return;
+        }
+        ESP_LOGI(kTag,"wake chime (%s): start (volume %u)",why,unsigned(M5.Speaker.getVolume()));
         constexpr std::uint32_t kRate=24000;
         const auto total=conv::wake_chime_samples(kRate);
         M5.Mic.end();
@@ -526,12 +556,14 @@ private:
         const auto deadline=started+conv::kChimeMs+1000;
         auto overdue=[&] { return static_cast<std::int32_t>(now_ms()-deadline)>=0; };
         std::size_t pos=0,next=0;
+        bool failed=false;
         while (pos<total && !overdue()) {
             if (M5.Speaker.isPlaying(kSpeakerChannel)<kSegmentBuffers-1) {
                 const auto n=std::min(kSegmentSamples,total-pos);
                 conv::render_wake_chime(seg_buf_[next],pos,n,kRate);
                 if (!M5.Speaker.playRaw(seg_buf_[next],n,kRate,false,1,kSpeakerChannel,false)) {
-                    ESP_LOGW(kTag,"wake chime: speaker failed");
+                    ESP_LOGW(kTag,"wake chime (%s): speaker playRaw failed at sample %u",why,unsigned(pos));
+                    failed=true;
                     break;
                 }
                 pos+=n; next=(next+1)%kSegmentBuffers;
@@ -543,7 +575,8 @@ private:
         const bool keep_turn=turn_open_;
         enter_listening();  // Speaker.end + settle + mic re-prime
         turn_open_=keep_turn;
-        ESP_LOGI(kTag,"wake chime (%s): %u ms, mic off %u ms",why,unsigned(conv::kChimeMs),
+        ESP_LOGI(kTag,"wake chime (%s): %s, %u/%u samples, mic off %u ms",why,
+                 failed ? "FAILED" : (pos==total ? "played" : "cut (overdue)"),unsigned(pos),unsigned(total),
                  unsigned(now_ms()-started+20));
 #else
         (void)why;
@@ -557,8 +590,15 @@ private:
     // listening face so the idle -> sleepy decay can run again.
     void on_status_led(std::uint8_t r, std::uint8_t g, std::uint8_t b) {
 #if CONFIG_STACKCHAN_COMPANION_FACE
-        const auto step=wake_cue_.on_led(conv::classify_status_led(r,g,b));
+        const auto cls=conv::classify_status_led(r,g,b);
+        const bool was_open=wake_cue_.open;
+        const auto step=wake_cue_.on_led(cls);
         const auto voice=static_cast<avatar::VoiceState>(state_.conv.voice_state.load());
+        static constexpr const char* kCls[]={"off","listening","speaking","error","other"};
+        ESP_LOGI(kTag,"status cue rgb=(%u,%u,%u) -> %s, gate %s->%s%s",unsigned(r),unsigned(g),unsigned(b),
+                 kCls[static_cast<int>(cls)],was_open ? "open" : "closed",wake_cue_.open ? "open" : "closed",
+                 step.fresh_wake ? ", fresh wake: chime" :
+                 (step.listening ? ", already open: no chime" : ""));
         if (step.listening && local_!=Local::Speaking && voice!=avatar::VoiceState::Speaking &&
             voice!=avatar::VoiceState::Thinking) {
             state_.note_face_activity();
@@ -879,7 +919,10 @@ private:
     void set_local(Local s)
     {
         local_ = s;
-        if (s == Local::Init || s == Local::Yielded) wake_cue_.reset();
+        if (s == Local::Init || s == Local::Yielded) {
+            wake_cue_.reset();
+            pending_chime_ms_ = 0;
+        }
         state_.conv.idle.store(s == Local::Listening, std::memory_order_relaxed);
         using avatar::VoiceState;
         VoiceState vs = VoiceState::Idle;
@@ -1481,12 +1524,17 @@ private:
         }
 
         case conv::ConversationEventType::LedColor: {
-            const auto solid = led_runtime::from_rgb(ev.led_r, ev.led_g, ev.led_b);
-            state_.led.color.store(solid.color, std::memory_order_relaxed);
-            // A XiaoZhi LED message is a temporary status light, not a user setting: only runtime state is
-            // written here; the next led_task tick drives the real Board::LedStrip. Nothing goes to NVS.
-            state_.led.mode.store(solid.mode, std::memory_order_relaxed);
-            state_.led.brightness.store(solid.brightness, std::memory_order_relaxed);
+            // Boards without a strip (SpotPear) still get these frames as the
+            // wake/speaking status cue (ControlCapabilities::status_cue); only
+            // touch LED runtime state when there is a strip to drive.
+            if (config_.led_control) {
+                const auto solid = led_runtime::from_rgb(ev.led_r, ev.led_g, ev.led_b);
+                state_.led.color.store(solid.color, std::memory_order_relaxed);
+                // A XiaoZhi LED message is a temporary status light, not a user setting: only runtime state is
+                // written here; the next led_task tick drives the real Board::LedStrip. Nothing goes to NVS.
+                state_.led.mode.store(solid.mode, std::memory_order_relaxed);
+                state_.led.brightness.store(solid.brightness, std::memory_order_relaxed);
+            }
             ESP_LOGI(kTag, "LED status light: r=%u g=%u b=%u",
                      static_cast<unsigned>(ev.led_r),
                      static_cast<unsigned>(ev.led_g),
@@ -1720,6 +1768,8 @@ private:
     Local local_{Local::Init};
     std::uint32_t thinking_since_ms_{0};
     conv::WakeCue wake_cue_;  // ticket 15f: gateway wake-gate state from status-LED messages
+    std::uint32_t pending_chime_ms_{0};  // ticket 15f2: deferred wake chime (0 = none)
+    static constexpr std::uint32_t kChimeDeferMs = 3000;
 #if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
     static constexpr std::uint32_t kWakeRmsWindowMs = 3000;
     static constexpr std::uint32_t kWakeFaceTimeoutMs = 15000;
