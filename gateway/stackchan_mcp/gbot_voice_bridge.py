@@ -21,6 +21,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import aiohttp
 
+from . import child_profile
 from .voice_output_queue import VoiceOutputQueue
 from .gbot_native_channel import NativeVoiceChannel
 
@@ -240,6 +241,8 @@ class GbotVoiceBridge:
         if self._executor and self._local_tools_enabled:
             for declaration in self._executor.declarations():
                 original = declaration["name"]
+                if not child_profile.voice_tool_allowed(original):
+                    continue
                 if original == "ask_grokbot":
                     continue  # Grok uses its native send_task, never the local Bot alias.
                 if original == "end_conversation" and native_end:

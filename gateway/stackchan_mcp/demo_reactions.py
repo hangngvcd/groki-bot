@@ -16,6 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import child_profile
 from .touch_bridge import TouchEvent
 
 logger = logging.getLogger(__name__)
@@ -67,7 +68,7 @@ class DemoReactions:
 
     def maybe_face_entered(self, detection: dict[str, Any]) -> bool:
         """Return True once when a face appears after being absent."""
-        if not self.enabled:
+        if child_profile.enabled() or not self.enabled:
             return False
         try:
             confidence = float(detection.get("confidence", 0.0))
@@ -93,7 +94,7 @@ class DemoReactions:
 
     def maybe_head_tap(self, event: TouchEvent) -> bool:
         """Return True for a debounced top/head tap."""
-        if not self.enabled or event.event != "tap":
+        if child_profile.enabled() or not self.enabled or event.event != "tap":
             return False
         # The firmware's three Si12T zones are all on the head, and
         # TouchEventBridge has already debounced the tap. Do not re-invent
@@ -108,23 +109,23 @@ class DemoReactions:
         return True
 
     def spawn_face_reaction(self) -> None:
-        if not self.enabled:
+        if child_profile.enabled() or not self.enabled:
             return
         self._spawn(self._react_to_face(random.choice(FACE_LINES)))
 
     def spawn_touch_reaction(self) -> None:
-        if not self.enabled:
+        if child_profile.enabled() or not self.enabled:
             return
         self._spawn(self._react_to_touch(random.choice(TOUCH_LINES)))
 
     def spawn_intro(self) -> None:
-        if not self.enabled:
+        if child_profile.enabled() or not self.enabled:
             return
         self._spawn(self._speak(INTRO_LINE, emotion="happy"))
 
     def arm_face_entry(self) -> None:
         """Clear cooldown, but still require a real absence→presence entry."""
-        if not self.enabled:
+        if child_profile.enabled() or not self.enabled:
             return
         self._last_face_reaction_s = None
 

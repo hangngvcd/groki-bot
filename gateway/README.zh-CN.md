@@ -120,6 +120,47 @@ uv run --all-extras python scripts/kws_offline_repro.py --generate-say
 
 换了唤醒词先离线试一下：`kws_offline_repro.py` 读取同样的设置（`--voice` 换一个 macOS 声音，`--wav` 用自己的录音）。两到三个音节、辅音清楚的短语效果最好；太难唤醒或太容易误触发时，调整 `STACKCHAN_KWS_THRESHOLD` 和 `STACKCHAN_KWS_SCORE`。
 
+### 仅按键隐私模式（可选）
+
+在 `.env` 设置 `STACKCHAN_BUTTON_ONLY_LISTEN=1` 并重启，对 `gbot` 和
+`gemini` 后端均有效。默认 `0`，保留原有行为。关闭唤醒词或缺少 KWS 模型时，
+收到设备 XiaoZhi `listen`（`start` 或 `detect`，例如按键）前不转发任何麦克风音频，
+按键前的音频会丢弃。沿用 `STACKCHAN_WAKE_IDLE_S`（默认 30 秒）的静默超时、
+现有音量阈值和最长聆听窗口。有可用模型时，唤醒词和按键均可启动聆听。
+检测器出错时退回仅按键模式，不会自动转发全部音频。
+启动日志和状态页会显示当前模式；`/debug/status` 的
+`wake_gate.listening_mode` 为 `button_only`、`wake_word_or_button`、
+`wake_word` 或 `pass_through`。
+
+### 儿童配置（可选）
+
+在 `.env` 设置 `STACKCHAN_CHILD_PROFILE=1` 并重启。默认 `0`，保留现有行为。
+开启后强制关闭 Mac control、`ask_claude`、device tools、USB transport、Mac
+人脸追踪、相机拍摄、idle behavior 和 demo reactions，即使对应开关为 `1`。
+不修改环境变量；启动日志和 `stackchan-mcp --check` 会报告冲突的
+`STACKCHAN_MAC_CONTROL`、`STACKCHAN_ASK_CLAUDE`、`STACKCHAN_GEMINI_DEVICE_TOOLS`、
+`STACKCHAN_FACE_TRACKER_AUTOSTART`、`STACKCHAN_HEAD_FOLLOW_DEFAULT`、
+`STACKCHAN_USB_TRANSPORT`、`STACKCHAN_GATEWAY_IDLE_ENABLED`、`STACKCHAN_DEMO_REACTIONS`，
+包括默认开启的设置。已配置的 `VISION_HOST` / `VISION_URL` 也会提示被忽略。
+
+使用 `gbot` 及上文的匹配桌面 agent 配置时，语音工具仅包含原生 `send_task`、
+`search_conversations` 和 `end_the_call`（缺少原生结束工具时使用本地
+`end_conversation`）。桌面工具仍需明确匹配的 agent 目标及原生会话支持。
+Gemini 仅开放 `end_conversation`，关闭 Google Search。额外语音工具扩展关闭。
+`/capture`、`/track` 不可用；相机 MCP 工具隐藏且拒绝调用，也不能通过工具重新开启追踪。
+
+发送到设备的表情仅限 Neutral、Happy、Excited、Curious、Thinking、Affection、
+Surprised 和 Sad（仅用于表达同理心）。其他表情（包括 Angry、Bored、Doubt）
+统一替换为 Neutral，传输名称保持小写。关闭儿童配置时，现有表情映射不变。
+
+语音后端启动失败时，在 server hello 前关闭设备现有 WebSocket（1011），让设备显示断线，
+不自动启动其他后端。未知后端及无法保证工具目录限制的 `xiaozhi` 云透传会被拒绝，
+`--check` 将其列为阻塞问题；其他被覆盖的开关只警告，不单独导致检查失败。
+
+网关和设备均应设置 `STACKCHAN_TOKEN`。缺少时警告并禁用 `/debug/inject-text`；
+注入文本必须使用该 bearer token，`VISION_TOKEN` 或旧的 `BEARER_TOKEN` 不能替代。
+仅按键聆听仍是独立的可选开关（`STACKCHAN_BUTTON_ONLY_LISTEN=1`）。
+
 ## 3. 启动和检查
 
 ```bash

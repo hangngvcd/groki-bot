@@ -19,6 +19,7 @@ from collections.abc import Awaitable, Callable
 
 from aiohttp import web
 
+from . import child_profile
 from .debug_panel import PANEL_HTML
 from .debug_status import DebugStatus, get_debug_status
 
@@ -31,6 +32,7 @@ INJECT_TEXT_HANDLER_KEY = web.AppKey(
     "inject_text_handler",
     object,
 )
+INJECT_TOKEN_KEY = web.AppKey("inject_token", str)
 DEBUG_STATUS_KEY = web.AppKey("debug_status", DebugStatus)
 
 
@@ -41,6 +43,8 @@ def _is_authorized(auth_header: str, expected_token: str) -> bool:
 
 async def handle_capture(request: web.Request) -> web.Response:
     """Handle photo upload from ESP32."""
+    if child_profile.enabled():
+        raise web.HTTPForbidden(text="camera capture disabled by child profile")
     expected_token = request.app[CAPTURE_TOKEN_KEY]
     if expected_token and not _is_authorized(
         request.headers.get("Authorization", ""), expected_token
@@ -96,7 +100,9 @@ async def handle_capture(request: web.Request) -> web.Response:
 
 async def handle_inject_text(request: web.Request) -> web.Response:
     """Inject a plain text user turn into the active Gemini Live session."""
-    expected_token = request.app[CAPTURE_TOKEN_KEY]
+    expected_token = request.app[INJECT_TOKEN_KEY]
+    if child_profile.enabled() and not expected_token:
+        return web.json_response({"error": "STACKCHAN_TOKEN required by child profile"}, status=403)
     if expected_token and not _is_authorized(
         request.headers.get("Authorization", ""), expected_token
     ):
@@ -148,9 +154,13 @@ def create_capture_app(
     """Create the HTTP capture application."""
     app = web.Application()
     app[CAPTURE_TOKEN_KEY] = capture_token
+    app[INJECT_TOKEN_KEY] = (
+        os.getenv("STACKCHAN_TOKEN", "").strip() if child_profile.enabled() else capture_token
+    )
     app[INJECT_TEXT_HANDLER_KEY] = inject_text_handler
     app[DEBUG_STATUS_KEY] = debug_status or get_debug_status()
-    app.router.add_post("/capture", handle_capture)
+    if not child_profile.enabled():
+        app.router.add_post("/capture", handle_capture)
     app.router.add_post("/debug/inject-text", handle_inject_text)
     app.router.add_get("/debug/status", handle_debug_status)
     app.router.add_get("/debug/panel", handle_debug_panel)

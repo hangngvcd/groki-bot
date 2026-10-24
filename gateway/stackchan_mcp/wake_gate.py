@@ -209,6 +209,7 @@ class WakeGate:
 
     kws: KeywordSpotter | None
     enabled: bool = True
+    button_only: bool = False
     sample_rate: int = DEFAULT_SAMPLE_RATE
     preroll_s: float = DEFAULT_PREROLL_S
     idle_s: float = DEFAULT_WAKE_IDLE_S
@@ -232,7 +233,26 @@ class WakeGate:
 
     @property
     def available(self) -> bool:
+        return self.button_only or self.keyword_available
+
+    @property
+    def keyword_available(self) -> bool:
         return bool(self.enabled and self.kws is not None and self.kws.available)
+
+    @property
+    def listening_mode(self) -> str:
+        if self.keyword_available:
+            return "wake_word_or_button" if self.button_only else "wake_word"
+        return "button_only" if self.button_only else "pass_through"
+
+    def open(self) -> None:
+        """Start listening without replaying pre-button audio."""
+        now = self.clock()
+        self._clear_preroll()
+        self.state = WakeGateState.LISTENING
+        self._last_voice_at = now
+        self._opened_at = now
+        self._listening_window_anchor = now
 
     @property
     def is_listening(self) -> bool:
@@ -259,6 +279,8 @@ class WakeGate:
             closed = True
 
         if self.state == WakeGateState.DORMANT:
+            if not self.keyword_available:
+                return WakeGateResult(closed=closed)
             self._append_preroll(pcm_16khz)
             self._maybe_reset_kws_in_dormant(pcm_16khz, now)
             if not self.kws.detect(pcm_16khz):
@@ -411,28 +433,38 @@ def pcm_rms_int16(pcm: bytes) -> float:
     return math.sqrt(total / sample_count)
 
 
+def button_only_listen_enabled() -> bool:
+    return os.environ.get("STACKCHAN_BUTTON_ONLY_LISTEN", "0").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
 def create_wake_gate_from_env(
     *,
     kws: KeywordSpotter | None = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> WakeGate | None:
     """Create the production wake gate; None means pass-through mode."""
-    if _env_disabled("STACKCHAN_WAKE_WORD"):
+    button_only = button_only_listen_enabled()
+    spotter = None
+    if not _env_disabled("STACKCHAN_WAKE_WORD"):
+        try:
+            spotter = kws or SherpaOnnxKeywordSpotter(
+                model_dir=_model_dir_from_env(),
+                keyword=_keyword_from_env(),
+                phrase=_phrase_from_env(),
+                keywords_score=_float_env("STACKCHAN_KWS_SCORE", 7.0),
+                keywords_threshold=_float_env("STACKCHAN_KWS_THRESHOLD", 0.05),
+            )
+        except WakeWordUnavailable as exc:
+            logger.warning("wake word gate unavailable: %s", exc)
+    else:
         logger.info("wake word gate disabled by STACKCHAN_WAKE_WORD=0")
-        return None
-    try:
-        spotter = kws or SherpaOnnxKeywordSpotter(
-            model_dir=_model_dir_from_env(),
-            keyword=_keyword_from_env(),
-            phrase=_phrase_from_env(),
-            keywords_score=_float_env("STACKCHAN_KWS_SCORE", 7.0),
-            keywords_threshold=_float_env("STACKCHAN_KWS_THRESHOLD", 0.05),
-        )
-    except WakeWordUnavailable as exc:
-        logger.warning("wake word gate unavailable; passing device audio through: %s", exc)
+    if spotter is None and not button_only:
         return None
     return WakeGate(
         kws=spotter,
+        button_only=button_only,
         idle_s=_float_env("STACKCHAN_WAKE_IDLE_S", DEFAULT_WAKE_IDLE_S),
         max_listening_s=_float_env(
             "STACKCHAN_WAKE_MAX_LISTENING_S",

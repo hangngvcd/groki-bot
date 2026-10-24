@@ -122,7 +122,8 @@ function render(st) {
   setBlock("blk-wake",
     w.available ? "ok" : "err",
     w.available ? w.state : "不可用",
-    w.last_wake_at ? "最近唤醒：" + fmtTs(w.last_wake_at) : "尚未唤醒");
+    "模式：" + w.listening_mode + "；" +
+    (w.last_wake_at ? "最近唤醒：" + fmtTs(w.last_wake_at) : "尚未唤醒"));
 
   const a = st.audio;
   const audioStale = a.last_device_audio_at !== null &&

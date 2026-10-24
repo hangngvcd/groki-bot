@@ -113,6 +113,7 @@ class DebugStatus:
     gemini_token_usage: dict[str, Any] | None = None
 
     # ---- wake_gate (wake word gate)----
+    listening_mode: str = "pass_through"
     wake_available: bool = False
     wake_state: str = "DORMANT"
     wake_last_wake_at: float | None = None
@@ -341,6 +342,7 @@ class DebugStatus:
             },
             "wake_gate": {
                 "state": self.wake_state,
+                "listening_mode": self.listening_mode,
                 "available": self.wake_available,
                 "last_wake_at": self.wake_last_wake_at,
                 "wake_count": self.wake_count,

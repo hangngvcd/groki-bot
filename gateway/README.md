@@ -163,6 +163,67 @@ recording). Two or three syllables with clear consonants work best; if it
 triggers too rarely or too often, adjust `STACKCHAN_KWS_THRESHOLD` and
 `STACKCHAN_KWS_SCORE`.
 
+### Button-only privacy mode (optional)
+
+Set `STACKCHAN_BUTTON_ONLY_LISTEN=1` in `.env` and restart to enable this
+mode for either `gbot` or `gemini`. The default is `0`, preserving existing
+behavior. With wake word disabled (`STACKCHAN_WAKE_WORD=0`) or no usable
+KWS model, microphone audio stays local until the device sends XiaoZhi
+`listen` with state `start` or `detect` (for example, a button press).
+Audio recorded before the button press is discarded. Forwarding stops after
+`STACKCHAN_WAKE_IDLE_S` of silence (default 30 seconds), using the existing
+wake gate activity threshold and listening window. With a working KWS model,
+either the wake word or the button opens the window. A detector failure
+falls back to button-only listening, never continuous forwarding.
+
+The startup log and status page show `button_only`, `wake_word_or_button`,
+`wake_word`, or `pass_through`; `/debug/status` exposes this as
+`wake_gate.listening_mode`.
+
+### Child profile (optional)
+
+Set `STACKCHAN_CHILD_PROFILE=1` in `.env` and restart. The default is `0`,
+preserving existing behavior. The gateway overrides conflicting settings;
+it does not rewrite your environment. Startup logs and `stackchan-mcp --check`
+report the settings forced off: `STACKCHAN_MAC_CONTROL`, `STACKCHAN_ASK_CLAUDE`,
+`STACKCHAN_GEMINI_DEVICE_TOOLS`, `STACKCHAN_FACE_TRACKER_AUTOSTART`,
+`STACKCHAN_HEAD_FOLLOW_DEFAULT`, `STACKCHAN_USB_TRANSPORT`,
+`STACKCHAN_GATEWAY_IDLE_ENABLED`, and `STACKCHAN_DEMO_REACTIONS`.
+Enabled defaults (including face tracker autostart and `ask_claude`) are
+reported too. Configured `VISION_HOST` / `VISION_URL` are reported as ignored.
+
+With `STACKCHAN_VOICE_BACKEND=gbot` and the matching desktop agent settings
+shown above, voice tools are limited to native `send_task`,
+`search_conversations`, and `end_the_call` (or local `end_conversation` if
+the native end tool is absent). Desktop tools still require the explicit
+matching agent target and native session support. Gemini exposes only
+`end_conversation`, with Google Search disabled. Extra voice tool extensions
+are disabled. Mac control, `ask_claude`, device tools, USB transport, Mac face
+tracking, camera capture, idle behavior, and demo reactions stay off even
+when their individual switches are on. `/capture` and `/track` are unavailable,
+camera MCP tools are hidden and refused, and tracking cannot be enabled by a tool.
+
+Device emotions are limited to Neutral, Happy, Excited, Curious, Thinking,
+Affection, Surprised, and Sad (for empathy only). Other expressions, including
+Angry, Bored, and Doubt, become Neutral; wire names remain lowercase. XiaoZhi
+aliases that the firmware maps onto allowed faces (for example `winking`,
+`laughing`, `crying`, `shocked`) pass through; `embarrassed`, `confused` and
+`sleepy` become Neutral.
+With child profile off, existing emotion mappings are unchanged.
+
+Voice startup failure closes the device's existing WebSocket with code 1011
+before server hello, so the robot can show a disconnected state. No other
+backend is started. Unknown backend names and `xiaozhi` cloud pass-through
+are refused in child mode and reported as a blocking issue by `--check`;
+cloud pass-through cannot enforce the restricted catalog. Overridden feature
+settings are warnings, so they do not fail `--check` by themselves.
+
+Set `STACKCHAN_TOKEN` on both the gateway and robot. Child mode warns if it
+is missing and disables `/debug/inject-text` until it is set. Text injection
+requires that exact bearer token; `VISION_TOKEN` and legacy `BEARER_TOKEN`
+do not substitute for it. Button-only listening is a separate opt-in setting
+(`STACKCHAN_BUTTON_ONLY_LISTEN=1`).
+
 ## 3. Start it and check
 
 ```bash

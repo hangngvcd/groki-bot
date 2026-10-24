@@ -27,6 +27,8 @@ import os
 from contextlib import suppress
 from pathlib import Path
 
+from . import child_profile
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_TRACKER_FPS = 8
@@ -58,6 +60,8 @@ def tracker_arguments(endpoint: str, fps: int) -> list[str]:
 
 
 def autostart_enabled() -> bool:
+    if child_profile.enabled():
+        return False
     value = os.getenv("STACKCHAN_FACE_TRACKER_AUTOSTART", "1").strip().lower()
     return value not in {"0", "false", "no", "off"}
 
