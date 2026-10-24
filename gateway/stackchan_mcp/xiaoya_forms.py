@@ -106,7 +106,7 @@ INTRO_TEXT = (
     "娜娜你好！我係鈴鈴，一隻會慢慢長大嘅白貓仔。"
     "你做功課嗰陣我會陪住你，有嘢想問就叫我個名，或者撳一下個掣。"
 )
-INTRO_VOICE = "zh-HK-HiuGaaiNeural"
+INTRO_VOICE = "zh-HK-HiuMaanNeural"
 
 INTRO_MESSAGE: dict[str, Any] = {"type": "xiaoya", "cmd": "intro", "force": True}
 
