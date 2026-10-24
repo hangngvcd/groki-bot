@@ -291,6 +291,8 @@ talk to the robot without an MCP client open:
 The script keeps stdin open so the stdio MCP server does not exit. Point a
 launchd agent (macOS) or systemd unit (Linux) at it for start at login.
 
+小芽 macOS 背景服務安裝同日常操作：見[家長指南](../docs/xiaoya-parent-guide.md)。
+
 Only one gateway can use ports 8765 and 8766 at a time, so pick A or B.
 
 When it is running you should see `server listening on 0.0.0.0:8765` in the
