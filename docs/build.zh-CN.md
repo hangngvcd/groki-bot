@@ -65,4 +65,4 @@ OpenAI / Gemini 的 API 密钥不编进固件，经 BLE / Wi-Fi 设置页在运�
 
 推送标签 `vX.Y.Z` 后，CI（启用 GitHub Actions 时）为四块板构建并挂到 Release，Pages 站点随后更新。刷机页源文件在 `docs/index.html`，蓝牙设置页源文件在 `tools/settings.html`。
 
-spotpear128cam 发布、网页烧录与 OTA：标签发布附带 `firmware-<tag>-spotpear128cam.zip`，网页选择 SpotPear ESP32-S3 1.28-CAM (小芽)；设备仅列出本板固件并下载 `firmware/<tag>/spotpear128cam/stackchan_idf.bin`；双 4 MiB OTA 槽，已启用启动回滚并调用 mark-valid，Wi-Fi 新旧版本升级和故障镜像回滚仍待真机验证；家长通过 Grok Bot 更新属 ticket 24 后续工作，不新增家长设置页。
+spotpear128cam 发布、网页烧录与 OTA：标签发布附带 `firmware-<tag>-spotpear128cam.zip`，网页选择 SpotPear ESP32-S3 1.28-CAM (鈴鈴)；设备仅列出本板固件并下载 `firmware/<tag>/spotpear128cam/stackchan_idf.bin`；双 4 MiB OTA 槽，已启用启动回滚并调用 mark-valid，Wi-Fi 新旧版本升级和故障镜像回滚仍待真机验证；家长通过 Grok Bot 更新属 ticket 24 后续工作，不新增家长设置页。

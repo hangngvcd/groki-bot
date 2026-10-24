@@ -166,7 +166,7 @@ async def test_api_and_cli(store, monkeypatch, caplog, capsys):
         assert "device_id" not in await response.text()
         base = str(client.make_url("")).rstrip("/")
         assert await asyncio.to_thread(main, ["--url", base, "status", "--text"]) == 0
-        assert "小芽" in capsys.readouterr().out
+        assert "鈴鈴" in capsys.readouterr().out
         assert (
             await asyncio.to_thread(
                 main, ["--url", base, "set", "camera_presence", "off"]

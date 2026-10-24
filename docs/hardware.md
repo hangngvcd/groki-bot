@@ -183,7 +183,7 @@ Hardware visual sign-off remains for tickets 14/15 on-board.
 
 ### SpotPear BOOT button
 
-For 小芽 on `BoardKind::SpotPear128Cam` (`CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM`),
+For 鈴鈴 (the 小芽 study-buddy build) on `BoardKind::SpotPear128Cam` (`CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM`),
 BOOT is the only interaction button; there is no touch. The firmware reads GPIO0
 (active low, external 10k pull-up) directly through the ESP-IDF GPIO driver;
 `M5.begin()` and `M5.BtnA` are not used. The Atom button overlay does not handle BOOT.
@@ -215,7 +215,7 @@ companion face with no nagging. Early end has no completion announcement.
 Breaks default to five minutes; the real duration is a pending parent setting
 via Grok Bot / parent API. Break state stays local (spec 4.4 / ticket 27), with
 no new gateway messages or face expressions. Conversation takes precedence
-so 小芽 can still talk during a break.
+so 鈴鈴 can still talk during a break.
 
 Listening sends XiaoZhi `{"session_id":...,"type":"listen","state":"detect","source":"button"}`
 without a `text` field, equivalent to wake-word detection. Thinking also aborts,
