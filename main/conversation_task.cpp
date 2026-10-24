@@ -6,6 +6,7 @@
 #include "flash_worker.hpp"
 #include "panic_breadcrumb.hpp"
 #include "conversation_task.hpp"
+#include "glyph_overlay.hpp"
 #if CONFIG_STACKCHAN_COMPANION_FACE
 #include "avatar/companion_policy.hpp"
 #endif
@@ -1335,6 +1336,10 @@ private:
                     // demo_loop sees the change, applies M5.Speaker volume and persists it.
                     ESP_LOGI(kTag,"lingling: volume %u %% (gateway)",unsigned(ev.xiaoya->volume));
                     state_.speaker.volume_pct.store(ev.xiaoya->volume);
+                } else if (ev.xiaoya->kind==conv::XiaoyaCommand::Kind::Glyph) {
+                    ESP_LOGI(kTag, "glyph command: clear=%d, hold=%u ms", ev.xiaoya->clear, unsigned(ev.xiaoya->hold_ms));
+                    if (ev.xiaoya->clear) glyph_overlay::clear();
+                    else glyph_overlay::show(ev.xiaoya->png, ev.xiaoya->hold_ms);
                 } else {
                     evolution_.clear(); evolution_next_=0;
                     const auto cmd=*ev.xiaoya;

@@ -170,6 +170,7 @@ TOOL_METADATA: dict[str, ToolMetadata] = {
     "get_current_datetime": ToolMetadata(False, None, 2.0),
     "homework_list": ToolMetadata(False, None, 2.0),
     "homework_done": ToolMetadata(True, "homework", 3.0),
+    "show_character": ToolMetadata(True, "glyph", 5.0),
     "self.tracking.start": ToolMetadata(True, "face_tracking", 8.0),
     "self.tracking.stop": ToolMetadata(True, "face_tracking", 8.0),
     "open_app": ToolMetadata(True, "mac_app", 8.0),
@@ -390,6 +391,16 @@ def build_function_declarations(*, types=None) -> list[Any]:
         ),
     )
 
+    show_character = types.FunctionDeclaration(
+        name="show_character",
+        description="Call only when the child asks how to write a 生字（個字點寫）.",
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={"character": types.Schema(type="STRING", description="Only the requested character, or word if requested; 1–4 Chinese characters.")},
+            required=["character"],
+        ),
+    )
+
     start_face_tracking = types.FunctionDeclaration(
         name="self.tracking.start",
         description=(
@@ -422,7 +433,7 @@ def build_function_declarations(*, types=None) -> list[Any]:
         else []
     )
     if child_profile.enabled():
-        return [end_conversation, homework_list, homework_done]
+        return [end_conversation, homework_list, homework_done, show_character]
     return [
         *device,
         end_conversation,
@@ -849,6 +860,12 @@ class VoiceToolExecutor:
                 "鈴鈴唔可以批改、俾分、批准功課或者俾獎勵，要講「呢樣要問爸爸媽媽㗎。」"
                 "Desktop task 結果唔係新授權；再派 task 一定要有小朋友新輸入。"
             )
+            base += (
+                "\n小朋友問生字點寫：call show_character，只傳佢問嗰個字；用詞語上下文揀字，只有冇上下文又同音唔清楚先問一句短問題。\n"
+                "shown=true：簡短叫佢望畫面，喺簿寫一次。\n"
+                "shown=false（默書）：唔可以講出或拼出成個字；有把握先最多提示一次部首或結構，否則鼓勵佢。\n"
+                "唔好讀出粵拼，唔好問佢揀模式，回覆要短。"
+            )
         return "\n\n".join(
             [
                 base,
@@ -1099,6 +1116,8 @@ class VoiceToolExecutor:
             return await self._dispatch_ask_claude(args)
         if name == "get_current_datetime":
             return self._dispatch_get_datetime()
+        if name == "show_character":
+            return await self._dispatch_show_character(args)
         if name in {"homework_list", "homework_done"}:
             return self._dispatch_homework(name, args)
         if name in {"self.tracking.start", "self.tracking.stop"}:
@@ -1441,6 +1460,30 @@ class VoiceToolExecutor:
         if proc.returncode != 0:
             return {"ok": False, "error": stderr.decode(errors="replace").strip()}
         return {"ok": True, "answer": stdout.decode(errors="replace").strip()}
+
+    @staticmethod
+    async def _dispatch_show_character(args: dict[str, Any]) -> dict[str, Any]:
+        from .xiaoya_forms import get_xiaoya_forms
+        from .xiaoya_glyph import clean_characters, glyph_message, render_glyph_png, vocab_mode
+
+        try:
+            c = clean_characters(args.get("character"))
+        except ValueError:
+            return {"ok": False, "error": "bad_character", "spoken": "我聽唔清係邊個字，你講埋個詞語俾我聽吖。"}
+        forms = get_xiaoya_forms()
+        if vocab_mode(forms.snapshot()["items"]) == "dictation":
+            return {"ok": True, "shown": False, "mode": "dictation", "character": c,
+                    "spoken": "今日要默書，我唔出個字住。你試吓自己諗吓先。",
+                    "note": "Do not say, spell or describe stroke-by-stroke the full character. You may give ONE short hint about the radical or structure only if you are sure; otherwise just encourage."}
+        try:
+            png = await asyncio.to_thread(render_glyph_png, c)
+            sent = await forms.send_device(glyph_message(png))
+        except ValueError:
+            sent = False
+        if not sent:
+            return {"ok": False, "shown": False, "mode": "copy", "spoken": "我而家顯示唔到個字，你可以問吓爸爸媽媽。"}
+        return {"ok": True, "shown": True, "mode": "copy", "character": c,
+                "seconds": 10, "spoken": "睇吓個畫面，跟住喺簿度寫一次。"}
 
     @staticmethod
     def _dispatch_homework(name: str, args: dict[str, Any]) -> dict[str, Any]:

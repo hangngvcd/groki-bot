@@ -399,6 +399,18 @@ class XiaoyaForms:
             return False
         return True
 
+    async def send_device(self, message: dict) -> bool:
+        """Send a command only after the registered device session is ready."""
+        sender = self._sender
+        if sender is None or not self._session_ready:
+            return False
+        try:
+            await sender(message)
+        except Exception:
+            logger.warning("鈴鈴 device command failed", exc_info=True)
+            return False
+        return True
+
     async def send_volume(self, volume: int | None = None) -> bool:
         """Send the parent volume (0..100) to the device once its session is ready.
 

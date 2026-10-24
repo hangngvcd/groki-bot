@@ -33,6 +33,9 @@ dependencies = [
     "aiohttp>=3",
     "pyserial>=3.5",
     "edge-tts>=7",
+    # 生字 display (ticket 17): render a 240x240 PNG of the character on the Mac.
+    "pillow>=10",
+    "fonttools>=4.40",
 ]
 
 [project.optional-dependencies]

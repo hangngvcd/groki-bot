@@ -43,6 +43,7 @@ set(_main_srcs
     "device_ui.cpp"
     "diag.cpp"
     "face_config.cpp"
+    "glyph_overlay.cpp"
     "i2c_dump.cpp"
     "led_task.cpp"
     "lt_timer.cpp"

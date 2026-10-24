@@ -6,6 +6,7 @@
 #include <set>
 #include "avatar_vm/design_scale.hpp"
 #include "render_task.hpp"
+#include "glyph_overlay.hpp"
 
 #include <cstdio>
 #include <string>
@@ -389,6 +390,11 @@ void render_task_entry(void* arg) {
             // overlays compose into the same frame; end_frame() presents.
             avatar.set_form(state->face.form.load(std::memory_order_relaxed));
             avatar.tick(now_ms, canvas);
+            if (args.round_face_layout && cv == &buffered && canvas_w == 240 && canvas_h == 240) {
+                // The status ring is drawn after the glyph so it stays visible.
+                glyph_overlay::compose(buffered.sprite(), now_ms);
+                if (glyph_overlay::take_ended()) avatar.request_full_repaint();
+            }
         }
 
 #if CONFIG_STACKCHAN_COMPANION_FACE

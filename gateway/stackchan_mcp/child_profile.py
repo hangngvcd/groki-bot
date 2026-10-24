@@ -14,6 +14,7 @@ VOICE_TOOL_NAMES = frozenset(
         "end_conversation",
         "homework_list",
         "homework_done",
+        "show_character",
     }
 )
 

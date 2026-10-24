@@ -96,6 +96,8 @@ Versions are the ones pinned in [gateway/uv.lock](gateway/uv.lock) at release ti
 
 | Package | Version | License | Used for |
 |---|---|---|---|
+| pillow | 12.3.0 (< Python 3.11), 13.0.0 (Python 3.11+) | MIT-CMU | local glyph PNG rendering |
+| fonttools | 4.65.0 (< Python 3.11), 4.67.0 (Python 3.11+) | MIT | bundled font character coverage |
 | websockets | 16.0 | BSD-3-Clause | WebSocket server for the robot |
 | aiohttp | 3.13.5 | Apache-2.0 AND MIT | HTTP server on port 8766 |
 | mcp | 1.27.0 | MIT | stdio MCP server |
@@ -124,3 +126,23 @@ System library: [libopus](https://opus-codec.org/) (BSD-3-Clause), installed wit
 - `tools/face-demo/` scripts call the device's HTTP API with curl; `task-demo` also runs the `grok` CLI, which you install yourself and which is not included here.
 
 See each component's LICENSE or COPYING file for the complete terms.
+
+## Fonts
+
+- Free HK Kai 自由香港楷書, 4700-character edition, Version 1.00,
+  © its authors / freehkfonts, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/),
+  unmodified. Source: [freehkfonts/freehkkai](https://github.com/freehkfonts/freehkkai),
+  `download` branch, `Free-HK-Kai_4700.ttf`.
+  「自由香港楷書」由「自由香港字型」社群製作，根據香港教育局
+  《常用字字形表(2007年重排本)》字形標準，修改來源為台灣全字庫正楷體
+  （中華民國行政院國家發展委員會，CNS11643 中文標準交換碼全字庫）。
+  合作機構：香港聖公會麥理浩夫人中心林植宣博士老人綜合服務中心、
+  香港創意開放科技協會 (HKCOTA)；顧問：柯熾堅先生 (Sammy Or)、香港教育大學語文教育中心。
+  Full attribution and acknowledgements: [Notice for Use](gateway/stackchan_mcp/fonts/FreeHKKai-Notice-for-Use.txt).
+  [License](gateway/stackchan_mcp/fonts/FreeHKKai-LICENSE.txt).
+- Noto Sans HK, © Google/Adobe, SIL OFL 1.1, unmodified. Source:
+  [notofonts/noto-cjk](https://github.com/notofonts/noto-cjk),
+  `Sans/SubsetOTF/HK/NotoSansHK-Regular.otf`.
+  [License](gateway/stackchan_mcp/fonts/NotoSansHK-OFL.txt).
+
+Bundled under [gateway/stackchan_mcp/fonts/](gateway/stackchan_mcp/fonts/README.md).
