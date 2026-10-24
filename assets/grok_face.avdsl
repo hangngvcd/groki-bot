@@ -262,21 +262,31 @@ fn draw()
   end
 
   -- Xiaoya's sprout follows the head, with a breathing lean and speech lift.
+  -- Listening (round companion only): the sprout perks up like ears --
+  -- taller stem, leaves raised high, with a small alert twitch.
+  let perk = 0
+  if sprout > 0.5 and expr == LISTENING then
+    perk = b
+  end
   if sprout > 0.5 and form < 2.5 then
     let lean = (bre - 10) / 10 * sz(3)
+    let twitch = (now_ms / 30) % 20
+    if twitch > 10 then
+      twitch = 20 - twitch
+    end
     let root_y = cy - base_r
-    let tip_x = cx + lean
-    let tip_y = root_y - sz(18) - talk * sz(4)
+    let tip_x = cx + lean * (1 - perk) + perk * (twitch - 5) / 5 * sz(1.2)
+    let tip_y = root_y - sz(18) - talk * sz(4) - perk * sz(2)
     let joint_y = tip_y + sz(4)
     fill_triangle(cx - sz(1.5), root_y + sz(1), cx + sz(1.5), root_y + sz(1), tip_x, tip_y, 0x5C08)
     fill_triangle(cx + sz(1.5), root_y + sz(1), tip_x + sz(1.5), tip_y, tip_x, tip_y, 0x5C08)
     -- Pointed leaves: the breathing lean also tilts their outer tips.
-    let left_x = tip_x - sz(16)
-    let left_y = joint_y - sz(7) - lean * 0.4
+    let left_x = tip_x - sz(16) + perk * sz(5)
+    let left_y = joint_y - sz(7) - lean * 0.4 - perk * sz(5)
     fill_triangle(tip_x, joint_y, tip_x - sz(9), joint_y - sz(9), left_x, left_y, 0x7E4A)
     fill_triangle(tip_x, joint_y, left_x, left_y, tip_x - sz(9), joint_y - sz(1), 0x7E4A)
-    let right_x = tip_x + sz(16)
-    let right_y = joint_y - sz(7) + lean * 0.4
+    let right_x = tip_x + sz(16) - perk * sz(5)
+    let right_y = joint_y - sz(7) + lean * 0.4 - perk * sz(5)
     fill_triangle(tip_x, joint_y, tip_x + sz(9), joint_y - sz(9), right_x, right_y, 0x7E4A)
     fill_triangle(tip_x, joint_y, right_x, right_y, tip_x + sz(9), joint_y - sz(1), 0x7E4A)
   end
@@ -340,5 +350,23 @@ fn draw()
   end
 
   ring_eyes(eyes)
+
+  -- Speaking (round companion only): a dark mouth under the eyes opens and
+  -- closes with the playback level. It follows the eyes' gaze and stays
+  -- inside the (speech-squashed) body. CoreS3 keeps the body-squash only.
+  if sprout > 0.5 and talk > 0.05 then
+    let mlx = (ring_l0x + ring_l12x + ring_l24x + ring_l36x) / 4
+    let mrx = (ring_r0x + ring_r12x + ring_r24x + ring_r36x) / 4
+    let mbl = max(max(ring_l0y, ring_l12y), max(ring_l24y, ring_l36y))
+    let mbr = max(max(ring_r0y, ring_r12y), max(ring_r24y, ring_r36y))
+    let mrx2 = sz(11) + talk * sz(6)
+    let mry = sz(3) + talk * sz(13)
+    let my = max(mbl, mbr) + sz(8) + mry
+    my = min(my, cy + base_r * sy - sz(12) - mry)
+    let mx = (mlx + mrx) / 2
+    mx = clamp(mx, cx - base_r * 0.45, cx + base_r * 0.45)
+    fill_ellipse(mx, my, mrx2, mry, eyes)
+    fill_ellipse(mx, my + mry * 0.45, mrx2 * 0.55, mry * 0.4, 0xD8A7)
+  end
   end_group()
 end

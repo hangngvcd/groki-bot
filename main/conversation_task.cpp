@@ -33,6 +33,7 @@
 #include "board/si12t_touch.hpp"
 #include "conversation/gemini_live_client.hpp"
 #include "conversation/head_command.hpp"
+#include "conversation/listen_cue.hpp"
 #include "conversation/metrics.hpp"
 #include "conversation/openai_realtime_client.hpp"
 #include "conversation/xiaozhi_client.hpp"
@@ -377,6 +378,10 @@ public:
                     wake_rms_peak_ = 0;
                     ESP_LOGI(kTag, "wake (BOOT): listen detect sent, face=listening, measuring mic for %u ms",
                              static_cast<unsigned>(kWakeRmsWindowMs));
+                    // A local wake: mark the gate open so the gateway's cyan
+                    // status light that may follow doesn't chime a second time.
+                    wake_cue_.open = true;
+                    play_wake_chime("BOOT");
                 } else {
                     ESP_LOGW(kTag, "wake (BOOT): listen detect send failed");
                 }
@@ -385,6 +390,7 @@ public:
             // the listening face can't stick when nothing was heard.
             if (wake_face_since_ms_ != 0 && now_ms() - wake_face_since_ms_ > kWakeFaceTimeoutMs) {
                 wake_face_since_ms_ = 0;
+                wake_cue_.reset();
                 if (static_cast<avatar::VoiceState>(state_.conv.voice_state.load()) ==
                     avatar::VoiceState::Listening) {
                     turn_open_=false;
@@ -496,8 +502,78 @@ private:
         enter_listening();
         return pos==samples;
     }
+    // Ticket 15f: local wake chime, a soft two-tone "叮" synthesised in code
+    // (conversation/listen_cue.hpp), straight into the internal-RAM segment
+    // ring: no allocation, no flash. Half-duplex exactly like play_local_clip:
+    // the mic is stopped before the first sample and re-primed by
+    // enter_listening() only after the speaker has been ended, so the chime
+    // is never in the uplink and cannot be transcribed as speech. It does not
+    // send xiaoya local_speech either: there is no mic audio to self-mute.
+    // Played at the user's speaker volume (M5.Speaker master volume); skipped
+    // while muted so a muted device doesn't drop ~260 ms of mic for nothing.
+    void play_wake_chime(const char* why) {
+#if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
+        if (local_!=Local::Listening || state_.speaker.muted.load(std::memory_order_relaxed)) return;
+        constexpr std::uint32_t kRate=24000;
+        const auto total=conv::wake_chime_samples(kRate);
+        M5.Mic.end();
+        vTaskDelay(kI2sSettle);
+        const auto started=now_ms();
+        const auto deadline=started+conv::kChimeMs+1000;
+        auto overdue=[&] { return static_cast<std::int32_t>(now_ms()-deadline)>=0; };
+        std::size_t pos=0,next=0;
+        while (pos<total && !overdue()) {
+            if (M5.Speaker.isPlaying(kSpeakerChannel)<kSegmentBuffers-1) {
+                const auto n=std::min(kSegmentSamples,total-pos);
+                conv::render_wake_chime(seg_buf_[next],pos,n,kRate);
+                if (!M5.Speaker.playRaw(seg_buf_[next],n,kRate,false,1,kSpeakerChannel,false)) {
+                    ESP_LOGW(kTag,"wake chime: speaker failed");
+                    break;
+                }
+                pos+=n; next=(next+1)%kSegmentBuffers;
+            }
+            vTaskDelay(pdMS_TO_TICKS(5));
+        }
+        while (M5.Speaker.isPlaying(kSpeakerChannel)>0 && !overdue()) vTaskDelay(pdMS_TO_TICKS(5));
+        M5.Speaker.stop(kSpeakerChannel);
+        const bool keep_turn=turn_open_;
+        enter_listening();  // Speaker.end + settle + mic re-prime
+        turn_open_=keep_turn;
+        ESP_LOGI(kTag,"wake chime (%s): %u ms, mic off %u ms",why,unsigned(conv::kChimeMs),
+                 unsigned(now_ms()-started+20));
+#else
+        (void)why;
+#endif
+    }
+
+    // Ticket 15f: the gateway's status-LED messages are the wake signal on
+    // the LED-less round companion (see listen_cue.hpp). Cyan after "off" =
+    // fresh wake: listening face + ring, then the chime. Cyan after a reply =
+    // back to listening (no chime). Off / red = gate closed: drop the
+    // listening face so the idle -> sleepy decay can run again.
+    void on_status_led(std::uint8_t r, std::uint8_t g, std::uint8_t b) {
+#if CONFIG_STACKCHAN_COMPANION_FACE
+        const auto step=wake_cue_.on_led(conv::classify_status_led(r,g,b));
+        const auto voice=static_cast<avatar::VoiceState>(state_.conv.voice_state.load());
+        if (step.listening && local_!=Local::Speaking && voice!=avatar::VoiceState::Speaking &&
+            voice!=avatar::VoiceState::Thinking) {
+            state_.note_face_activity();
+            state_.set_voice_state(avatar::VoiceState::Listening);
+        }
+        if (step.closed && voice==avatar::VoiceState::Listening) {
+            state_.set_voice_state(avatar::VoiceState::Idle);
+        }
+        if (step.fresh_wake) {
+            ESP_LOGI(kTag,"wake (gateway LED): face=listening");
+            play_wake_chime("gateway");
+        }
+#else
+        (void)r; (void)g; (void)b;
+#endif
+    }
+
     void service_lingling() {
-        if (local_!=Local::Listening || turn_open_) return;
+        if (local_!=Local::Listening || turn_open_ || wake_cue_.open) return;
         if (pending_form_) {
             const auto cmd=*pending_form_; pending_form_.reset();
             const auto from=cmd.from ? cmd.from : state_.face.form.load();
@@ -799,6 +875,7 @@ private:
     void set_local(Local s)
     {
         local_ = s;
+        if (s == Local::Init || s == Local::Yielded) wake_cue_.reset();
         state_.conv.idle.store(s == Local::Listening, std::memory_order_relaxed);
         using avatar::VoiceState;
         VoiceState vs = VoiceState::Idle;
@@ -1049,6 +1126,14 @@ private:
         M5.Mic.record(mic_buf_[1].data(), mic_buf_[1].size(), mic_sample_rate_, /*stereo=*/false);
         mic_read_ = 0;
         set_local(Local::Listening);
+#if CONFIG_STACKCHAN_COMPANION_FACE
+        // Ticket 15f: the gateway's post-reply cyan can arrive while buffered
+        // audio is still draining; show the listening face once it has.
+        if (wake_cue_.open && static_cast<avatar::VoiceState>(state_.conv.voice_state.load()) ==
+                                  avatar::VoiceState::Idle) {
+            state_.set_voice_state(avatar::VoiceState::Listening);
+        }
+#endif
     }
 
     // Switch the I2S bus to the speaker and begin streaming playback. Called
@@ -1392,6 +1477,7 @@ private:
                      static_cast<unsigned>(ev.led_r),
                      static_cast<unsigned>(ev.led_g),
                      static_cast<unsigned>(ev.led_b));
+            on_status_led(ev.led_r, ev.led_g, ev.led_b);
             break;
         }
         }
@@ -1619,6 +1705,7 @@ private:
 
     Local local_{Local::Init};
     std::uint32_t thinking_since_ms_{0};
+    conv::WakeCue wake_cue_;  // ticket 15f: gateway wake-gate state from status-LED messages
 #if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
     static constexpr std::uint32_t kWakeRmsWindowMs = 3000;
     static constexpr std::uint32_t kWakeFaceTimeoutMs = 15000;

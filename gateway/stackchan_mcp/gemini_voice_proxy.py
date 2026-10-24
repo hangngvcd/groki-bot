@@ -1142,6 +1142,18 @@ class GeminiVoiceProxy:
         self._tts_tasks.add(task)
         task.add_done_callback(self._tts_tasks.discard)
 
+    def _device_plays_local_wake_chime(self) -> bool:
+        """True when the device hello advertises ``features.local_wake_chime``.
+
+        Such firmware (鈴鈴 15f+) plays its own half-duplex chime when the cyan
+        listening LED arrives, so the gateway must not send a second beep.
+        """
+        hello = self._device_hello
+        if not isinstance(hello, dict):
+            return False
+        features = hello.get("features")
+        return isinstance(features, dict) and features.get("local_wake_chime") is True
+
     async def _play_wake_chime(self) -> None:
         """Send a short beep through the existing TTS envelope and Opus frames.
 
@@ -1154,6 +1166,9 @@ class GeminiVoiceProxy:
             or self._send_to_device is None
             or self._codec is None
         ):
+            return
+        if self._device_plays_local_wake_chime():
+            logger.info("wake chime skipped: device plays local_wake_chime")
             return
         try:
             await self._handle_gemini_audio(synthesize_wake_chime_pcm())

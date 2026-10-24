@@ -112,6 +112,10 @@ void render_task_entry(void* arg) {
     int cached_slot = -1;
     bool cache_ok = false;
     std::set<int> failed_slots;
+    // Ticket 15f: PNG faces have no drawn mouth, so while speaking the whole
+    // face bobs up by `png_bob` px (from mouth_open) and the vacated rows are
+    // cleared to the background colour.
+    int png_bob = 0;
     const auto& pack = lingling::assets();
     if (args.round_face_layout && cv == &buffered && canvas_w == 240 && canvas_h == 240) {
         avatar.set_face_painter([&](RichCanvas&, const avatar::DrawContext& ctx) {
@@ -153,7 +157,10 @@ void render_task_entry(void* arg) {
                 if (!cache_ok) failed_slots.insert(slot);
             }
             if (!cache_ok) return false;
-            face_cache.pushSprite(&buffered.sprite(), 0, 0);
+            face_cache.pushSprite(&buffered.sprite(), 0, -png_bob);
+            if (png_bob > 0) {
+                buffered.sprite().fillRect(0, 240 - png_bob, 240, png_bob, ctx.palette.background);
+            }
             return true;
         });
     }
@@ -344,6 +351,37 @@ void render_task_entry(void* arg) {
                 aora::fit_to_canvas(ring_buf, avatar_vm::round_face_layout_scale(*cv),
                                     cv->width() * 0.5f, cv->height() * 0.5f);
             }
+#if CONFIG_STACKCHAN_COMPANION_FACE
+            if (args.round_face_layout) {
+                // Ticket 15f listening face: widen both eyes around their own
+                // centroid (x1.08 wide, x1.25 tall), eased in/out over ~150 ms.
+                static float listen_k = 0.0f;
+                const float target = voice == static_cast<std::int32_t>(avatar::VoiceState::Listening) ? 1.0f : 0.0f;
+                listen_k += (target - listen_k) * 0.35f;
+                if (listen_k > 0.01f) {
+                    const float kx = 1.0f + 0.08f * listen_k;
+                    const float ky = 1.0f + 0.25f * listen_k;
+                    constexpr int kPts = aora::kOutFloats / 4;  // points per eye
+                    for (int side = 0; side < 2; ++side) {
+                        float* e = ring_buf + side * (aora::kOutFloats / 2);
+                        float mx = 0.0f, my = 0.0f;
+                        for (int i = 0; i < kPts; ++i) { mx += e[i * 2]; my += e[i * 2 + 1]; }
+                        mx /= kPts;
+                        my /= kPts;
+                        for (int i = 0; i < kPts; ++i) {
+                            e[i * 2] = mx + (e[i * 2] - mx) * kx;
+                            e[i * 2 + 1] = my + (e[i * 2 + 1] - my) * ky;
+                        }
+                    }
+                }
+            }
+#endif
+            {
+                const bool talking = voice == static_cast<std::int32_t>(avatar::VoiceState::Speaking) ||
+                                     state->servo.masked.load(std::memory_order_relaxed);
+                const float m = mouth_open < 0.0f ? 0.0f : (mouth_open > 1.0f ? 1.0f : mouth_open);
+                png_bob = talking ? static_cast<int>(m * 5.0f + 0.5f) : 0;
+            }
             avatar.set_sprout_visible(args.round_face_layout);
             avatar.set_layout_scale(args.round_face_layout ? avatar_vm::round_face_layout_scale(*cv) : 0.0f);
             avatar.set_eye_ring_buffer(ring_buf);
@@ -352,6 +390,33 @@ void render_task_entry(void* arg) {
             avatar.set_form(state->face.form.load(std::memory_order_relaxed));
             avatar.tick(now_ms, canvas);
         }
+
+#if CONFIG_STACKCHAN_COMPANION_FACE
+        // Ticket 15f status ring on the round panel: cyan = listening (gentle
+        // breathing), dim cyan = thinking, blue = speaking, nothing when idle
+        // or asleep. Drawn into the PSRAM frame after the face, before present.
+        if (args.round_face_layout && cv == &buffered && canvas_w == 240 && canvas_h == 240) {
+            const bool talking = voice == static_cast<std::int32_t>(avatar::VoiceState::Speaking) ||
+                                 state->servo.masked.load(std::memory_order_relaxed);
+            std::uint32_t rgb = 0;
+            if (talking) {
+                rgb = 0x0060FFu;
+            } else if (voice == static_cast<std::int32_t>(avatar::VoiceState::Listening)) {
+                // 1.2 s triangle breathing between 70% and 100%.
+                const int ph = static_cast<int>(now_ms % 1200u);
+                const int tri = ph < 600 ? ph : 1200 - ph;  // 0..600
+                const int lvl = 179 + tri * 76 / 600;      // 179..255
+                rgb = (0u << 16) | (static_cast<std::uint32_t>(lvl * 220 / 255) << 8) |
+                      static_cast<std::uint32_t>(lvl * 235 / 255);
+            } else if (voice == static_cast<std::int32_t>(avatar::VoiceState::Thinking)) {
+                rgb = 0x005A64u;
+            }
+            if (rgb != 0) {
+                buffered.sprite().fillArc(119, 119, 118, 111, 0, 360, lgfx::color888(
+                    (rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF));
+            }
+        }
+#endif
 
         // The battery gauge is not drawn on the face: the value is still
         // available in SharedState and on the settings page. The badge layout keeps its place.

@@ -595,6 +595,12 @@ private:
         cJSON_AddStringToObject(root, "transport", "websocket");
         cJSON* features = cJSON_AddObjectToObject(root, "features");
         cJSON_AddBoolToObject(features, "mcp", false);
+#if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM && CONFIG_STACKCHAN_COMPANION_FACE
+        // Ticket 15f: this firmware plays its own wake chime (half-duplex, mic
+        // off) when the gateway's cyan status light arrives; a gateway that
+        // honours this flag skips its TTS wake beep so there is one chime.
+        cJSON_AddBoolToObject(features, "local_wake_chime", true);
+#endif
         cJSON* ap = cJSON_AddObjectToObject(root, "audio_params");
         cJSON_AddStringToObject(ap, "format", "opus");
         cJSON_AddNumberToObject(ap, "sample_rate", kUplinkSampleRate);

@@ -70,3 +70,9 @@ add_executable(conversation_test_xiaoya test_xiaoya.cpp)
 target_include_directories(conversation_test_xiaoya PRIVATE ${CONVERSATION_ROOT}/include)
 target_link_libraries(conversation_test_xiaoya PRIVATE cjson_host)
 add_test(NAME xiaoya COMMAND conversation_test_xiaoya)
+
+# Ticket 15f: status-LED wake cue + synthesized wake chime.
+add_executable(conversation_test_listen_cue test_listen_cue.cpp)
+target_include_directories(conversation_test_listen_cue PRIVATE ${CONVERSATION_ROOT}/include)
+target_compile_options(conversation_test_listen_cue PRIVATE -Wall -Wextra)
+add_test(NAME listen_cue COMMAND conversation_test_listen_cue)
