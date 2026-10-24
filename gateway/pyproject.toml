@@ -70,6 +70,7 @@ Documentation = "https://github.com/JosssphZhou/groki-bot/blob/main/docs/archite
 Upstream = "https://github.com/kisaragi-mochi/stackchan-mcp"
 
 [project.scripts]
+stackchan-parent = "stackchan_mcp.parent_cli:main"
 stackchan-mcp = "stackchan_mcp.cli:main"
 stackchan-gbot-proxy = "stackchan_mcp.gbot_http_proxy:main"
 

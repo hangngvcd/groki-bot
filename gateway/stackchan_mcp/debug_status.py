@@ -86,6 +86,8 @@ class DebugStatus:
     device_id: str | None = None
     device_connected_since: float | None = None
     device_last_disconnect_at: float | None = None
+    device_battery_percent: int | None = None
+    device_battery_at: float | None = None
     device_disconnect_count: int = 0
 
     # ---- gemini (Live session)----
@@ -143,6 +145,12 @@ class DebugStatus:
         self.device_connected_flag = True
         self.device_id = device_id
         self.device_connected_since = self.clock()
+
+    def on_device_battery(self, percent: int) -> None:
+        if type(percent) is not int or not 0 <= percent <= 100:
+            raise ValueError("Battery percent must be an integer 0..100")
+        self.device_battery_percent = percent
+        self.device_battery_at = self.clock()
 
     def on_device_disconnected(self) -> None:
         self.device_connected_flag = False
@@ -312,6 +320,8 @@ class DebugStatus:
             "device": {
                 "connected": self.device_connected_flag,
                 "device_id": self.device_id,
+                "battery_percent": self.device_battery_percent,
+                "battery_at": self.device_battery_at,
                 "connected_since": self.device_connected_since,
                 "last_disconnect_at": self.device_last_disconnect_at,
                 "disconnect_count": self.device_disconnect_count,
