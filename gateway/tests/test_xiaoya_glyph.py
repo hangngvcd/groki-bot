@@ -162,6 +162,7 @@ async def test_tool_device(monkeypatch, tmp_path, case):
                 assert result["ok"] is (case == "dictation")
                 if case == "dictation":
                     assert result["shown"] is False and result["mode"] == "dictation"
+                    assert result["spoken"].startswith("今日要默書")
     finally:
         await executor.close()
         await manager.stop()
@@ -216,6 +217,8 @@ async def test_undeterminable_mode_shows_nothing(monkeypatch, tmp_path):
         assert result["mode"] == "dictation" and result["shown"] is False
         assert "png" not in result
         assert "部首" in result["note"] or "radical" in result["note"]
+        assert "默書" not in result["spoken"]
+        assert "未有抄生字功課" in result["spoken"]
         sender.assert_not_awaited()
     finally:
         await executor.close()
@@ -261,3 +264,39 @@ def test_glyph_mirror_can_be_disabled(monkeypatch):
     monkeypatch.setenv("STACKCHAN_GLYPH_MIRROR", "0")
     assert xiaoya_glyph.panel_mirrors_x() is False
     assert render_glyph_png("蝶") == xiaoya_glyph._render("蝶", xiaoya_glyph._directory(), False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "titles,done,dictation_words",
+    [
+        ([], [], False),  # empty list
+        (["數學工作紙"], [False], False),  # no 抄 / 默 item
+        (["中文默書", "中文抄生字"], [True, False], False),  # 默 already done -> copy
+        (["英文默書"], [False], True),  # unfinished 默
+        (["英文默書"], [True], False),  # 默 done, nothing else
+    ],
+)
+async def test_dictation_wording_matches_list(monkeypatch, tmp_path, titles, done, dictation_words):
+    monkeypatch.setenv("STACKCHAN_CHILD_PROFILE", "1")
+    forms = xiaoya_forms.XiaoyaForms(tmp_path / "forms.json")
+    items = [
+        {"id": i + 1, "title": t, "done": d} for i, (t, d) in enumerate(zip(titles, done))
+    ]
+    monkeypatch.setattr(forms, "snapshot", lambda: {"items": items, "done": 0, "total": len(items)})
+    sender = AsyncMock(return_value=True)
+    monkeypatch.setattr(forms, "send_device", sender)
+    monkeypatch.setattr(xiaoya_forms, "_forms", forms)
+    executor = VoiceToolExecutor()
+    try:
+        result = await executor.execute("show_character", {"character": "蝶"})
+        if titles == ["中文默書", "中文抄生字"]:
+            assert result["mode"] == "copy"
+            return
+        assert result["mode"] == "dictation" and result["shown"] is False
+        assert ("今日要默書" in result["spoken"]) is dictation_words
+        if not dictation_words:
+            assert result["spoken"] == "今日清單未有抄生字功課，我唔出個字住。我講吓部首同結構俾你諗吓。"
+        sender.assert_not_awaited()
+    finally:
+        await executor.close()

@@ -1487,12 +1487,26 @@ class VoiceToolExecutor:
             items = None
         if vocab_mode(items) == "dictation":
             # 默書 (or mode unknown): never render or send the character.
+            # Only mention 默書 when an unfinished 默 item really exists; an empty or
+            # unreadable list is still treated as dictation, but said honestly.
+            has_dictation = isinstance(items, list) and any(
+                isinstance(item, dict)
+                and isinstance(item.get("title"), str)
+                and "默" in item["title"]
+                and not item.get("done")
+                for item in items
+            )
+            spoken = (
+                "今日要默書，我唔出個字。我講吓部首同結構，你自己諗吓。"
+                if has_dictation
+                else "今日清單未有抄生字功課，我唔出個字住。我講吓部首同結構俾你諗吓。"
+            )
             return {
                 "ok": True,
                 "shown": False,
                 "mode": "dictation",
                 "character": c,
-                "spoken": "今日要默書，我唔出個字。我講吓部首同結構，你自己諗吓。",
+                "spoken": spoken,
                 "note": (
                     "Dictation: never show, say, spell or go stroke-by-stroke through "
                     "the full character, and do not list every component. You may "
