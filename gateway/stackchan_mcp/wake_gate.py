@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import re
 import struct
 import time
 from collections import deque
@@ -50,6 +51,7 @@ HEY_GROKI_WAKE_KEYWORD_VARIANTS = (
     "HH EY1 G R AO1 K IY0 @hey_groki_ao",
     "HH EY1 G R AH1 K IY0 @hey_groki_ah",
 )
+XIAOBAI_WAKE_KEYWORD = "x iǎo b ái :1 #0.02 @小白|S UW1 B AA1 S UW1 B AA1 :10 #0.02 @小白小白"
 KWS_MODEL_NAME = "sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20"
 DEFAULT_SAMPLE_RATE = 16_000
 DEFAULT_PREROLL_S = 2.0
@@ -94,6 +96,64 @@ class WakeWordUnavailable(RuntimeError):
     """Raised when the optional KWS runtime or model files are not available."""
 
 
+class KeywordTokenUnavailable(WakeWordUnavailable):
+    """A configured phoneme is absent from the model vocabulary."""
+
+
+@dataclass(frozen=True)
+class KeywordVariant:
+    tokens: tuple[str, ...]
+    score: float | None
+    threshold: float | None
+    tag: str
+    line: str
+
+
+def parse_keyword_variants(raw: str) -> tuple[KeywordVariant, ...]:
+    """Parse sherpa keyword lines separated by pipes or legacy newlines."""
+    variants: list[KeywordVariant] = []
+    for line in re.split(r"[|\n]", raw.strip()):
+        line = line.strip()
+        parts = line.split()
+        if not parts or not parts[-1].startswith("@") or len(parts[-1]) == 1:
+            raise ValueError(f"invalid keyword variant {line!r}: expected tokens followed by @tag")
+        tokens: list[str] = []
+        overrides: dict[str, float] = {}
+        for part in parts[:-1]:
+            if part.startswith((":", "#")):
+                name = "score" if part[0] == ":" else "threshold"
+                try:
+                    value = float(part[1:])
+                    if not math.isfinite(value) or name in overrides:
+                        raise ValueError
+                except ValueError as exc:
+                    raise ValueError(f"invalid {name} {part!r} in keyword variant {line!r}") from exc
+                overrides[name] = value
+            elif overrides or part.startswith("@"):
+                raise ValueError(f"invalid keyword variant {line!r}: tokens must precede overrides and @tag")
+            else:
+                tokens.append(part)
+        if not tokens:
+            raise ValueError(f"invalid keyword variant {line!r}: empty tokens")
+        variants.append(KeywordVariant(
+            tokens=tuple(tokens), score=overrides.get("score"),
+            threshold=overrides.get("threshold"), tag=parts[-1][1:], line=line,
+        ))
+    return tuple(variants)
+
+
+def validate_keyword_tokens(variants: tuple[KeywordVariant, ...], token_set: set[str]) -> None:
+    """Validate phonemes without importing the optional native runtime."""
+    for variant in variants:
+        missing = sorted(set(variant.tokens) - token_set)
+        if missing:
+            raise KeywordTokenUnavailable(
+                f"keyword variant {variant.line!r}: unknown tokens {', '.join(missing)}; "
+                "check tokens.txt. Use pinyin split into initial+final with tone marks, "
+                "or ARPAbet with stress digits."
+            )
+
+
 class SherpaOnnxKeywordSpotter:
     """sherpa-onnx KeywordSpotter wrapper for the robot's wake phrase."""
 
@@ -108,7 +168,15 @@ class SherpaOnnxKeywordSpotter:
         provider: str = "cpu",
         keywords_score: float = 7.0,
         keywords_threshold: float = 0.05,
+        include_builtin_variants: bool = True,
     ) -> None:
+        try:
+            self._variants = parse_keyword_variants(
+                keywords_file_body(keyword) if include_builtin_variants else keyword
+            )
+        except ValueError as exc:
+            raise WakeWordUnavailable(str(exc)) from exc
+        self.last_hit_tag: str | None = None
         try:
             import numpy as np  # noqa: PLC0415
             import sherpa_onnx  # noqa: PLC0415
@@ -123,11 +191,24 @@ class SherpaOnnxKeywordSpotter:
         self._keyword = keyword
         self._model_dir = _resolve_model_dir(model_dir)
         self._tokens = _require_file(self._model_dir / "tokens.txt")
+        try:
+            token_set = {
+                parts[0] for line in self._tokens.read_text(encoding="utf-8").splitlines()
+                if (parts := line.split())
+            }
+            validate_keyword_tokens(self._variants, token_set)
+        except KeywordTokenUnavailable as exc:
+            raise KeywordTokenUnavailable(f"{exc} Vocabulary: {self._tokens}") from exc
+        except OSError as exc:
+            raise WakeWordUnavailable(f"cannot read token vocabulary {self._tokens}: {exc}") from exc
         self._encoder = _find_onnx(self._model_dir, "encoder")
         self._decoder = _find_onnx(self._model_dir, "decoder")
         self._joiner = _find_onnx(self._model_dir, "joiner")
         keywords_file = self._ensure_keywords_file()
-        self._stream_keyword = "" if keywords_file.name == "stackchan_keywords.txt" else keyword
+        # sherpa-onnx create_stream() takes extra keywords separated by "/".
+        self._stream_keyword = "" if keywords_file.name == "stackchan_keywords.txt" else "/".join(
+            v.line for v in self._variants
+        )
         try:
             self._spotter = sherpa_onnx.KeywordSpotter(
                 tokens=str(self._tokens),
@@ -171,9 +252,16 @@ class SherpaOnnxKeywordSpotter:
         if not result:
             return False
         self._spotter.reset_stream(self._stream)
-        return self._result_matches(result)
+        hit = self._result_matches(result)
+        if hit:
+            tags = [v.tag for v in self._variants if v.tag in result]
+            self.last_hit_tag = max(tags, key=len) if tags else None
+            logger.info("wake word detected tag=%r result=%r", self.last_hit_tag, result)
+        return hit
 
     def _result_matches(self, result: str) -> bool:
+        if any(v.tag in result for v in getattr(self, "_variants", ())):
+            return True
         if self._phrase in result:
             return True
         compact_result = "".join(ch.lower() for ch in result if ch.isalnum())
@@ -185,8 +273,7 @@ class SherpaOnnxKeywordSpotter:
 
     def _ensure_keywords_file(self) -> Path:
         path = self._model_dir / "stackchan_keywords.txt"
-        wanted = self._keyword.strip()
-        body = keywords_file_body(wanted)
+        body = "".join(f"{v.line}\n" for v in self._variants)
         try:
             if not path.exists() or path.read_text(encoding="utf-8") != body:
                 path.write_text(body, encoding="utf-8")
@@ -457,7 +544,8 @@ def create_wake_gate_from_env(
                 keywords_threshold=_float_env("STACKCHAN_KWS_THRESHOLD", 0.05),
             )
         except WakeWordUnavailable as exc:
-            logger.warning("wake word gate unavailable: %s", exc)
+            log = logger.error if isinstance(exc, KeywordTokenUnavailable) else logger.warning
+            log("wake word gate unavailable: %s", exc)
     else:
         logger.info("wake word gate disabled by STACKCHAN_WAKE_WORD=0")
     if spotter is None and not button_only:
@@ -507,7 +595,8 @@ def keywords_file_body(keyword: str) -> str:
         variants = WAKE_KEYWORD_VARIANTS
     elif wanted == HEY_GROKI_WAKE_KEYWORD:
         variants = HEY_GROKI_WAKE_KEYWORD_VARIANTS
-    return "".join(f"{line}\n" for line in (wanted, *variants))
+    lines = [v.line for v in parse_keyword_variants(wanted)]
+    return "".join(f"{line}\n" for line in (*lines, *variants))
 
 
 def _looks_like_kws_dir(path: Path) -> bool:
@@ -570,6 +659,8 @@ def _keyword_from_env() -> str:
     phrase = _phrase_from_env()
     if phrase.lower() == HEY_GROKI_WAKE_PHRASE:
         return HEY_GROKI_WAKE_KEYWORD
+    if phrase == "小白":
+        return XIAOBAI_WAKE_KEYWORD
     return WAKE_KEYWORD
 
 

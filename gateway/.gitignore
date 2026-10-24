@@ -34,3 +34,6 @@ Thumbs.db
 build/
 dist/
 .debug-memleak/
+
+# Private local wake-word evaluation recordings and results
+kws-recordings*/
