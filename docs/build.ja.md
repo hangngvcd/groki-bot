@@ -89,3 +89,5 @@ CMake が `Could not find NODE_EXECUTABLE` と出した場合、今の環境
 OpenAI / Gemini の API キーはビルドに埋め込まず、BLE / Wi-Fi 設定 IF から
 実行時に投入します (NVS に保存)。`sdkconfig.defaults.local` (gitignore 済み) で
 コンパイル時デフォルトを与えることもできます。
+
+spotpear128cam のリリース・Web 書き込み・OTA：タグ公開で `firmware-<tag>-spotpear128cam.zip` を添付し、Web では SpotPear ESP32-S3 1.28-CAM (小芽) を選択；端末は自分のボード用リリースのみ表示し `firmware/<tag>/spotpear128cam/stackchan_idf.bin` を取得。4 MiB × 2 OTA スロットで起動ロールバックと mark-valid は実装済み、旧版→新版の Wi-Fi OTA と故障イメージのロールバックは実機検証待ち。保護者の Grok Bot 経由更新は ticket 24 の今後の作業で、新しい保護者設定ページは追加しません。

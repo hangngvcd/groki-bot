@@ -63,7 +63,7 @@ Flash a published release from the browser (Chrome / Edge):
 - **Wi-Fi settings**: once the device is on Wi-Fi, open `http://stackchan-XXXXXX.local/` (mDNS)
 - **iOS / SoftAP**: in AP mode, scan the Wi-Fi QR code on the LCD with the iPhone camera and the captive portal opens the settings page. On CoreS3 / StopWatch, tap the top-right corner of the screen to open the device UI and choose AP mode on the control page. On AtomS3R / AtomS3, a short press on BtnA opens the status overlay and a long press cycles `operation_mode`.
 
-After a `vX.Y.Z` tag is pushed, CI (when GitHub Actions is enabled) builds the four boards and attaches them to a Release; the Pages site then updates. The web flasher source is `docs/index.html` and the BLE settings page source is `tools/settings.html`.
+After a `vX.Y.Z` tag is pushed, CI (when GitHub Actions is enabled) builds the five boards and attaches them to a Release; the Pages site then updates. The web flasher source is `docs/index.html` and the BLE settings page source is `tools/settings.html`.
 
 ## Optional board components
 
@@ -114,3 +114,11 @@ When changing defaults, recreate the build directory or use `set-target` to
 regenerate its `sdkconfig`; IDF preserves existing values on ordinary rebuilds.
 
 SpotPear ESP32-S3 1.28-CAM skeleton: `make build BOARD=spotpear128cam`. This selects 16 MB flash, 8 MB Octal PSRAM, a manual GC9A01A panel, and the companion face policy. Audio and BOOT input bring-up follow in ticket 14; camera, servos, head touch and LEDs are disabled.
+
+## Releases, web flasher and OTA for spotpear128cam
+
+A tag release builds this required board and attaches `firmware-<tag>-spotpear128cam.zip`. In the web flasher choose **SpotPear ESP32-S3 1.28-CAM (小芽)**: images must match the board because PSRAM mode is fixed at link time. Device OTA lists only releases containing its own board image and downloads `firmware/<tag>/spotpear128cam/stackchan_idf.bin`.
+
+`partitions_16mb.csv` provides two 4 MiB OTA slots; CI requires at least 10% free space for this board. Boot rollback (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`) is already enabled in `sdkconfig.defaults`; neither the ESP32-S3 nor SpotPear overlay overrides it. `main/app_main.cpp` calls `esp_ota_mark_app_valid_cancel_rollback()` after core initialization and a two-second delay for pending images. Real hardware verification is still needed: Wi-Fi OTA from an old image to a new image, and rollback of a deliberately broken image.
+
+Parent-triggered updates through Grok Bot are future work (ticket 24 bridge). No new parent settings page is added.

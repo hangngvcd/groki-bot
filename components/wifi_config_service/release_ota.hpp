@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "release_versions.hpp"
+
 #include <cstdint>
 #include <string>
 
