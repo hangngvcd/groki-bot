@@ -13,3 +13,7 @@ dependencies:
   # GPIO9 — 9 LEDs per ear, 18 total. See components/board/nekomimi_led_strip
   # for the host-side adapter. RMT-backed, no other deps pulled in.
   espressif/led_strip: "^3.0"
+  # GC9A01A esp_lcd panel driver for the SpotPear ESP32-S3 1.28" CAM display
+  # (spotpear_lcd.cpp, compiled only with CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM).
+  # Same driver the factory firmware and the hardware-verified lcd_test use.
+  espressif/esp_lcd_gc9a01: "^2.0.0"

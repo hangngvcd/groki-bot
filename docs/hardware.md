@@ -60,14 +60,14 @@ The board is detected at boot and reported through `set_board_kind()` to the UI 
 
 ## SpotPear ESP32-S3 1.28-CAM pin map
 
-- [ ] Parent confirmation: pending (compare against the board in hand; nothing here has been tested on hardware)
+- [ ] Parent confirmation: pending. Only the LCD pins, init and orientation have been tested on hardware (via `lcd_test`, see "SpotPear display backend" below); everything else is untested.
 
 Confidence: **verified** = read from the SpotPear schematic and, where noted, matching the factory image or the Xiaozhi sibling board; **assembly option** = the schematic shows 0R/NC alternatives, the populated one is unknown; **guessed** = not verifiable without hardware.
 
 Sources:
 - [S] SpotPear schematic ESP32S3-1.28inch-AI-CAM.pdf (rev A1, 2026-05-23), https://cdn.static.spotpear.cn/uploads/picture/learn/ESP32/ESP32S3-1.28-CAM/ESP32S3-1.28inch-AI-CAM.pdf (linked from the product wiki https://spotpear.cn/wiki/ESP32-S3-1.28-inch-Camera-LCD-Display-Deepseek.html)
 - [F] SpotPear factory firmware esp32-s3-1.28-cam-ov5640-CN.bin (16 MiB merged image): strings show xiaozhi board dir main/boards/sp-esp32-s3-1.28-cam, class Spotpear_ESP32_S3_1_28_CAM, BoxAudioCodec (ES8311 + ES7210), esp_lcd_gc9a01, SD card; bootloader header = 16 MB flash, DIO 80 MHz; partition table: ota_0 0x20000 size 0x3f0000, ota_1 0x410000 size 0x3f0000, assets 0x800000 0x600000, wallpaper 0xe00000 0x200000. The board source itself is NOT in upstream 78/xiaozhi-esp32 (only sp-esp32-s3-1.28-box, a sibling board without camera); SpotPear distributes it via a Baidu pan zip only.
-- [F2] factory flash dump disassembly (ota_0 at 0x20000; Spotpear_ESP32_S3_1_28_CAM::InitializeSpi/InitializeGc9a01Display at 0x42033919/0x42032f34): SPI3, MOSI 2, MISO -1, SCLK 4, max transfer 240*240*2, DMA auto; CS 5, DC 47, mode 0, 40 MHz, queue depth 10, 8-bit commands/parameters; reset GPIO -1 (SWRESET 0x01), BGR, 16 bpp, invert on, mirror X, display on, MADCTL 0x48. Registers 0x62/0x63 match M5GFX's GC9A01 init list. PwmBacklight(GPIO42, invert=true, 25 kHz).
+- [F2] factory flash dump disassembly (ota_0 at 0x20000; Spotpear_ESP32_S3_1_28_CAM::InitializeSpi/InitializeGc9a01Display at 0x42033919/0x42032f34): SPI3, MOSI 2, MISO -1, SCLK 4, max transfer 240*240*2, DMA auto; CS 5, DC 47, mode 0, 40 MHz, queue depth 10, 8-bit commands/parameters; reset GPIO -1 (SWRESET 0x01), BGR, 16 bpp, invert on, mirror X, display on, MADCTL 0x48 (mirror X is wrong for our unit; see below). Registers 0x62/0x63 match M5GFX's GC9A01 init list. PwmBacklight(GPIO42, invert=true, 25 kHz).
 - [X] upstream 78/xiaozhi-esp32 main/boards/spotpear/sp-esp32-s3-1.28-box/config.h (commit aab98ab) — sibling board, same audio + display pins except LCD reset.
 
 | Function | GPIO | Confidence | Source/notes |
@@ -80,7 +80,7 @@ Sources:
 | LCD DC | 47 | verified | [S]; [X] |
 | LCD RST | none (RC power-on reset, 10k + 100nF) | verified from schematic | [S]; box variant uses GPIO38, but on CAM GPIO38 is camera D6 |
 | LCD backlight | 42 (PWM, 25 kHz) | pin and active-low polarity verified | [S] LCD_BL=GP42; R78/R79 assembly options; [F2] factory PwmBacklight(GPIO42, invert=true, 25 kHz) verifies active-low |
-| Panel geometry | 240x240, offset 0,0, round | size verified, orientation unconfirmed | [F2] factory sets invert on, BGR, SWRESET, mirror X + MADCTL 0x48; its text appeared mirrored on our unit, so we keep native orientation. Ours: rotation 0, invert on, SPI3 40 MHz |
+| Panel geometry | 240x240, offset 0,0, round | size and orientation verified on hardware | Native orientation, **no mirror** (MADCTL 0x08, BGR only), verified with the esp_lcd lcd_test orientation frame. The factory setting [F2] (mirror X, MADCTL 0x48) shows horizontally mirrored text on this unit. Ours: rotation 0, invert on, BGR, SWRESET, SPI3 40 MHz mode 0 |
 | Touch | connector has TP_*; TP_SDA/TP_SCL only via 0R/NC options to the shared I2C, TP_INT/TP_RST not routed to MCU | treat as no touch | [S] |
 | I2C (codecs + camera SCCB) SDA | 15 | verified | [S] SDA=GP15 (10k pull-up); [X] |
 | I2C SCL | 14 | verified | [S]; [X] |
@@ -105,6 +105,23 @@ Sources:
 | Camera XCLK / PWDN | 12 (both drawn on GP12 via R82/R80) | assembly-dependent | [S] |
 | Camera HREF / VSYNC / PCLK | 46 / 43 / 44 via 0R/NC options, alternatives route to SD pins | assembly-dependent, unverified | [S] — camera is OFF in this firmware anyway |
 | Camera SCCB | shares I2C 15/14 | verified | [S] |
+
+### SpotPear display backend
+
+- Hardware-verified on the owner's unit (5MP-camera version) with the standalone esp_lcd test app `lcd_test.bin` (sha256 4733f0a6...). Solid red, green, blue, white and black showed correctly with no static.
+- Orientation: native, **no mirror** (MADCTL 0x08). With the factory mirror X (MADCTL 0x48), the test glyph "F" appeared horizontally mirrored.
+- **Commit 3d846bd ("mirror X") is wrong for this unit and must not be used.**
+- Static root cause: not pinned down.
+  - The M5GFX path (631a166) uses `lgfx::Bus_SPI` and `Panel_GC9A01`: SPI3, 40 MHz, mode 0, CS 5, DC 47, SWRESET, invert, BGR.
+  - With that path the panel showed power-on static, even after a full power cycle, and the boot log looked correct. So no command took effect, not even the init clear.
+  - The pins, SPI settings, init values and 0x62/0x63 values match the working esp_lcd path. Wiring and panel are therefore fine.
+  - The remaining suspect is M5GFX 0.2.34's register-level `Bus_SPI` on SPI3 with ESP32-S3 and IDF 5.5. This is unproven.
+- The firmware therefore drives the panel the same way as `lcd_test` and the factory firmware: `esp_lcd` plus `espressif/esp_lcd_gc9a01`.
+  - The code is in `components/board/spotpear_lcd.cpp` and is compiled only for spotpear128cam.
+  - `M5.Display` keeps the M5GFX drawing API on top of a `Panel_FrameBufferBase` panel, using a 240x240 RGB565 frame buffer in PSRAM.
+  - The dirty rectangle is pushed with `esp_lcd_panel_draw_bitmap` in 24-line bands from an internal DMA buffer on every outermost `endWrite()`.
+  - Backlight: GPIO42, LEDC at 25 kHz, active-low.
+  - Boot log: `SpotPear LCD: ... backend=esp_lcd ... mirror=0 madctl=0x08`.
 
 ### SpotPear round face layout
 

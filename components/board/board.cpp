@@ -4,8 +4,7 @@
 #include "board/board.hpp"
 #if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
 #include "board/spotpear_128cam_pins.hpp"
-#include <driver/spi_common.h>
-#include <lgfx/v1/panel/Panel_GC9A01.hpp>
+#include "spotpear_lcd.hpp"
 #endif
 
 #include <memory>
@@ -26,22 +25,6 @@ namespace stackchan::board {
 
 namespace {
 constexpr const char* kTag = "board";
-#if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
-// No RST GPIO on this board (RC reset only), so the panel keeps previous
-// firmware state across ESP resets. Vendor esp_lcd_gc9a01 sends SWRESET
-// when reset_gpio_num=-1.
-class Panel_GC9A01_SpotPear : public lgfx::Panel_GC9A01 {
-protected:
-    const uint8_t* getInitCommands(uint8_t listno) const override
-    {
-        static constexpr uint8_t swreset[] = {
-            0x01, 0 + CMD_INIT_DELAY, 120, 0xFF, 0xFF,
-        };
-        return listno == 0 ? swreset
-                           : lgfx::Panel_GC9A01::getInitCommands(listno - 1);
-    }
-};
-#endif
 // M5 Stack-chan back-panel NeoPixel count. (BSP exposes setLedCount but doesn't
 // hardcode this — the physical strip is 12.)
 constexpr std::uint8_t kM5LedCount = 12;
@@ -98,57 +81,53 @@ tl::expected<Board, Error> Board::begin()
         // implementation on M5.Display, bypassing autodetect entirely. Do NOT call
         // M5.begin(): it probes unrelated GPIOs and configures M5 power/I2C chips
         // (and raises GPIO46, harmless PA enable here). Static objects outlive Display.
-        // Orientation is unconfirmed: factory applies mirror X and its on-screen
-        // text appeared mirrored, so we keep native orientation. Backlight
-        // polarity is matched to factory.
+        //
+        // Display backend: esp_lcd + espressif/esp_lcd_gc9a01 (see spotpear_lcd.hpp).
+        // The M5GFX Bus_SPI/Panel_GC9A01 path (631a166) left the panel showing
+        // power-on static on hardware; the esp_lcd lcd_test app is verified good.
+        // M5.Display keeps the M5GFX drawing API over a frame-buffer panel that
+        // pushes dirty rects through esp_lcd. Orientation verified on hardware:
+        // NO mirror (MADCTL 0x08). The factory mirror X shows mirrored text.
         // TODO(ticket 14): initialize ES8311 + ES7210 registers and shared I2S,
         // PA enable and BOOT-to-listen. M5.BtnA/Speaker/Mic remain default inert
         // objects (audio data pins remain disabled), with no M5 pin map or I2C bus installed.
         namespace pins = spotpear_128cam;
-        static lgfx::Bus_SPI bus;
-        static Panel_GC9A01_SpotPear panel;
+        static Panel_SpotPearEspLcd panel;
         static lgfx::Light_PWM light;
-        auto bus_cfg = bus.config();
-        bus_cfg.spi_host = SPI3_HOST; // Factory SPI host.
-        bus_cfg.freq_write = pins::lcd_spi_freq_hz;
-        bus_cfg.freq_read = 16'000'000;
-        bus_cfg.spi_mode = 0;
-        bus_cfg.spi_3wire = false; // Write-only, no MISO, like factory esp_lcd.
-        bus_cfg.dma_channel = SPI_DMA_CH_AUTO;
-        bus_cfg.pin_sclk = pins::lcd_sclk;
-        bus_cfg.pin_mosi = pins::lcd_mosi;
-        bus_cfg.pin_miso = pins::lcd_miso;
-        bus_cfg.pin_dc = pins::lcd_dc;
-        bus.config(bus_cfg);
-        panel.setBus(&bus);
         auto panel_cfg = panel.config();
-        panel_cfg.pin_cs = pins::lcd_cs;
-        panel_cfg.pin_rst = pins::lcd_rst;
+        panel_cfg.pin_cs = -1;  // CS (GPIO5) is owned by esp_lcd panel IO.
+        panel_cfg.pin_rst = -1; // No RST GPIO; esp_lcd sends SWRESET.
+        panel_cfg.pin_busy = -1;
         panel_cfg.panel_width = panel_cfg.memory_width = pins::lcd_width;
         panel_cfg.panel_height = panel_cfg.memory_height = pins::lcd_height;
         panel_cfg.offset_x = panel_cfg.offset_y = 0;
-        panel_cfg.readable = false;
-        panel_cfg.invert = true; // Factory esp_lcd_panel_invert_color(true).
-        panel_cfg.rgb_order = false; // BGR, factory rgb_ele_order=BGR.
+        panel_cfg.offset_rotation = 0;
+        panel_cfg.readable = true; // Reads come from the frame buffer.
+        panel_cfg.invert = false;  // Native hardware invert (on) is set by the backend.
+        panel_cfg.rgb_order = false;
         panel.config(panel_cfg);
         auto light_cfg = light.config();
         light_cfg.pin_bl = pins::lcd_backlight;
-        light_cfg.invert = true; // Factory PwmBacklight(GPIO42, invert=true).
-        light_cfg.freq = 25000; // Factory 25 kHz.
+        light_cfg.invert = true; // Factory PwmBacklight(GPIO42, invert=true): active-low.
+        light_cfg.freq = 25000; // Factory 25 kHz (LEDC).
         light.config(light_cfg);
         panel.setLight(&light);
-        if (!M5.Display.init(&panel)) return tl::unexpected{Error::DisplayInit};
+        if (!M5.Display.init(&panel) || !panel.esp_lcd_ready()) {
+            ESP_LOGE(kTag, "SpotPear LCD init failed (backend=esp_lcd)");
+            return tl::unexpected{Error::DisplayInit};
+        }
         M5.Display.setRotation(0);
         M5.Display.setBrightness(128);
-        ESP_LOGI(kTag, "SpotPear LCD: GC9A01A %dx%d SPI%d sclk=%d mosi=%d miso=%d cs=%d dc=%d rst=%d bl=%d(active-low) freq_write=%lu Hz spi_mode=%d invert=%d rgb_order=BGR swreset=yes rotation=%d",
-                 static_cast<int>(panel_cfg.panel_width), static_cast<int>(panel_cfg.panel_height),
-                 static_cast<int>(bus_cfg.spi_host) + 1,
-                 static_cast<int>(bus_cfg.pin_sclk), static_cast<int>(bus_cfg.pin_mosi),
-                 static_cast<int>(bus_cfg.pin_miso), static_cast<int>(panel_cfg.pin_cs),
-                 static_cast<int>(bus_cfg.pin_dc), static_cast<int>(panel_cfg.pin_rst),
-                 static_cast<int>(light_cfg.pin_bl), static_cast<unsigned long>(bus_cfg.freq_write),
-                 static_cast<int>(bus_cfg.spi_mode), static_cast<int>(panel_cfg.invert),
-                 static_cast<int>(M5.Display.getRotation()));
+        ESP_LOGI(kTag, "SpotPear LCD: GC9A01A %dx%d backend=esp_lcd SPI3 sclk=%d mosi=%d miso=%d cs=%d dc=%d rst=%d(swreset) bl=%d(active-low,25kHz) pclk=%lu Hz spi_mode=0 invert=1 rgb_order=BGR mirror=0 madctl=0x%02X rotation=%d band=%d",
+                 static_cast<int>(pins::lcd_width), static_cast<int>(pins::lcd_height),
+                 static_cast<int>(pins::lcd_sclk), static_cast<int>(pins::lcd_mosi),
+                 static_cast<int>(pins::lcd_miso), static_cast<int>(pins::lcd_cs),
+                 static_cast<int>(pins::lcd_dc), static_cast<int>(pins::lcd_rst),
+                 static_cast<int>(pins::lcd_backlight),
+                 static_cast<unsigned long>(pins::lcd_spi_freq_hz),
+                 static_cast<int>(Panel_SpotPearEspLcd::kMadctl),
+                 static_cast<int>(M5.Display.getRotation()),
+                 Panel_SpotPearEspLcd::kBandLines);
         Board board;
         board.impl_ = std::make_shared<Impl>(BoardKind::SpotPear128Cam,
                                            std::optional<Py32Expander>{}, std::optional<Si12tTouch>{});

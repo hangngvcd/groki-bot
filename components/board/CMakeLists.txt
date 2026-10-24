@@ -6,6 +6,7 @@ set(_board_srcs
     "led_strip.cpp"
     "nekomimi_led_strip.cpp"
     "si12t_touch.cpp"
+    "spotpear_lcd.cpp"
 )
 
 set(_board_priv_reqs driver)
@@ -20,6 +21,9 @@ if(NOT CONFIG_STACKCHAN_LED_ENABLED)
 endif()
 if(NOT CONFIG_STACKCHAN_CAMERA_ENABLED)
     list(REMOVE_ITEM _board_srcs "camera_gc0308.cpp")
+endif()
+if(NOT CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM)
+    list(REMOVE_ITEM _board_srcs "spotpear_lcd.cpp")
 endif()
 
 idf_component_register(
@@ -40,4 +44,7 @@ if(CONFIG_STACKCHAN_LED_ENABLED)
 endif()
 if(CONFIG_STACKCHAN_CAMERA_ENABLED)
     idf_component_optional_requires(PRIVATE espressif__esp32-camera)
+endif()
+if(CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM)
+    idf_component_optional_requires(PRIVATE esp_lcd espressif__esp_lcd_gc9a01)
 endif()
