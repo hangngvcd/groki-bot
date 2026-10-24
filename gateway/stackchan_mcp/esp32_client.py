@@ -186,6 +186,12 @@ class ESP32Connection:
         await self._ws_send(json.dumps(message, ensure_ascii=False))
         return {"ok": True, "emotion": emotion}
 
+    async def send_xiaoya(self, message: dict[str, Any]) -> None:
+        """Send a 鈴鈴 ``{"type": "xiaoya", ...}`` control message to the device."""
+        if not self._connected:
+            raise ConnectionError("ESP32 not connected")
+        await self._ws_send(json.dumps({"session_id": self.session_id, **message}, ensure_ascii=False))
+
     async def send_led(self, r: int, g: int, b: int) -> dict[str, Any]:
         """Send a XiaoZhi ``led`` message over the live WebSocket."""
         if not self._connected:
@@ -569,6 +575,16 @@ class ESP32Manager:
                         push_task.add_done_callback(
                             lambda t: self._init_tasks.remove(t) if t in self._init_tasks else None
                         )
+                        from .xiaoya_forms import get_xiaoya_forms
+
+                        form_task = get_xiaoya_forms().register_sender(
+                            connection.send_xiaoya, push=False
+                        )
+                        if form_task is not None:
+                            self._init_tasks.append(form_task)
+                            form_task.add_done_callback(
+                                lambda t: self._init_tasks.remove(t) if t in self._init_tasks else None
+                            )
 
                     if mcp_supported:
                         # Start initialization as a separate task so the read
@@ -593,6 +609,15 @@ class ESP32Manager:
                     if not handled_locally and cloud_proxy is not None:
                         await cloud_proxy.send_device_json(data)
 
+                elif msg_type == "xiaoya":
+                    # 鈴鈴 device events stay inside the gateway (never sent to the cloud).
+                    from .xiaoya_forms import get_xiaoya_forms
+
+                    get_xiaoya_forms().note_device_event(data)
+                    handler = getattr(cloud_proxy, "handle_xiaoya_event", None)
+                    if handler is not None:
+                        handler(data)
+
                 else:
                     if cloud_proxy is not None:
                         forwarded = await cloud_proxy.send_device_json(data)
@@ -611,6 +636,9 @@ class ESP32Manager:
                 if self._connection is connection:
                     self._connection = None
                     self._debug_status.on_device_disconnected()
+                    from .xiaoya_forms import get_xiaoya_forms
+
+                    get_xiaoya_forms().unregister_sender(connection.send_xiaoya)
                     self._debug_status.on_tts_state(False, source="local")
                     self._debug_status.on_tts_state(False, source="device")
 

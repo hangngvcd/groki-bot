@@ -14,6 +14,7 @@ import secrets
 from aiohttp import ClientSession, ClientTimeout, web
 
 from .debug_status import get_debug_status
+from .xiaoya_forms import get_xiaoya_forms
 from .parent_settings import (
     SCHEMA,
     device_support,
@@ -108,7 +109,7 @@ def build_parent_status(debug_status_snapshot, settings, env, helper_health):
         mode_text = "未知"
     voice_text = "已連線" if result["voice"]["session_connected"] else "未連線"
     result["summary_zh"] = (
-        f"小芽{connected}；語音{voice_text}；聆聽模式：{mode_text}；"
+        f"鈴鈴{connected}；語音{voice_text}；聆聽模式：{mode_text}；"
         f"電量：{battery_text}；音量 {settings['volume']}；"
         f"休息 {settings['rest_after_min']} 分鐘"
     )
@@ -138,13 +139,14 @@ async def helper_health():
         return {"reachable": False, "agent_configured": False, "desktop_enabled": False}
 
 
-def create_parent_app(token, settings=None, debug_status=None):
+def create_parent_app(token, settings=None, debug_status=None, forms=None):
     device_token = os.getenv("STACKCHAN_TOKEN", "")
     if device_token and hmac.compare_digest(token.encode(), device_token.encode()):
         logger.error("Parent API refused: parent token equals device token")
         raise ValueError("Parent token must differ from device token")
     settings = settings if settings is not None else get_parent_settings()
     debug_status = debug_status if debug_status is not None else get_debug_status()
+    forms = forms if forms is not None else get_xiaoya_forms()
 
     @web.middleware
     async def guard(request, handler):
@@ -200,10 +202,35 @@ def create_parent_app(token, settings=None, debug_status=None):
             {"ok": True, **result, "device_support": device_support()}
         )
 
+    async def get_homework(request):
+        return web.json_response({"ok": True, "forms": forms.snapshot()})
+
+    async def post_homework(request):
+        try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                raise ValueError("Expected {done, total}")
+            snapshot = forms.update_progress(
+                body.get("done"), body.get("total"), source="parent-api"
+            )
+        except (ValueError, TypeError) as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+        return web.json_response({"ok": True, "forms": snapshot})
+
+    async def post_intro(request):
+        if not await forms.replay_intro():
+            return web.json_response(
+                {"ok": False, "error": "鈴鈴未連線 / device not connected"}, status=409
+            )
+        return web.json_response({"ok": True})
+
     app = web.Application(middlewares=[guard])
     app.router.add_get("/parent/v1/status", status)
     app.router.add_get("/parent/v1/settings", get_settings)
     app.router.add_post("/parent/v1/settings", post_settings)
+    app.router.add_get("/parent/v1/homework-progress", get_homework)
+    app.router.add_post("/parent/v1/homework-progress", post_homework)
+    app.router.add_post("/parent/v1/intro", post_intro)
     return app
 
 

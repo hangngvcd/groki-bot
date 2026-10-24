@@ -42,6 +42,17 @@ def _no_real_face_tracker(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolated_xiaoya_forms(monkeypatch, tmp_path):
+    """鈴鈴 form state never touches the real ~/.stackchan during tests."""
+    from stackchan_mcp.xiaoya_forms import reset_xiaoya_forms
+
+    monkeypatch.setenv("STACKCHAN_XIAOYA_FORMS_PATH", str(tmp_path / "xiaoya_forms.json"))
+    reset_xiaoya_forms()
+    yield
+    reset_xiaoya_forms()
+
+
+@pytest.fixture(autouse=True)
 def _reset_debug_status():
     """Keep the process-wide debug snapshot from leaking across tests."""
     from stackchan_mcp.debug_status import reset_debug_status

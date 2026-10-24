@@ -500,6 +500,20 @@ class GeminiVoiceProxy:
 
     # ---- ingress from device ------------------------------------------------
 
+    def handle_xiaoya_event(self, message: dict[str, Any]) -> None:
+        """鈴鈴 device events.
+
+        ``local_speech`` start/stop brackets a clip the device plays by itself
+        (vo.intro.1, form praise lines): the wake gate ignores the wake word
+        meanwhile and for the 0.5 s tail.
+        """
+        if str(message.get("event", "")).strip().lower() != "local_speech":
+            return
+        state = str(message.get("state", "")).strip().lower()
+        gate = self._wake_gate
+        if gate is not None and state in {"start", "stop"}:
+            gate.set_local_speech(state == "start")
+
     async def send_device_json(self, message: dict[str, Any]) -> bool:
         """Handle a JSON envelope coming from the device.
 
@@ -509,14 +523,7 @@ class GeminiVoiceProxy:
         next utterance starts clean.
         """
         if str(message.get("type", "")).strip().lower() == "xiaoya":
-            # 鈴鈴 device events.  local_speech start/stop brackets a clip the
-            # device plays by itself (vo.intro.1, form praise lines): the wake
-            # gate ignores the wake word meanwhile and for the 0.5 s tail.
-            if str(message.get("event", "")).strip().lower() == "local_speech":
-                state = str(message.get("state", "")).strip().lower()
-                gate = self._wake_gate
-                if gate is not None and state in {"start", "stop"}:
-                    gate.set_local_speech(state == "start")
+            self.handle_xiaoya_event(message)
             return True
         if not self.connected:
             return False

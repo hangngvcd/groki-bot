@@ -1,7 +1,9 @@
 <!-- SPDX-License-Identifier: MIT -->
-# 小芽家長指南
+# 小芽家長指南（鈴鈴）
 
-呢份指南俾家長喺 Mac 管理小芽。以下 `scripts/` 命令都喺 repo 嘅 `gateway/` 目錄執行。Mac 要先裝好 gateway 依賴、uv、Node.js 同 Grok Bot app，並登入自己嘅帳戶。「小白」wake word 要先跟 [gateway README](../gateway/README.md) 下載 KWS model 去 `gateway/models/kws`；冇 model 時，因為服務一直開住 `STACKCHAN_BUTTON_ONLY_LISTEN=1`，gateway 會變「只准撳掣」，唔會將聲音全部轉發。
+> 部機個角色而家叫「鈴鈴」（一隻白貓仔）。repo、服務名同 agent 名（「小芽」小朋友 agent、「小芽家長助手」）維持唔變。鈴鈴叫小朋友「娜娜」，練英文時叫「Elena」。
+
+呢份指南俾家長喺 Mac 管理鈴鈴（小芽系統）。以下 `scripts/` 命令都喺 repo 嘅 `gateway/` 目錄執行。Mac 要先裝好 gateway 依賴、uv、Node.js 同 Grok Bot app，並登入自己嘅帳戶。「鈴鈴」wake word 要先跟 [gateway README](../gateway/README.md) 下載 KWS model 去 `gateway/models/kws`；冇 model 時，因為服務一直開住 `STACKCHAN_BUTTON_ONLY_LISTEN=1`，gateway 會變「只准撳掣」，唔會將聲音全部轉發。
 
 ## 一次性安裝
 
@@ -21,7 +23,7 @@ scripts/xiaoya_services.sh check
 scripts/xiaoya_services.sh install
 ```
 
-`check` 會遮住 token 同 agent ID。安裝會建立兩個登入後自動啟動嘅背景服務，同 `~/.stackchan/bin/stackchan-parent`。設定檔必須保持 `chmod 600`；服務用「小白」喚醒、兒童模式、Grok 語音、家長 API，並停用 USB，唔會開裝置 serial port。家長 API 嘅獨立 token 由 gateway 喺 Mac 自己產生，唔使填入服務設定或 plist。
+`check` 會遮住 token 同 agent ID。安裝會建立兩個登入後自動啟動嘅背景服務，同 `~/.stackchan/bin/stackchan-parent`。設定檔必須保持 `chmod 600`；服務用「鈴鈴」喚醒、兒童模式、Grok 語音、家長 API，並停用 USB，唔會開裝置 serial port。家長 API 嘅獨立 token 由 gateway 喺 Mac 自己產生，唔使填入服務設定或 plist。
 
 如果 `gateway/.env` 仲喺度，腳本會提醒：同名設定以 plist 為準，但 `.env` 可以加入其他設定。安裝前檢查有冇唔需要嘅舊設定。
 
@@ -31,7 +33,7 @@ scripts/xiaoya_services.sh install
 
 Mac 要醒住、登入咗使用者帳戶，Grok Bot app 亦要已登入。喺 System Settings → Battery／Energy，開啟接電源時「Prevent automatic sleeping when the display is off」（各 macOS 版本名稱可能唔同）。臨時用可以開 Terminal 行 `caffeinate -i`，保持個命令行住；用完按 Ctrl-C。
 
-問「小芽家長助手」：「小芽而家點？」批准佢執行狀態命令。健康答案會話部機已連線、語音正常、聆聽模式係叫「小白」或者撳掣。未有電量資料只代表韌體未報電量；未連線就先排解，唔好當已準備好。
+問「小芽家長助手」：「鈴鈴而家點？」批准佢執行狀態命令。健康答案會話部機已連線、語音正常、聆聽模式係叫「鈴鈴」或者撳掣。未有電量資料只代表韌體未報電量；未連線就先排解，唔好當已準備好。
 
 ## 點樣問 Grok Bot 睇狀態同改設定
 
@@ -39,11 +41,13 @@ Mac 要醒住、登入咗使用者帳戶，Grok Bot app 亦要已登入。喺 Sy
 
 「已儲存但部機未支援」代表設定已記低，但韌體仲未有對應功能，部機未必已經改咗。鏡頭偵測同通知預設關閉。詳細機制見[家長 bridge](xiaoya-parent-bridge.md)。`/debug/panel` 只係開發除錯用，日常唔使開。
 
-## Wake word「小白」調校
+## Wake word「鈴鈴」調校
 
 先跟 [kws_eval 工具說明](../gateway/tools/kws_eval/README.md)，用合成語音做正樣本、用一般背景聲做負樣本，比較命中率同誤觸發。工具有產生樣本、掃 threshold／score 同分析結果嘅命令；合成語音成績唔等於小朋友真實表現。
 
 真聲測試要先得到家長同小朋友同意，只留喺本機，唔上載、唔入 git。測完刪除原始錄音、轉換副本同測試結果。先觀察漏聽同電視誤觸發，再揀門檻，唔好只追求容易叫醒。
+
+鈴鈴講嘢期間（包括 Grok 語音同部機本地播放嘅自我介紹／升級聲）同講完後 0.5 秒，gateway 會暫停 wake word，免得聽到自己把聲叫醒自己；呢段時間可以撳掣插話。尾段長短可以用 `STACKCHAN_WAKE_SELF_MUTE_TAIL_S` 改（預設 `0.5`）。
 
 喺 `~/.stackchan/xiaoya-services.env` 修改 `STACKCHAN_KWS_THRESHOLD` 同 `STACKCHAN_KWS_SCORE` 後，要重新寫入 plist 再重開：
 
@@ -74,13 +78,47 @@ Log 可能有診斷資料，分享前先檢查同遮住私人內容。`status` �
 原生語音用緊特定 app 版本嘅內部 API，現有整合曾以 0.71.2 測試。每次更新 app 都做一次：
 
 1. 確認 app 已登入，行 `scripts/xiaoya_services.sh restart`。
-2. 問家長助手「小芽而家點？」確認服務同部機連線。
+2. 問家長助手「鈴鈴而家點？」確認服務同部機連線。
 3. 跟 [ticket 10 功課語音 probe／checklist](xiaoya-acceptance/10-homework-voice-flow.md) 重測。
-4. 叫「小白」，問「你係邊個？」做短語音測試，確認聽到、答到，同用緊正確 agent。
+4. 叫「鈴鈴」，問「你係邊個？」做短語音測試，確認聽到、答到，同用緊正確 agent。
 
 ## 點樣喺 app 管理功課清單
 
 喺 Grok Bot app 同「小芽」agent 傾偈，直接打功課清單，或者傳手冊相。叫佢讀返清單俾家長核對，確認科目、內容同次序，再逐項加、改、刪。可以問進度，或者睇小朋友留低嘅求助訊息。呢啲喺「小芽」對話處理；「小芽家長助手」負責裝置設定。小朋友話做完 ≠ 家長批准，要家長檢查後確認。
+
+## 鈴鈴形態同功課進度
+
+鈴鈴每日由「小苗貓」（F1）開始，跟今日功課完成比例長大，只會升唔會跌，第二日 00:00 重設：
+
+| 形態 | 條件（完成／總數） |
+| --- | --- |
+| F1 小苗貓 | 未開始，或者今日未有功課（總數 0） |
+| F2 小翼貓 | 完成至少三分之一 |
+| F3 寶石貓 | 完成至少三分之二 |
+| F4 星冠貓 | 全部完成 |
+
+進度只會由家長輸入，唔會由小朋友自己報、亦唔會用 AI 判斷。家長檢查完功課，喺 Mac 行：
+
+```sh
+~/.stackchan/bin/stackchan-parent homework        # 睇今日進度同形態
+~/.stackchan/bin/stackchan-parent homework 2 5    # 今日 5 項，做完 2 項
+```
+
+或者叫「小芽家長助手」幫你改（佢會先同你確認數字）。一次跳幾級（例如由 F1 直接到 F4），部機會逐級變身，每級相隔大約半秒，最後講一句讚賞。部機要喺聆聽狀態先會變身，講緊嘢會等講完。
+
+## 重播鈴鈴自我介紹
+
+部機第一次開機會播一次自我介紹，之後唔再自動播。想再聽：
+
+```sh
+~/.stackchan/bin/stackchan-parent intro
+```
+
+部機未連線會答「鈴鈴未連線」。如果部機未燒錄聲音／圖片包，自我介紹會改為喺畫面顯示文字，下次開機會再顯示，直至燒咗包為止。
+
+## 換鈴鈴圖片同聲音
+
+鈴鈴每個形態、每個表情嘅圖片同埋自我介紹／升級聲，都放喺一個獨立嘅資源包，燒錄位置 `0xdb1000`，可以淨係換資源包、唔使重燒韌體。冇包或者某張圖唔啱，部機會自動用返內置畫出嚟嘅樣。製作同燒錄步驟見 [鈴鈴資源包說明](../tools/lingling_assets/README.md)。
 
 ## 私隱提醒
 

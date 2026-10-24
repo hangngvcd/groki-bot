@@ -125,14 +125,36 @@ async def run_mcp(client):
         except RuntimeError as exc:
             return {"ok": False, "error": str(exc)}
 
+    @server.tool()
+    async def xiaoya_homework_progress(done: int, total: int) -> dict:
+        """Report today's homework progress (done of total items).
+
+        鈴鈴's growth form follows it: F2 at 1/3, F3 at 2/3, F4 when all done.
+        Only call with numbers the parent or the homework list confirmed.
+        """
+        try:
+            return await asyncio.to_thread(
+                client.call, "homework-progress", {"done": done, "total": total}
+            )
+        except RuntimeError as exc:
+            return {"ok": False, "error": str(exc)}
+
+    @server.tool()
+    async def xiaoya_replay_intro() -> dict:
+        """Ask 鈴鈴 to play her pre-recorded self-intro again (parent asked)."""
+        try:
+            return await asyncio.to_thread(client.call, "intro", {})
+        except RuntimeError as exc:
+            return {"ok": False, "error": str(exc)}
+
     await server.run_stdio_async()
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="小芽家長助手 / parent settings")
+    parser = argparse.ArgumentParser(description="小芽家長助手（鈴鈴）/ parent settings")
     parser.add_argument("--url", default="http://127.0.0.1:18772")
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("status", "settings", "set", "mcp"):
+    for name in ("status", "settings", "set", "homework", "intro", "mcp"):
         command = commands.add_parser(name)
         command.add_argument("--url", default=argparse.SUPPRESS)
         if name == "status":
@@ -140,11 +162,27 @@ def main(argv=None):
         if name == "set":
             command.add_argument("key")
             command.add_argument("value")
+        if name == "homework":
+            command.add_argument("done", nargs="?", type=int)
+            command.add_argument("total", nargs="?", type=int)
     args = parser.parse_args(argv)
     try:
         client = ParentClient(args.url)
         if args.command == "mcp":
             asyncio.run(run_mcp(client))
+            return 0
+        if args.command == "intro":
+            data = client.call("intro", {})
+            print(json.dumps(data, ensure_ascii=False, indent=2))
+            return 0 if data.get("ok") else 1
+        if args.command == "homework":
+            if (args.done is None) != (args.total is None):
+                raise ValueError("用法：homework [做完數 總數] / usage: homework [DONE TOTAL]")
+            values = (
+                None if args.done is None else {"done": args.done, "total": args.total}
+            )
+            data = client.call("homework-progress", values)
+            print(json.dumps(data, ensure_ascii=False, indent=2))
             return 0
         values = (
             {args.key: cli_value(args.key, args.value)}
