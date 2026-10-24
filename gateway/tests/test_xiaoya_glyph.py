@@ -228,3 +228,36 @@ def test_child_instructions_cover_both_modes(monkeypatch):
     assert "show_character" in text
     assert "部首同結構" in text and "永遠唔顯示" in text and "10秒" in text
     assert "粵拼" in text
+
+
+def _pixels(png: bytes):
+    return Image.open(BytesIO(png)).convert("L")
+
+
+def test_glyph_is_pre_mirrored_for_the_panel(monkeypatch):
+    # The spotpear128cam panel (MADCTL 0x08) shows the frame buffer left-right
+    # mirrored, so the gateway sends the glyph pre-mirrored: what she sees on the
+    # board is then the normal 蝴蝶 (虫 on the left, 蝴 before 蝶).
+    from PIL import ImageOps
+    from stackchan_mcp import xiaoya_glyph
+
+    monkeypatch.delenv("STACKCHAN_GLYPH_MIRROR", raising=False)
+    assert xiaoya_glyph.panel_mirrors_x() is True
+    sent = _pixels(render_glyph_png("蝴蝶"))
+    upright = _pixels(xiaoya_glyph._render("蝴蝶", xiaoya_glyph._directory(), False))
+    assert sent.tobytes() != upright.tobytes()
+    # What the panel shows (its mirror of what we send) equals the upright card.
+    assert ImageOps.mirror(sent).tobytes() == upright.tobytes()
+    # In the upright card 蝴 sits on the left: its ink is in the left half and the
+    # mirrored card we send carries the 蝶 shape there instead.
+    left_sent = sent.crop((0, 0, 120, 240))
+    right_up = ImageOps.mirror(upright.crop((120, 0, 240, 240)))
+    assert left_sent.tobytes() == right_up.tobytes()
+
+
+def test_glyph_mirror_can_be_disabled(monkeypatch):
+    from stackchan_mcp import xiaoya_glyph
+
+    monkeypatch.setenv("STACKCHAN_GLYPH_MIRROR", "0")
+    assert xiaoya_glyph.panel_mirrors_x() is False
+    assert render_glyph_png("蝶") == xiaoya_glyph._render("蝶", xiaoya_glyph._directory(), False)

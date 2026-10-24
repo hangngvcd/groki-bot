@@ -13,7 +13,7 @@ from typing import Literal
 import unicodedata
 
 from fontTools.ttLib import TTFont, TTLibError
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 MAX_PNG_BYTES = 24 * 1024
 # Spec section 10, level 3: show the full character for 10 s (parent chose 10 s), then hide it so
@@ -92,12 +92,24 @@ def _font(directory: str, name: str, size: int):
     return ImageFont.truetype(str(Path(directory) / _FILES[name]), size)
 
 
+def panel_mirrors_x() -> bool:
+    """True when the device panel shows its frame buffer horizontally mirrored.
+
+    The spotpear128cam firmware drives the GC9A01A with MADCTL 0x08 (no MX), which
+    on the real board shows the frame buffer left-right mirrored (蝴蝶 read 蝶蝴 with
+    the 虫 radical on the right). The 鈴鈴 face art is near-symmetric, so it looks
+    right either way. We pre-mirror the glyph here so it reads correctly without a
+    firmware change. Set STACKCHAN_GLYPH_MIRROR=0 if the firmware is ever fixed.
+    """
+    return os.getenv("STACKCHAN_GLYPH_MIRROR", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
 def render_glyph_png(chars: str) -> bytes:
-    return _render(clean_characters(chars), _directory())
+    return _render(clean_characters(chars), _directory(), panel_mirrors_x())
 
 
 @lru_cache(maxsize=128)
-def _render(chars: str, directory: str) -> bytes:
+def _render(chars: str, directory: str, mirror: bool = False) -> bytes:
     scale = 4
     count = len(chars)
     positions = {
@@ -140,6 +152,9 @@ def _render(chars: str, directory: str) -> bytes:
         canvas = Image.new("L", canvas.size)
         canvas.paste(smaller, ((canvas.width - extent) // 2,) * 2)
     canvas = canvas.resize((240, 240), Image.Resampling.LANCZOS)
+    if mirror:
+        # Pre-compensate the panel's horizontal mirror (see panel_mirrors_x).
+        canvas = ImageOps.mirror(canvas)
     # Remove antialiasing filter tails outside the safe circle.
     pixels = canvas.load()
     for y in range(240):
