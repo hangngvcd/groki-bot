@@ -111,6 +111,7 @@
     1: { label: 'CoreS3 + Takao base',              slug: 'cores3',    servo: true,  battery: false },
     2: { label: 'AtomS3R + Atomic ECHO BASE',       slug: 'atoms3r',   servo: false, battery: false },
     3: { label: 'AtomS3 + Atomic ECHO BASE (slim)', slug: 'atoms3',    servo: false, battery: false },
+    5: { label: 'SpotPear 1.28-CAM (skeleton)',        slug: 'spotpear128cam', servo: false, battery: false },
     4: { label: 'M5 StopWatch (C152)',              slug: 'stopwatch', servo: false, battery: true  },
   };
 

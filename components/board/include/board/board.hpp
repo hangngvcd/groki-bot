@@ -36,6 +36,7 @@ enum class BoardKind {
     AtomS3,    // Plain AtomS3 (no PSRAM) + Atomic ECHO BASE: avatar / jtts / LED only, no conv/audio-stream.
     StopWatch, // M5 StopWatch (C152): 466×466 AMOLED 円形 + CST820B touch + ES8311 + M5PM1 PMIC + M5IOE1.
                // No PY32 / no INA226 / no Si12T / no nekomimi LED 配線. Servo は背面 UART0 経由の Phase 3 オプション.
+    SpotPear128Cam, // SpotPear ESP32-S3 1.28-CAM: compile-time selected GC9A01A skeleton.
 };
 
 // WIRE-FORMAT CONTRACT: the numeric values above are externally visible —
@@ -47,7 +48,8 @@ static_assert(static_cast<int>(BoardKind::M5Base) == 0 &&
               static_cast<int>(BoardKind::TakaoBase) == 1 &&
               static_cast<int>(BoardKind::AtomNyan) == 2 &&
               static_cast<int>(BoardKind::AtomS3) == 3 &&
-              static_cast<int>(BoardKind::StopWatch) == 4,
+              static_cast<int>(BoardKind::StopWatch) == 4 &&
+              static_cast<int>(BoardKind::SpotPear128Cam) == 5,
               "BoardKind numbering is a BLE/OTA wire contract — append only");
 
 // Per-board static traits, resolved once from the detected BoardKind. This

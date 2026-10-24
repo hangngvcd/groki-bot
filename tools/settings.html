@@ -2149,6 +2149,7 @@ const BOARD_M5_BASE = 0;
 const BOARD_TAKAO_BASE = 1;
 const BOARD_ATOM_NYAN = 2;
 const BOARD_ATOM_S3 = 3;
+const BOARD_SPOTPEAR_128CAM = 5;
 const BOARD_STOPWATCH = 4;
 const CHR_JTTS    = 'e3f0a008-7b1c-4d2a-9e6f-2c5a8d4b1f00';
 const CHR_OTA_CTRL = 'e3f0a009-7b1c-4d2a-9e6f-2c5a8d4b1f00';
@@ -2781,7 +2782,8 @@ function applyCapabilityGating() {
   // surfaced here yet).
   const noServo = (boardKind === BOARD_ATOM_NYAN) ||
                   (boardKind === BOARD_ATOM_S3) ||
-                  (boardKind === BOARD_STOPWATCH);
+                  (boardKind === BOARD_STOPWATCH) ||
+                  (boardKind === BOARD_SPOTPEAR_128CAM);
   document.getElementById('servo-section').style.display = noServo ? 'none' : '';
   if (noServo) {
     setVisible('label.toggle-label[for="servo-enabled"]', false);
@@ -2791,7 +2793,8 @@ function applyCapabilityGating() {
   // M5.Power surfaces it). Takao / AtomNyan / AtomS3 = none.
   const noBattery = (boardKind === BOARD_TAKAO_BASE) ||
                     (boardKind === BOARD_ATOM_NYAN) ||
-                    (boardKind === BOARD_ATOM_S3);
+                    (boardKind === BOARD_ATOM_S3) ||
+                    (boardKind === BOARD_SPOTPEAR_128CAM);
   document.getElementById('dis-battery-row').style.display = noBattery ? 'none' : '';
   if (noBattery) {
     setVisible('label.toggle-label[for="bat-gauge-enabled"]', false);

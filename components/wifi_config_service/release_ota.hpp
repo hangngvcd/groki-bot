@@ -16,14 +16,14 @@ namespace stackchan::wifi_config::release_ota {
 enum class StartError {
     AlreadyRunning,
     BadTag,            // tag missing / contains chars that don't belong in a URL
-    UnknownBoard,      // g_board_kind not in {cores3, atoms3r, atoms3, stopwatch}
+    UnknownBoard,      // g_board_kind not in {cores3, atoms3r, atoms3, stopwatch, spotpear128cam}
     WorkerSpawnFailed, // xTaskCreate failed (heap)
 };
 
 // Kick off a release-firmware download + OTA-write + reboot. tag = git tag
 // like "v0.7.3"; board_kind = the byte values used by config_service
 // (M5Base/TakaoBase=0/1 → "cores3", AtomNyan=2 → "atoms3r", AtomS3=3 →
-// "atoms3", StopWatch=4 → "stopwatch"). Returns immediately; the caller
+// "atoms3", StopWatch=4 → "stopwatch", SpotPear128Cam=5 → "spotpear128cam"). Returns immediately; the caller
 // must poll /api/ota/status for progress.
 [[nodiscard]] tl::expected<void, StartError> start(const std::string& tag,
                                                     std::uint8_t board_kind);

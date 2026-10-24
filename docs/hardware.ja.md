@@ -9,6 +9,7 @@
 | AtomS3R + Atomic ECHO BASE (アトムニャン) | `atoms3r` | 128×128 LCD | サーボなし、ES8311 音声、BtnA で UI / AP |
 | AtomS3 (PSRAM なし) + ECHO BASE | `atoms3` | 128×128 LCD | 軽量プロファイル、会話/RTP 非対応 |
 | M5 StopWatch (C152) | `stopwatch` | 466×466 円形 AMOLED + touch | サーボなし、touch で視線追従、ES8311 音声 |
+| SpotPear ESP32-S3 1.28-CAM | `spotpear128cam` | 240x240 round GC9A01A | Skeleton: builds in CI; hardware bring-up in ticket 14; no servos/touch/LED; camera off |
 
 ビルドは `make build BOARD=<略号>` (デフォルト `cores3`)。
 ボードは起動時に検出され、`set_board_kind()` で UI / 機能のグレーアウトに反映されます。
@@ -26,3 +27,9 @@
   - 頭タッチ センサー Si12T @ 0x68 (なでなで / barge-in、3 ゾーン)
 - 他ボードのピン配置は各 `sdkconfig.defaults.<board>` と
   `components/board/board.cpp` を参照
+
+## SpotPear ESP32-S3 1.28-CAM pin map
+
+- [ ] Parent confirmation: pending
+
+See the [pin map and source confidence labels](hardware.md#spotpear-esp32-s3-128-cam-pin-map). Audio, BOOT input and battery calibration await ticket 14.
