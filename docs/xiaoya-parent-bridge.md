@@ -107,10 +107,10 @@ restarting the gateway (ticket 21 guide). The child profile switch itself is
 deliberately not exposed through this API.
 
 The SpotPear 1.28-CAM supports a full-screen 生字 glyph overlay via
-`{"type":"xiaoya","cmd":"glyph","png":"<base64 PNG>","hold_ms":10000,"session_id":"..."}`.
+`{"type":"xiaoya","cmd":"glyph","png":"<base64 PNG>","hold_ms":5000,"session_id":"..."}`.
 Send a 240×240 PNG (white character on black, 16-level grey palette), at most
 24,576 decoded bytes / 32,768 standard base64 characters, with no whitespace.
-`hold_ms` is an optional integer from 1,000 to 60,000 (default 10,000), starting
+`hold_ms` is an optional integer from 1,000 to 60,000 (firmware default 10,000 when omitted; the gateway sends 5,000 per the vocab spec level 3), starting
 when decoding succeeds. A new glyph replaces the previous one;
 `{"type":"xiaoya","cmd":"glyph","clear":true}` clears it immediately on the
 next rendered frame. The status ring and mute badge remain above the glyph.

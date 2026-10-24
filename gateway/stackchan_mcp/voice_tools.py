@@ -393,7 +393,11 @@ def build_function_declarations(*, types=None) -> list[Any]:
 
     show_character = types.FunctionDeclaration(
         name="show_character",
-        description="Call only when the child asks how to write a 生字（個字點寫）.",
+        description=(
+            "Call only when the child asks how to write a 生字（個字點寫）. "
+            "Copy homework (抄): shows the full character for 5 s. "
+            "Dictation (默, or unknown): shows nothing; give a verbal 部首/結構 hint only."
+        ),
         parameters=types.Schema(
             type="OBJECT",
             properties={"character": types.Schema(type="STRING", description="Only the requested character, or word if requested; 1–4 Chinese characters.")},
@@ -862,8 +866,8 @@ class VoiceToolExecutor:
             )
             base += (
                 "\n小朋友問生字點寫：call show_character，只傳佢問嗰個字；用詞語上下文揀字，只有冇上下文又同音唔清楚先問一句短問題。\n"
-                "shown=true：簡短叫佢望畫面，喺簿寫一次。\n"
-                "shown=false（默書）：唔可以講出或拼出成個字；有把握先最多提示一次部首或結構，否則鼓勵佢。\n"
+                "mode=copy（抄生字）、shown=true：個字會喺畫面出5秒，叫佢睇清楚，收起之後自己喺簿寫一次。\n"
+                "mode=dictation（默書或者分唔到）、shown=false：永遠唔顯示、唔講出、唔逐筆串出成個字；只可以用把聲講部首同結構（有把握先講），否則鼓勵佢自己諗。\n"
                 "唔好讀出粵拼，唔好問佢揀模式，回覆要短。"
             )
         return "\n\n".join(
@@ -1464,26 +1468,49 @@ class VoiceToolExecutor:
     @staticmethod
     async def _dispatch_show_character(args: dict[str, Any]) -> dict[str, Any]:
         from .xiaoya_forms import get_xiaoya_forms
-        from .xiaoya_glyph import clean_characters, glyph_message, render_glyph_png, vocab_mode
+        from .xiaoya_glyph import (
+            DEFAULT_HOLD_MS,
+            clean_characters,
+            glyph_message,
+            render_glyph_png,
+            vocab_mode,
+        )
 
         try:
             c = clean_characters(args.get("character"))
         except ValueError:
             return {"ok": False, "error": "bad_character", "spoken": "我聽唔清係邊個字，你講埋個詞語俾我聽吖。"}
         forms = get_xiaoya_forms()
-        if vocab_mode(forms.snapshot()["items"]) == "dictation":
-            return {"ok": True, "shown": False, "mode": "dictation", "character": c,
-                    "spoken": "今日要默書，我唔出個字住。你試吓自己諗吓先。",
-                    "note": "Do not say, spell or describe stroke-by-stroke the full character. You may give ONE short hint about the radical or structure only if you are sure; otherwise just encourage."}
+        try:
+            items = forms.snapshot()["items"]
+        except Exception:  # undeterminable -> treat as dictation (spec section 10)
+            items = None
+        if vocab_mode(items) == "dictation":
+            # 默書 (or mode unknown): never render or send the character.
+            return {
+                "ok": True,
+                "shown": False,
+                "mode": "dictation",
+                "character": c,
+                "spoken": "今日要默書，我唔出個字。我講吓部首同結構，你自己諗吓。",
+                "note": (
+                    "Dictation: never show, say, spell or go stroke-by-stroke through "
+                    "the full character, and do not list every component. You may "
+                    "describe only its radical and overall structure (部首、結構), "
+                    "only if you are sure; otherwise just encourage."
+                ),
+            }
         try:
             png = await asyncio.to_thread(render_glyph_png, c)
             sent = await forms.send_device(glyph_message(png))
         except ValueError:
             sent = False
         if not sent:
-            return {"ok": False, "shown": False, "mode": "copy", "spoken": "我而家顯示唔到個字，你可以問吓爸爸媽媽。"}
+            return {"ok": False, "shown": False, "mode": "copy",
+                    "spoken": "我而家顯示唔到個字，你可以問吓爸爸媽媽。"}
         return {"ok": True, "shown": True, "mode": "copy", "character": c,
-                "seconds": 10, "spoken": "睇吓個畫面，跟住喺簿度寫一次。"}
+                "seconds": DEFAULT_HOLD_MS // 1000,
+                "spoken": "睇清楚個字，收起咗之後自己喺簿度寫一次。"}
 
     @staticmethod
     def _dispatch_homework(name: str, args: dict[str, Any]) -> dict[str, Any]:

@@ -80,7 +80,7 @@ def test_render(chars):
     assert all((x - 120) ** 2 + (y - 120) ** 2 <= 100**2 for x, y in ink)
     message = glyph_message(png)
     assert len(message["png"]) <= 32768
-    assert message["hold_ms"] == 10000
+    assert message["hold_ms"] == 5000
     assert base64.b64decode(message["png"]) == png
 
 
@@ -149,7 +149,8 @@ async def test_tool_device(monkeypatch, tmp_path, case):
                     break
             glyphs = [frame for frame in frames if frame.get("cmd") == "glyph"]
             if case == "copy":
-                assert result["shown"] is True and result["seconds"] == 10
+                assert result["shown"] is True and result["seconds"] == 5
+                assert glyphs and glyphs[0]["hold_ms"] == 5000
                 assert len(glyphs) == 1
                 assert glyphs[0]["session_id"] == hello["session_id"]
                 assert Image.open(BytesIO(base64.b64decode(glyphs[0]["png"]))).size == (
@@ -197,3 +198,33 @@ def test_font_directory_override(monkeypatch, tmp_path):
 def test_unsupported_character():
     with pytest.raises(ValueError):
         font_name_for("\U00031350")
+
+
+@pytest.mark.asyncio
+async def test_undeterminable_mode_shows_nothing(monkeypatch, tmp_path):
+    """Spec section 10: if the homework list can't be read, treat it as 默書."""
+    monkeypatch.setenv("STACKCHAN_CHILD_PROFILE", "1")
+    forms = xiaoya_forms.XiaoyaForms(tmp_path / "forms.json")
+    sender = AsyncMock()
+    forms.register_sender(sender, push=False)
+    forms._session_ready = True
+    monkeypatch.setattr(forms, "snapshot", lambda: (_ for _ in ()).throw(RuntimeError("x")))
+    monkeypatch.setattr(xiaoya_forms, "_forms", forms)
+    executor = VoiceToolExecutor()
+    try:
+        result = await executor.execute("show_character", {"character": "蝶"})
+        assert result["mode"] == "dictation" and result["shown"] is False
+        assert "png" not in result
+        assert "部首" in result["note"] or "radical" in result["note"]
+        sender.assert_not_awaited()
+    finally:
+        await executor.close()
+        forms.unregister_sender()
+
+
+def test_child_instructions_cover_both_modes(monkeypatch):
+    monkeypatch.setenv("STACKCHAN_CHILD_PROFILE", "1")
+    text = VoiceToolExecutor().instructions()
+    assert "show_character" in text
+    assert "部首同結構" in text and "永遠唔顯示" in text and "5秒" in text
+    assert "粵拼" in text
