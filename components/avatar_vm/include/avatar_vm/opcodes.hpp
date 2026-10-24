@@ -114,9 +114,11 @@ enum class Var : std::uint8_t {
     // l0x,l0y..l47x,l47y,r0x..r47y (screen coordinates, interpolated in C++ every frame). The data comes
     // from DrawContext::aora_ring; a null pointer reads 0.
     RingBase = 0x25,
+    Sprout = 0xE5, // First ID after the 192 ring coordinates.
 };
 
 inline constexpr std::uint8_t kRingVarCount = 192;
+static_assert(static_cast<unsigned>(Var::RingBase) + kRingVarCount == static_cast<unsigned>(Var::Sprout));
 
 // Const table tag bytes.
 enum class ConstTag : std::uint8_t {

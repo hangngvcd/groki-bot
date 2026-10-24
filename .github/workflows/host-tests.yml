@@ -142,6 +142,20 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Xiaoya face renderer and tests
+        run: |
+          cmake -S tools/face_render -B build-face-render -G Ninja
+          cmake --build build-face-render
+          ctest --test-dir build-face-render --output-on-failure
+          build-face-render/face_render face-renders/
+
+      - name: Upload Xiaoya face renders
+        uses: actions/upload-artifact@v4
+        with:
+          name: xiaoya-face-renders
+          path: face-renders/
+          if-no-files-found: error
+
       - name: avatar_dsl compile tests
         working-directory: tools/avatar_dsl
         run: |

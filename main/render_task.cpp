@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Kenta IDA <fuga@fugafuga.org>
 // SPDX-License-Identifier: BSL-1.0
 
+#include "avatar_vm/design_scale.hpp"
 #include "render_task.hpp"
 
 #include <cstdio>
@@ -286,6 +287,12 @@ void render_task_entry(void* arg) {
             // tick (one frame late, not visible); the VM reads them through the Var::RingBase range.
             static float ring_buf[aora::kOutFloats];
             aora::compose(avatar.draw_context(), now_ms, ring_buf);
+            if (args.round_face_layout) {
+                aora::fit_to_canvas(ring_buf, avatar_vm::round_face_layout_scale(*cv),
+                                    cv->width() * 0.5f, cv->height() * 0.5f);
+            }
+            avatar.set_sprout_visible(args.round_face_layout);
+            avatar.set_layout_scale(args.round_face_layout ? avatar_vm::round_face_layout_scale(*cv) : 0.0f);
             avatar.set_eye_ring_buffer(ring_buf);
             // avatar.tick() opens the frame (begin_frame) and draws the face;
             // overlays compose into the same frame; end_frame() presents.

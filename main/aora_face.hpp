@@ -28,6 +28,15 @@ namespace stackchan::app::aora {
 
 inline constexpr std::size_t kOutFloats = 192;
 
+// Convert the design-space ring to the same canvas coordinates as VM tx/ty.
+inline void fit_to_canvas(float* ring, float scale, float cx, float cy)
+{
+    for (std::size_t i = 0; i < kOutFloats; i += 2) {
+        ring[i] = cx + (ring[i] - 160.0f) * scale;
+        ring[i + 1] = cy + (ring[i + 1] - 120.0f) * scale;
+    }
+}
+
 namespace detail {
 
 inline std::uint32_t hash_u32(std::uint32_t x)

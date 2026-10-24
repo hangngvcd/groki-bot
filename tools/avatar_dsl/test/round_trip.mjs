@@ -4,9 +4,11 @@
 //   - all opcodes used belong to the documented set (no accidental allocations)
 //   - smoke-trace the bytecode by hand-decoding selected ops.
 import { compile } from '../compile.js';
-import { Op, MAGIC, VERSION } from '../opcodes.js';
+import { Op, Var, MAGIC, VERSION } from '../opcodes.js';
 
 const KNOWN_OPS = new Set(Object.values(Op));
+const KNOWN_VARS = new Set(Object.values(Var));
+if (Var.sprout !== 0xE5 || Var.ring_r47y !== 0xE4) throw new Error("var ID boundary changed");
 
 const src = `
 fn eye(cx, cy, r, is_left)
@@ -33,6 +35,7 @@ fn eye(cx, cy, r, is_left)
 end
 
 fn draw()
+  if sprout > 0.5 then fill_circle(1, 1, 1, primary) end
   eye(tx(90),  ty(93),  sz(eye_radius), 1)
   eye(tx(230), ty(96),  sz(eye_radius), 0)
 end
@@ -80,9 +83,11 @@ while (pc < code.length) {
   // skip operand bytes per opcode
   switch (op) {
     case Op.PushF32: pc += 4; break;
+    case Op.PushVar:
+      if (!KNOWN_VARS.has(code[pc])) throw new Error("unknown var ID");
+      pc += 1; break;
     case Op.PushI8:
     case Op.PushConst:
-    case Op.PushVar:
     case Op.PushLocal:
     case Op.StoreLocal:
     case Op.Call:

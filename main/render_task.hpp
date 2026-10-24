@@ -17,6 +17,8 @@ struct RenderTaskArgs {
     // 320×240 design space down into the inscribed square instead of stretching
     // features outside the visible circle.
     bool circular_display = false;
+    // SpotPear Xiaoya face: fit eye rings and show the sprout.
+    bool round_face_layout = false;
 };
 
 // Pinned to core 1, 33 ms period.

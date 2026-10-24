@@ -13,6 +13,9 @@
 namespace stackchan::avatar {
 
 struct DrawContext {
+    bool sprout_visible = false;
+    // 0 selects automatic design_scale(canvas).
+    float layout_scale = 0.0f;
     Expression expression{Expression::Neutral};
     // Source expression for a C++-owned ease. `expression_blend` is 0 at the
     // start of a transition (fully the from-pose) and 1 when idle / done

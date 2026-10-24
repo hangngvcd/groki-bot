@@ -14,7 +14,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const src = readFileSync(resolve(ROOT, 'assets/grok_face.avdsl'), 'utf8');
 // eye_open is gone: blink / openness squash happen in the C++ compositor (main/aora_face.hpp).
 for (const token of ['now_ms', 'mouth_open', 'expr_from', 'expr_blend',
-                     'expr_hold_to', 'expr_hold_blend']) {
+                     'expr_hold_to', 'expr_hold_blend', 'sprout']) {
   if (!src.includes(token)) throw new Error(`grok_face.avdsl missing ${token}`);
 }
 if (src.includes('0.8369')) {
@@ -72,6 +72,7 @@ for (let i = 0; i < constCount; ++i) {
 }
 const codeOff = off + fnCount * 6;
 const code = u8.subarray(codeOff, codeOff + codeSize);
+let sawSprout = false;
 let sawCircle = false;
 let sawTriangle = false;
 let sawExprFrom = false;
@@ -85,6 +86,7 @@ while (pc < code.length) {
   if (op === Op.FillTriangle) sawTriangle = true;
   if (op === Op.PushVar) {
     const id = code[pc];
+    if (id === Var.sprout) sawSprout = true;
     if (id === Var.expr_from) sawExprFrom = true;
     if (id === Var.expr_blend) sawExprBlend = true;
     if (id === Var.expr_hold_to) sawExprHoldTo = true;
@@ -95,6 +97,7 @@ while (pc < code.length) {
            op === Op.PushLocal || op === Op.StoreLocal || op === Op.Call) pc += 1;
   else if (op === Op.PushI16 || op === Op.Jmp || op === Op.Jz || op === Op.Jnz) pc += 2;
 }
+if (!sawSprout) throw new Error('sprout gate should PushVar sprout');
 if (!sawCircle) throw new Error('idle body should still emit fill_circle');
 if (!sawTriangle) throw new Error('eyes/morph body should emit fill_triangle');
 if (!sawExprFrom) throw new Error('blend path should PushVar expr_from');
