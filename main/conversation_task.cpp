@@ -358,7 +358,35 @@ public:
             // never fires later.
             if (state_.listen_request.exchange(false) && state_.conv.active.load() &&
                 local_ != Local::Speaking) {
-                (void)client_->request_listen();
+                if (client_->request_listen()) {
+                    // Local wake feedback, independent of the gateway / MCP:
+                    // show the listening face right away. Gateway milestones
+                    // (stt -> Thinking, tts start/stop) take over from here.
+                    state_.note_face_activity();
+                    state_.set_voice_state(avatar::VoiceState::Listening);
+                    wake_face_since_ms_ = now_ms();
+                    if (wake_face_since_ms_ == 0) wake_face_since_ms_ = 1;
+                    // One-shot mic level report for the first 3 s after wake.
+                    wake_rms_until_ms_ = wake_face_since_ms_ + kWakeRmsWindowMs;
+                    wake_rms_sum_sq_ = 0.0;
+                    wake_rms_samples_ = 0;
+                    wake_rms_peak_ = 0;
+                    ESP_LOGI(kTag, "wake (BOOT): listen detect sent, face=listening, measuring mic for %u ms",
+                             static_cast<unsigned>(kWakeRmsWindowMs));
+                } else {
+                    ESP_LOGW(kTag, "wake (BOOT): listen detect send failed");
+                }
+            }
+            // No gateway face event within the window: drop back to idle so
+            // the listening face can't stick when nothing was heard.
+            if (wake_face_since_ms_ != 0 && now_ms() - wake_face_since_ms_ > kWakeFaceTimeoutMs) {
+                wake_face_since_ms_ = 0;
+                if (static_cast<avatar::VoiceState>(state_.conv.voice_state.load()) ==
+                    avatar::VoiceState::Listening) {
+                    ESP_LOGI(kTag, "wake: no gateway reply in %u ms, face back to idle",
+                             static_cast<unsigned>(kWakeFaceTimeoutMs));
+                    state_.set_voice_state(avatar::VoiceState::Idle);
+                }
             }
 #endif
             service_state();
@@ -813,6 +841,9 @@ private:
     {
         if (M5.Mic.isRecording() < 2) {
             const auto& buf = mic_buf_[mic_read_];
+#if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
+            note_wake_mic_level(buf.data(), buf.size());
+#endif
             (void)client_->push_audio(std::span<const std::int16_t>{buf.data(), buf.size()});
             M5.Mic.record(mic_buf_[mic_read_].data(), mic_buf_[mic_read_].size(), mic_sample_rate_, /*stereo=*/false);
             mic_read_ ^= 1;
@@ -820,6 +851,31 @@ private:
             vTaskDelay(pdMS_TO_TICKS(5));
         }
     }
+
+#if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
+    void note_wake_mic_level(const std::int16_t* pcm, std::size_t n)
+    {
+        if (wake_rms_until_ms_ == 0) return;
+        for (std::size_t i = 0; i < n; ++i) {
+            const int v = pcm[i];
+            wake_rms_sum_sq_ += static_cast<double>(v) * v;
+            const int a = v < 0 ? -v : v;
+            if (a > wake_rms_peak_) wake_rms_peak_ = a;
+        }
+        wake_rms_samples_ += n;
+        if (static_cast<std::int32_t>(now_ms() - wake_rms_until_ms_) >= 0) {
+            const double rms = wake_rms_samples_ > 0
+                                   ? std::sqrt(wake_rms_sum_sq_ / static_cast<double>(wake_rms_samples_))
+                                   : 0.0;
+            const double dbfs = rms > 0.0 ? 20.0 * std::log10(rms / 32768.0) : -120.0;
+            ESP_LOGI(kTag, "wake mic level: rms=%.0f (%.1f dBFS) peak=%d samples=%u @%u Hz%s",
+                     rms, dbfs, wake_rms_peak_, static_cast<unsigned>(wake_rms_samples_),
+                     static_cast<unsigned>(mic_sample_rate_),
+                     wake_rms_samples_ == 0 ? " (NO MIC DATA)" : (wake_rms_peak_ == 0 ? " (ALL ZERO)" : ""));
+            wake_rms_until_ms_ = 0;
+        }
+    }
+#endif
 
     void enter_listening()
     {
@@ -975,6 +1031,9 @@ private:
         case conv::ConversationEventType::FaceVoiceState:
 #if CONFIG_STACKCHAN_COMPANION_FACE
             state_.set_voice_state(ev.face_voice_state);
+#endif
+#if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
+            wake_face_since_ms_ = 0;
 #endif
             break;
         case conv::ConversationEventType::StateChanged:
@@ -1372,6 +1431,15 @@ private:
 
     Local local_{Local::Init};
     std::uint32_t thinking_since_ms_{0};
+#if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
+    static constexpr std::uint32_t kWakeRmsWindowMs = 3000;
+    static constexpr std::uint32_t kWakeFaceTimeoutMs = 15000;
+    std::uint32_t wake_face_since_ms_{0};
+    std::uint32_t wake_rms_until_ms_{0};
+    double wake_rms_sum_sq_{0.0};
+    std::size_t wake_rms_samples_{0};
+    int wake_rms_peak_{0};
+#endif
     // The thinking face may already be back to idle (kThinkingFaceMs limit); reset on entering Thinking.
     bool thinking_face_released_{false};
     bool tool_pending_{false};

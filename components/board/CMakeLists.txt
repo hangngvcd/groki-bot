@@ -6,6 +6,7 @@ set(_board_srcs
     "led_strip.cpp"
     "nekomimi_led_strip.cpp"
     "si12t_touch.cpp"
+    "spotpear_audio.cpp"
     "spotpear_lcd.cpp"
 )
 
@@ -23,7 +24,7 @@ if(NOT CONFIG_STACKCHAN_CAMERA_ENABLED)
     list(REMOVE_ITEM _board_srcs "camera_gc0308.cpp")
 endif()
 if(NOT CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM)
-    list(REMOVE_ITEM _board_srcs "spotpear_lcd.cpp")
+    list(REMOVE_ITEM _board_srcs "spotpear_audio.cpp" "spotpear_lcd.cpp")
 endif()
 
 idf_component_register(

@@ -70,6 +70,46 @@ Sources:
 - [F2] factory flash dump disassembly (ota_0 at 0x20000; Spotpear_ESP32_S3_1_28_CAM::InitializeSpi/InitializeGc9a01Display at 0x42033919/0x42032f34): SPI3, MOSI 2, MISO -1, SCLK 4, max transfer 240*240*2, DMA auto; CS 5, DC 47, mode 0, 40 MHz, queue depth 10, 8-bit commands/parameters; reset GPIO -1 (SWRESET 0x01), BGR, 16 bpp, invert on, mirror X, display on, MADCTL 0x48 (mirror X is wrong for our unit; see below). Registers 0x62/0x63 match M5GFX's GC9A01 init list. PwmBacklight(GPIO42, invert=true, 25 kHz).
 - [X] upstream 78/xiaozhi-esp32 main/boards/spotpear/sp-esp32-s3-1.28-box/config.h (commit aab98ab) — sibling board, same audio + display pins except LCD reset.
 
+## SpotPear audio (ticket 14)
+
+Status: implemented on `xiaoya/14-audio`, not yet confirmed on hardware.
+
+Root cause of the earlier silence: the SpotPear branch of `Board::begin()` skips
+`M5.begin()`, so M5Unified's `_begin_audio` never ran. `M5.Mic` / `M5.Speaker`
+kept their default config (`pin_data_in`/`pin_data_out` = -1, so
+`Mic.begin()` fails and nothing is captured or uploaded), no I2C bus was started,
+the ES8311/ES7210 were never programmed and the NS4150B PA was never enabled.
+
+Design: `components/board/spotpear_audio.cpp` configures `M5.Speaker` / `M5.Mic`
+with the SpotPear pins and registers enable callbacks, so the app's existing
+half-duplex `M5.Mic.record` / `M5.Speaker.playRaw` path (shared by every board)
+is reused. `esp_codec_dev` was not used: it would bypass M5.Speaker/M5.Mic and
+need a second audio path through conversation, speech, settings and BLE audio.
+
+| Item | Value | Source |
+|---|---|---|
+| I2C | `I2C_NUM_1`, SDA 15, SCL 14, 400 kHz | [S]; [F] |
+| ES8311 | 0x18 (factory arg 0x30 8-bit), chip id regs 0xFD/0xFE = 83 11 | [S]; [F] ota0 call at 0x42032afa |
+| ES7210 | 0x40 (factory arg 0x80 8-bit), chip id regs 0x3D/0x3E = 72 10 | [S]; [F] same call |
+| I2S | port 1, MCLK 16, BCLK 9, WS 45, DOUT 8, DIN 10, std I2S 16-bit, half duplex | [S]; [F] same call |
+| PA | NS4150B CTRL GPIO46, high = on, toggled with speaker enable | [S]; factory passes -1 (NC) |
+| Speaker | M5 mixer 48 kHz (TTS 24 kHz resampled), ES8311 MCLK = BCLK x8, DAC vol 0xFF, magnification 1 | M5Unified Atomic ECHO BASE (same ES8311 + NS4150B) |
+| Volume | `speaker_base_volume` 180 (~70 %) x settings percent | [F] xiaozhi default output volume 70 |
+| Mic | ES7210 MIC1/MIC2 on SDOUT1 (L/R), 30 dB PGA (0x1A), MIC3/4 off; magnification 2 | [F] input gain 30.0 at 0x4200e8d9; registers from M5Unified CoreS3 |
+
+Factory differences: the factory runs a 24 kHz duplex TDM stream with MIC3 as
+AEC reference; here the mic runs at the conversation rate (16 kHz) without the
+reference channel.
+
+Wake feedback: BOOT sends `listen detect`; the face is otherwise driven only by
+gateway messages (`listen`, `stt`, `tts`), and the gateway's own wake feedback
+uses MCP tools that fail with `features.mcp=false`. The firmware now shows the
+listening face locally when the listen request is sent and falls back to idle
+after 15 s if the gateway sends no face event. For 3 s after each wake it logs
+`wake mic level: rms=… (… dBFS) peak=…`.
+
+## SpotPear pin table
+
 | Function | GPIO | Confidence | Source/notes |
 |---|---|---|---|
 | Module | ESP32-S3R8 (8 MB Octal PSRAM in package) | verified | [S] "ESP32S3-R8"; GPIO33-37 marked no-connect (used by octal PSRAM) |
@@ -168,7 +208,7 @@ and otherwise drop, never abort a newly started reply.
 
 Every armed, debounced press-down except provisioning requests a click; this
 will mask the single-press delay. Click sound and break completion audio await
-ticket 16: the SpotPear skeleton has no ES8311/PA audio output initialised yet.
+ticket 16 (the ES8311/PA output is now initialised, see "SpotPear audio" below; the click itself is still a stub).
 The click must sound within about 50 ms of press-down. Natural break expiry
 plays one chime and 「小休完喇，準備好就撳一下我。」 once, then returns to the
 companion face with no nagging. Early end has no completion announcement.

@@ -4,6 +4,7 @@
 #include "board/board.hpp"
 #if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
 #include "board/spotpear_128cam_pins.hpp"
+#include "spotpear_audio.hpp"
 #include "spotpear_lcd.hpp"
 #endif
 
@@ -88,9 +89,8 @@ tl::expected<Board, Error> Board::begin()
         // M5.Display keeps the M5GFX drawing API over a frame-buffer panel that
         // pushes dirty rects through esp_lcd. Orientation verified on hardware:
         // NO mirror (MADCTL 0x08). The factory mirror X shows mirrored text.
-        // TODO(ticket 14): initialize ES8311 + ES7210 registers and shared I2S,
-        // PA enable and BOOT-to-listen. M5.BtnA/Speaker/Mic remain default inert
-        // objects (audio data pins remain disabled), with no M5 pin map or I2C bus installed.
+        // Audio: because M5.begin() is skipped, M5.Speaker/M5.Mic/In_I2C are
+        // configured by spotpear_audio_begin() below (ES8311 + PA, ES7210).
         namespace pins = spotpear_128cam;
         static Panel_SpotPearEspLcd panel;
         static lgfx::Light_PWM light;
@@ -128,10 +128,11 @@ tl::expected<Board, Error> Board::begin()
                  static_cast<int>(Panel_SpotPearEspLcd::kMadctl),
                  static_cast<int>(M5.Display.getRotation()),
                  Panel_SpotPearEspLcd::kBandLines);
+        spotpear_audio_begin();
         Board board;
         board.impl_ = std::make_shared<Impl>(BoardKind::SpotPear128Cam,
                                            std::optional<Py32Expander>{}, std::optional<Si12tTouch>{});
-        ESP_LOGI(kTag, "board initialized: kind=SpotPear128Cam (240x240 GC9A01A, skeleton; audio/input TODO ticket 14)");
+        ESP_LOGI(kTag, "board initialized: kind=SpotPear128Cam (240x240 GC9A01A, ES8311/ES7210 audio)");
         return board;
     }
 #endif
@@ -318,6 +319,7 @@ BoardProfile profile_for(BoardKind kind) noexcept
         p.circular_display = true;
         p.round_face_layout = true;
         p.button_overlay_ui = true; // No touch; BOOT gestures: main/boot_button_task.cpp.
+        p.speaker_base_volume = 180; // ~70 % (xiaozhi factory default output volume 70).
         break;
     case BoardKind::StopWatch:
         p.speaker_magnification = 16; // ES8311 → AW8737A input attenuator
