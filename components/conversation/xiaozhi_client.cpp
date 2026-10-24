@@ -179,6 +179,7 @@ public:
             return tl::unexpected{ConversationError::OutOfMemory};
         }
         sender_should_exit_.store(false, std::memory_order_relaxed);
+        sender_exited_.store(false, std::memory_order_relaxed);
         if (xTaskCreatePinnedToCoreWithCaps(&Impl::sender_trampoline, "xiaozhi_tx",
                                             kSenderTaskStack, this, kSenderTaskPrio,
                                             &sender_task_, kSenderTaskCore,
@@ -336,9 +337,20 @@ private:
             sender_should_exit_.store(true, std::memory_order_release);
             AudioChunk* sentinel = nullptr;
             xQueueSend(audio_tx_queue_, &sentinel, 0);
-            for (int i = 0; i < 200; ++i) {
-                if (eTaskGetState(sender_task_) == eDeleted) break;
+            // Wait for the sender to leave its loop. It parks itself (suspended)
+            // instead of self-deleting, so we delete it from here: no freed-TCB
+            // polling, and no cleanup-task allocation inside vTaskDeleteWithCaps
+            // (which abort()s if internal RAM is short). The wait covers one
+            // blocked send (kSendTimeout) plus margin.
+            bool exited = false;
+            for (int i = 0; i < 500; ++i) {
+                if (sender_exited_.load(std::memory_order_acquire)) { exited = true; break; }
                 vTaskDelay(pdMS_TO_TICKS(10));
+            }
+            if (exited) {
+                vTaskDeleteWithCaps(sender_task_);
+            } else {
+                ESP_LOGE(kTag, "sender task did not exit within 5 s; leaking it");
             }
             sender_task_ = nullptr;
         }
@@ -854,8 +866,11 @@ private:
 
     static void sender_trampoline(void* arg)
     {
-        static_cast<Impl*>(arg)->sender_loop();
-        vTaskDeleteWithCaps(nullptr);
+        auto* self = static_cast<Impl*>(arg);
+        self->sender_loop();
+        self->sender_exited_.store(true, std::memory_order_release);
+        // teardown() deletes us with vTaskDeleteWithCaps(handle).
+        for (;;) vTaskSuspend(nullptr);
     }
 
     void sender_loop()
@@ -983,6 +998,7 @@ private:
     std::uint32_t last_evict_log_ms_{0}; // note_tx_eviction rate limiter; 0 = never logged
     TaskHandle_t sender_task_{nullptr};
     std::atomic<bool> sender_should_exit_{false};
+    std::atomic<bool> sender_exited_{false};
 };
 
 // ---- public class plumbing ------------------------------------------------
