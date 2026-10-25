@@ -400,7 +400,12 @@ export function createBridge({ port = 18771, rpc = accountRpc, agentId = process
         presenceBusy = true;
         try {
         const authId = await sandbox.callerAuthId();
-        await sandbox.presence(body);
+        try { await sandbox.presence(body); } catch (error) {
+          // The caller has already torn this call down; a failed upstream "off"
+          // must not pin it here, or every later call gets 409 call_conflict.
+          if (!body.isOnTheLine) { activeCall = null; for (const controller of streams) controller.abort(); }
+          throw error;
+        }
         if (body.isOnTheLine) {
           if (!activeCall) activeCall = {agentId, callId: body.callId, acceptsOverheard: body.acceptsOverheard, sessionId, authId, sinceMs: Date.now(), seen: new Set()};
           else activeCall.acceptsOverheard = body.acceptsOverheard;

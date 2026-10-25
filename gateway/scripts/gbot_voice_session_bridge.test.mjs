@@ -91,6 +91,22 @@ test('desktop opt-in admits native send and search scoped to active call while u
   } finally {await new Promise(r=>server.close(r));}
 });
 
+test('failed upstream presence off still releases the call so the next call is not stuck on 409', async () => {
+  const port = await freePort(); let failOff=true;
+  const sandbox={callerAuthId:async()=> 'owner', presence:async(body)=>{ if (!body.isOnTheLine && failOff) throw new Error('upstream 502'); }};
+  const server=createBridge({port,agentId:'a',desktopEnabled:true,toolsEnabled:false,sandbox,rpc:async()=>({kind:1})});
+  await new Promise(r=>server.listen(port,'127.0.0.1',r));
+  const post=async(path,body)=>fetch(`http://127.0.0.1:${port}`+path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+  const presence=(callId,isOnTheLine)=>post('/native/presence',{agentId:'a',callId,isOnTheLine,acceptsOverheard:false});
+  try {
+    assert.equal((await presence('call-old',true)).status,200);
+    assert.equal((await presence('call-old',false)).status,502);
+    assert.equal((await presence('call-new',true)).status,200);
+    failOff=false;
+    assert.equal((await presence('call-new',false)).status,200);
+  } finally {await new Promise(r=>server.close(r));}
+});
+
 test('server transcript stream drops replay and pre-connection entries and requires rebaseline after clear', async()=>{
   const {filterTranscriptFrame,NativeTranscriptClient}=await import('./gbot_voice_session_bridge.mjs');
   const context={agentId:'a',callId:'call-c',sessionId:'',authId:'owner',sinceMs:100,seen:new Set()};

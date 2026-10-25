@@ -148,6 +148,8 @@ class XiaoyaForms:
         self.device_report: dict[str, Any] = {}
         self._tasks: set[asyncio.Task] = set()
         self._midnight_task: asyncio.Task | None = None
+        # Live voice sessions subscribe so the model learns the list changed.
+        self._change_listeners: list[Callable[[str, str], None]] = []
         try:
             data = json.loads(self.path.read_text())
             self._state = self._load(data)
@@ -268,7 +270,25 @@ class XiaoyaForms:
             "鈴鈴 homework %s %d/%d -> F%d (was F%d, source=%s)", action, done, total, new, old, source
         )
         self._schedule_push()
+        self._notify_change(action, source)
         return {**self.snapshot(), "level_up": new > old, "previous_form": old}
+
+    def add_change_listener(self, callback: Callable[[str, str], None]) -> None:
+        if callback not in self._change_listeners:
+            self._change_listeners.append(callback)
+
+    def remove_change_listener(self, callback: Callable[[str, str], None]) -> None:
+        try:
+            self._change_listeners.remove(callback)
+        except ValueError:
+            pass
+
+    def _notify_change(self, action: str, source: str) -> None:
+        for callback in list(self._change_listeners):
+            try:
+                callback(action, source)
+            except Exception:
+                logger.exception("鈴鈴 homework change listener failed")
 
     def add_items(self, titles: Any, *, source: str) -> dict[str, Any]:
         """Parent adds homework.  Never downgrades the form."""

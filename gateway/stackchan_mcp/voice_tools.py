@@ -751,6 +751,34 @@ class ToolExtension:
     on_user_input: Callable[[str, bool], Any] | None = None
 
 
+# The homework list is edited live by a parent; a dictation/refusal answer is
+# only valid for the moment it was given (08:36 incident: 抄生字 was added but
+# the model kept reusing the earlier "no copy homework" result).
+SHOW_CHARACTER_FRESH_NOTE = (
+    "This result is only valid right now: a parent can change today's homework "
+    "list at any time. For every new character request, call show_character "
+    "again; never reuse this or an earlier show_character result."
+)
+HOMEWORK_LIST_FRESH_NOTE = (
+    "A parent can add homework at any time; call homework_list again next time "
+    "instead of reusing this answer."
+)
+
+
+def prewarm_glyph_renderer() -> None:
+    """Import PIL/fontTools and load the glyph fonts off the event loop.
+
+    The first show_character otherwise pays the cold import inside the event
+    loop and the first font load inside its 5 s tool timeout, which on a
+    swapping host stalled for 8-20 s."""
+    try:
+        from .xiaoya_glyph import render_glyph_png  # noqa: PLC0415
+
+        render_glyph_png("字")
+    except Exception:
+        logger.debug("glyph prewarm failed", exc_info=True)
+
+
 class VoiceToolExecutor:
     """Shared local execution and result notices; providers adapt only the wire protocol."""
 
@@ -1080,7 +1108,12 @@ class VoiceToolExecutor:
                 timeout=meta.timeout_s,
             )
         except asyncio.TimeoutError:
-            return {"ok": False, "error": f"tool timeout after {meta.timeout_s:.0f}s"}
+            # Previously silent: the only trace was the bridge's outcome line.
+            logger.warning("Gemini Live tool call name=%s timed out after %.0fs", name, meta.timeout_s)
+            result = {"ok": False, "error": f"tool timeout after {meta.timeout_s:.0f}s"}
+            if name == "show_character":
+                result["note"] = "Display was slow; you may call show_character again once."
+            return result
         except Exception as exc:
             logger.exception("Gemini Live tool %s dispatch crashed", name)
             return {"ok": False, "error": str(exc)}
@@ -1511,7 +1544,8 @@ class VoiceToolExecutor:
                     "Dictation: never show, say, spell or go stroke-by-stroke through "
                     "the full character, and do not list every component. You may "
                     "describe only its radical and overall structure (部首、結構), "
-                    "only if you are sure; otherwise just encourage."
+                    "only if you are sure; otherwise just encourage. "
+                    + SHOW_CHARACTER_FRESH_NOTE
                 ),
             }
         try:
@@ -1521,7 +1555,8 @@ class VoiceToolExecutor:
             sent = False
         if not sent:
             return {"ok": False, "shown": False, "mode": "copy",
-                    "spoken": "我而家顯示唔到個字，你可以問吓爸爸媽媽。"}
+                    "spoken": "我而家顯示唔到個字，你可以問吓爸爸媽媽。",
+                    "note": SHOW_CHARACTER_FRESH_NOTE}
         return {"ok": True, "shown": True, "mode": "copy", "character": c,
                 "seconds": DEFAULT_HOLD_MS // 1000,
                 "spoken": "睇清楚個字，收起咗之後自己喺簿度寫一次。"}
@@ -1534,7 +1569,8 @@ class VoiceToolExecutor:
         if name == "homework_list":
             snap = forms.snapshot()
             if not snap["items"]:
-                return {"ok": True, "items": [], "spoken": "今日爸爸媽媽未加功課清單。"}
+                return {"ok": True, "items": [], "spoken": "今日爸爸媽媽未加功課清單。",
+                        "note": HOMEWORK_LIST_FRESH_NOTE}
             return {
                 "ok": True,
                 "items": [

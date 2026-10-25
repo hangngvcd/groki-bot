@@ -107,6 +107,15 @@ async def gather_with_cancel(*awaitables):
 
 
 class GbotVoiceBridge:
+    _session_over = False
+    _homework_forms = None
+
+    HOMEWORK_CHANGED_NOTE = (
+        "[系統通知，唔使回應] Today's homework list was just changed by a parent. "
+        "Earlier show_character / homework_list results are out of date: for the "
+        "next character or homework request, call the tool again."
+    )
+
     def __init__(
         self,
         *,
@@ -739,6 +748,8 @@ class GbotVoiceBridge:
                 )
                 await self._native.start()
             self.metrics["startup_stage"] = "started"
+            if {"show_character", "homework_list"} & set(self._local_tools.values()):
+                self._watch_homework()
         except asyncio.CancelledError:
             await self.stop()
             raise
@@ -1149,6 +1160,14 @@ class GbotVoiceBridge:
                 self._response_requested,
                 message,
             )
+            # The server ends the conversation itself (inactivity timeout,
+            # expired session): stop reading so the owner hears about it and
+            # can reopen on the next wake, even if the socket lingers open.
+            if raw_code in {"timeout", "session_expired"}:
+                self._session_over = True
+                logger.info(
+                    "Grok voice session ended by server reason=%s", token(raw_code)
+                )
 
     async def _tool(self, event):
         call_id = event.get("call_id")
@@ -1286,6 +1305,8 @@ class GbotVoiceBridge:
             async for message in self._ws:
                 if message.type == aiohttp.WSMsgType.TEXT:
                     await self._handle_event(json.loads(message.data))
+                    if self._session_over:
+                        break
                 elif message.type == aiohttp.WSMsgType.ERROR:
                     break
         except asyncio.CancelledError:
@@ -1333,7 +1354,51 @@ class GbotVoiceBridge:
             json.dumps(m["response_status"], sort_keys=True),
         )
 
+    def _watch_homework(self):
+        try:
+            from .xiaoya_forms import get_xiaoya_forms  # noqa: PLC0415
+
+            forms = get_xiaoya_forms()
+            forms.add_change_listener(self._on_homework_changed)
+        except Exception:
+            logger.debug("homework change watch unavailable", exc_info=True)
+            return
+        self._homework_forms = forms
+
+    def _on_homework_changed(self, action, source):
+        # The child's own mark_done happened inside this conversation already.
+        if self._stopped or not self.running or source == "child-voice":
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        task = loop.create_task(self._note_homework_changed(action))
+        self._tools.add(task)
+        task.add_done_callback(self._tools.discard)
+
+    async def _note_homework_changed(self, action):
+        # Context only: no response.create, so this costs no extra reply.
+        try:
+            await self._send(
+                {
+                    "type": "conversation.item.create",
+                    "item": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": self.HOMEWORK_CHANGED_NOTE}],
+                    },
+                }
+            )
+        except Exception:
+            logger.debug("homework change note failed", exc_info=True)
+            return
+        logger.info("Grok voice homework change noted action=%s", action)
+
     async def stop(self):
+        if self._homework_forms is not None:
+            self._homework_forms.remove_change_listener(self._on_homework_changed)
+            self._homework_forms = None
         if not self._stopped:
             self._flush_heard()
             self._log_session_stats()

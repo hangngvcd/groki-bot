@@ -28,6 +28,7 @@ import math
 import os
 import struct
 import time
+from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -89,6 +90,25 @@ def synthesize_wake_chime_pcm(
     return struct.pack(f"<{sample_count}h", *samples)
 
 
+
+_glyph_prewarm_task: asyncio.Task | None = None
+
+
+def _schedule_glyph_prewarm() -> None:
+    """Once per process, load PIL/fontTools + glyph fonts in a worker thread so
+    the first show_character neither blocks the event loop nor hits its 5 s
+    timeout (08:34 / 08:38 incidents on a swapping host)."""
+    global _glyph_prewarm_task
+    if _glyph_prewarm_task is not None:
+        return
+    if os.getenv("STACKCHAN_GLYPH_PREWARM", "1").strip().lower() in {"0", "false", "no", "off"}:
+        return
+    from .voice_tools import prewarm_glyph_renderer  # noqa: PLC0415
+
+    _glyph_prewarm_task = asyncio.get_running_loop().create_task(
+        asyncio.to_thread(prewarm_glyph_renderer)
+    )
+
 @dataclass
 class GeminiVoiceProxy:
     """Replace xiaozhi cloud with a Gemini Live session.
@@ -136,6 +156,27 @@ class GeminiVoiceProxy:
     _ready_event: asyncio.Event = field(default_factory=asyncio.Event)
     _stopped: bool = False
     _reported_dead: bool = False
+    # Lazy session reopen (Grok voice only, see _session_reopen_enabled): the
+    # upstream ended the session (e.g. 900 s inactivity timeout), so the next
+    # wake rebuilds the bridge instead of leaving the robot deaf until restart.
+    _bridge_kwargs: dict[str, Any] | None = None
+    _session_ended: bool = False
+    _reopen_task: asyncio.Task | None = None
+    _reopen_pcm: deque = field(default_factory=deque)
+    _reopen_pcm_bytes: int = 0
+    _reopen_failed_at: float | None = None
+    session_reopen_retry_s: float = field(
+        default_factory=lambda: max(
+            0.0, float(os.getenv("STACKCHAN_SESSION_REOPEN_RETRY_S", "3"))
+        )
+    )
+    # Audio of the waking turn held while the new session connects
+    # (16 kHz s16 mono; oldest dropped past the cap).
+    session_reopen_buffer_bytes: int = field(
+        default_factory=lambda: int(
+            16000 * 2 * max(1.0, float(os.getenv("STACKCHAN_SESSION_REOPEN_BUFFER_S", "12")))
+        )
+    )
     # Firmware applies tts.start on its main task. A tiny guard delay keeps the
     # first binary Opus frame from racing in while the device is still Listening.
     device_tts_start_delay_s: float = field(
@@ -371,8 +412,8 @@ class GeminiVoiceProxy:
             available=bool(gate is not None and gate.available),
             state=gate.state.value if gate is not None else "DORMANT",
         )
-        self._bridge = self._make_bridge(
-            esp32,
+        self._bridge_kwargs = dict(
+            esp32=esp32,
             api_key=api_key,
             response_modality="TEXT",
             on_audio=self._handle_gemini_audio,
@@ -387,6 +428,8 @@ class GeminiVoiceProxy:
             set_face_tracking=self.set_face_tracking,
             debug_status=self._status,
         )
+        self._session_ended = False
+        self._bridge = self._new_bridge()
         try:
             await self._bridge.start()
         except Exception as exc:
@@ -407,6 +450,122 @@ class GeminiVoiceProxy:
         self._ready_event.set()
         self._start_keepalive()
         logger.info("Gemini voice backend ready (device=%s)", info.device_id or "?")
+        _schedule_glyph_prewarm()
+        return True
+
+    def _new_bridge(self) -> GeminiLiveBridge:
+        kwargs = dict(self._bridge_kwargs or {})
+        esp32 = kwargs.pop("esp32", None)
+        return self._make_bridge(esp32, **kwargs)
+
+    # ---- lazy session reopen ----------------------------------------------
+
+    def _session_reopen_enabled(self) -> bool:
+        """Gemini resumes its own sessions; subclasses opt in to lazy reopen."""
+        return False
+
+    def _session_needs_reopen(self) -> bool:
+        return (
+            self._session_ended
+            and not self._stopped
+            and self._bridge_kwargs is not None
+            and self._session_reopen_enabled()
+        )
+
+    def _reopen_in_progress(self) -> bool:
+        task = self._reopen_task
+        return task is not None and not task.done()
+
+    def _begin_session_reopen(self, reason: str) -> bool:
+        """Start (at most one) background reopen; True if one is running."""
+        if self._reopen_in_progress():
+            return True
+        if not self._session_needs_reopen():
+            return False
+        failed_at = self._reopen_failed_at
+        if (
+            failed_at is not None
+            and time.monotonic() - failed_at < self.session_reopen_retry_s
+        ):
+            logger.info("voice session reopen skipped reason=%s (retry backoff)", reason)
+            return False
+        self._reopen_pcm.clear()
+        self._reopen_pcm_bytes = 0
+        self._reopen_task = asyncio.create_task(self._reopen_session(reason))
+        return True
+
+    def _buffer_reopen_pcm(self, chunk: bytes) -> None:
+        if not chunk:
+            return
+        self._reopen_pcm.append(chunk)
+        self._reopen_pcm_bytes += len(chunk)
+        while self._reopen_pcm_bytes > self.session_reopen_buffer_bytes and self._reopen_pcm:
+            self._reopen_pcm_bytes -= len(self._reopen_pcm.popleft())
+
+    async def _send_upstream_pcm(self, chunk: bytes) -> None:
+        """Send mic PCM upstream, holding it while a fresh session connects."""
+        if self._reopen_in_progress():
+            self._buffer_reopen_pcm(chunk)
+            return
+        if self._session_needs_reopen():
+            return  # session over and no reopen running: nobody is listening
+        bridge = self._bridge
+        if bridge is not None:
+            await bridge.send_audio(chunk)
+
+    async def _reopen_session(self, reason: str) -> bool:
+        started = time.monotonic()
+        logger.info("voice session reopen start reason=%s", reason)
+        old = self._bridge
+        try:
+            if old is not None:
+                try:
+                    await old.stop()
+                except Exception as exc:
+                    logger.warning("old voice bridge stop failed: %s", type(exc).__name__)
+            bridge = self._new_bridge()
+            self._bridge = bridge
+            await bridge.start()
+            if not await bridge.wait_connected(timeout=10.0):
+                raise RuntimeError("session did not connect within 10 s")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._reopen_failed_at = time.monotonic()
+            self._reopen_pcm.clear()
+            self._reopen_pcm_bytes = 0
+            self._reported_dead = True
+            logger.warning(
+                "voice session reopen failed reason=%s elapsed_ms=%.0f: %s",
+                reason, (time.monotonic() - started) * 1000, exc,
+            )
+            try:
+                await self._set_leds_safe(*DEAD_LED_RGB)
+            except Exception:
+                logger.exception("reopen-failed red LED failed")
+            return False
+        self._session_ended = False
+        self._reported_dead = False
+        self._reopen_failed_at = None
+        flushed = 0
+        # Flush the waking turn in order; chunks arriving meanwhile join the
+        # queue (the task is still running), so nothing is reordered.
+        while self._reopen_pcm:
+            chunk = self._reopen_pcm.popleft()
+            self._reopen_pcm_bytes -= len(chunk)
+            try:
+                await bridge.send_audio(chunk)
+            except Exception as exc:
+                logger.warning("reopen audio flush failed: %s", type(exc).__name__)
+                self._reopen_pcm.clear()
+                self._reopen_pcm_bytes = 0
+                break
+            flushed += len(chunk)
+        self._reopen_pcm_bytes = 0
+        logger.info(
+            "voice session reopened reason=%s elapsed_ms=%.0f buffered_ms=%.0f",
+            reason, (time.monotonic() - started) * 1000, flushed / 32.0,
+        )
         return True
 
     def _start_keepalive(self) -> None:
@@ -469,6 +628,16 @@ class GeminiVoiceProxy:
     async def stop(self) -> None:
         self._stopped = True
         self._tts_generation += 1
+        reopen = self._reopen_task
+        self._reopen_task = None
+        if reopen is not None and not reopen.done():
+            reopen.cancel()
+            try:
+                await reopen
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._reopen_pcm.clear()
+        self._reopen_pcm_bytes = 0
         if self._keepalive is not None:
             await self._keepalive.stop()
             self._keepalive = None
@@ -574,7 +743,7 @@ class GeminiVoiceProxy:
         if str(message.get("type", "")).strip().lower() == "xiaoya":
             self.handle_xiaoya_event(message)
             return True
-        if not self.connected:
+        if not self.connected and not self._reopen_for_device_message(message):
             return False
         msg_type = message.get("type", "")
         if button_only_listen_enabled():
@@ -612,6 +781,15 @@ class GeminiVoiceProxy:
                     except Exception as exc:
                         logger.debug("send_audio_stream_end ignored: %s", exc)
         return True
+
+    def _reopen_for_device_message(self, message: dict[str, Any]) -> bool:
+        """A wake/listen start after the session ended kicks off a reopen."""
+        if str(message.get("type", "")).strip().lower() != "listen":
+            return False
+        state = str(message.get("state", "")).strip().lower()
+        if state not in {"start", "detect"}:
+            return False
+        return self._begin_session_reopen(f"listen_{state}")
 
     async def send_device_binary(self, data: bytes) -> bool:
         """Forward one device Opus frame to Gemini Live as 16 kHz PCM."""
@@ -716,14 +894,14 @@ class GeminiVoiceProxy:
         if gate is None:
             # While the gate is backing off a rebuild or has failed for good, pass the microphone through so the robot is never deaf.
             if not button_only_listen_enabled():
-                await bridge.send_audio(pcm)
+                await self._send_upstream_pcm(pcm)
             return
         try:
             decision = gate.process(pcm)
         except Exception as exc:
             self._handle_wake_gate_process_error(exc)
             if not button_only_listen_enabled():
-                await bridge.send_audio(pcm)
+                await self._send_upstream_pcm(pcm)
             return
         if decision.closed:
             self._status.on_wake_closed()
@@ -740,6 +918,8 @@ class GeminiVoiceProxy:
                 if inspect.isawaitable(result):
                     await result
         if decision.woke:
+            if self._session_needs_reopen():
+                self._begin_session_reopen("wake_word")
             self._reported_dead = False
             await self._signal_manual_vad_start(bridge)
             await self._set_leds_safe(*LISTENING_LED_RGB)
@@ -749,11 +929,21 @@ class GeminiVoiceProxy:
             await self._send_device_emotion_safe(LISTENING_EMOTION)
             self._signal_wake_chime()
         for chunk in decision.forward_pcm:
-            await bridge.send_audio(chunk)
+            await self._send_upstream_pcm(chunk)
 
     async def _handle_session_dead(self) -> None:
-        """Session reconnect exceeded the audio-cache TTL: close listening and report that the session could not be resumed."""
-        self._reported_dead = True
+        """The upstream session is gone: close listening.
+
+        Gemini: reconnect exceeded the audio-cache TTL, report it (red LED).
+        Grok voice: the server ended the session (inactivity timeout, error,
+        close); go quietly idle and reopen lazily on the next wake.
+        """
+        reopen = self._session_reopen_enabled() and not self._stopped
+        if reopen:
+            self._session_ended = True
+            logger.info("voice session ended upstream; will reopen on next wake")
+        else:
+            self._reported_dead = True
         try:
             gate = self._wake_gate
             if gate is not None:
@@ -767,9 +957,13 @@ class GeminiVoiceProxy:
         except Exception:
             logger.exception("session-dead abort tts failed")
         try:
-            await self._set_leds_safe(*DEAD_LED_RGB)
+            if reopen:
+                await self._set_leds_safe(0, 0, 0)
+                await self._send_device_emotion_safe(IDLE_EMOTION)
+            else:
+                await self._set_leds_safe(*DEAD_LED_RGB)
         except Exception:
-            logger.exception("session-dead red LED failed")
+            logger.exception("session-dead LED failed")
 
     async def _handle_bridge_end_conversation(self) -> None:
         """Close the wake window when Gemini explicitly ends the conversation."""
