@@ -36,6 +36,11 @@ SCHEMA = {
         "default": False,
         "description_zh": "家長通知",
     },
+    "mandarin": {
+        "type": "boolean",
+        "default": True,
+        "description_zh": "容許鈴鈴應娜娜要求講普通話",
+    },
 }
 TICKETS = {
     "rest_after_min": "12/15",
@@ -51,8 +56,22 @@ APPLIED = {
 }
 
 
+# Settings consumed by the gateway itself (no device message needed).
+GATEWAY = {
+    "mandarin": (
+        "鈴鈴語言規則：進行中嘅對話即時收到通知，下次對話嘅 prompt 一定用新設定"
+    ),
+}
+
+
 def device_support():
     support = {key: {"applied_to_device": True, "reason": reason} for key, reason in APPLIED.items()}
+    support.update(
+        {
+            key: {"applied_to_device": False, "applied_in_gateway": True, "reason": reason}
+            for key, reason in GATEWAY.items()
+        }
+    )
     support.update(
         {
             key: {
@@ -112,6 +131,12 @@ class ParentSettings:
 
     def add_listener(self, listener):
         self._listeners.append(listener)
+
+    def remove_listener(self, listener):
+        try:
+            self._listeners.remove(listener)
+        except ValueError:
+            pass
 
     def register_pusher(self, key, pusher):
         if key not in SCHEMA:
@@ -185,6 +210,15 @@ def get_parent_settings():
     if _settings is None:
         _settings = ParentSettings()
     return _settings
+
+
+def mandarin_enabled():
+    """Whether 鈴鈴 may switch to Mandarin when 娜娜 asks (default on)."""
+    try:
+        return bool(get_parent_settings().get().get("mandarin", SCHEMA["mandarin"]["default"]))
+    except Exception:
+        logger.debug("mandarin setting unreadable; using default", exc_info=True)
+        return SCHEMA["mandarin"]["default"]
 
 
 def reset_parent_settings():

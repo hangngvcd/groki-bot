@@ -51,6 +51,7 @@ stackchan-parent set volume 40
 stackchan-parent volume          # read volume + last reset reason
 stackchan-parent volume 30       # set 0..100
 stackchan-parent set camera_presence off
+stackchan-parent set mandarin off   # or on (default on)
 stackchan-parent mcp
 ```
 
@@ -65,6 +66,7 @@ the gateway. Bad authentication and unavailable API cause nonzero CLI exits.
 | rest_after_min | integer 1–60 minutes without interaction before resting/Sleepy face | 5 | 12/15 |
 | camera_presence | boolean | false | 23 |
 | notifications | boolean | false | 19 |
+| mandarin | boolean — 容許鈴鈴應娜娜要求講普通話 | true | 22 — **applied in the gateway**: next session's prompt uses it; a live Grok session gets a `[系統通知，唔使回應]` context note at once |
 | battery (status only) | percent or null when unreported | null | 19 |
 
 Settings persist at `~/.stackchan/parent_settings.json` (override

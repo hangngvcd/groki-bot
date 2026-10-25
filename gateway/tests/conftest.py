@@ -60,3 +60,16 @@ def _reset_debug_status():
     reset_debug_status()
     yield
     reset_debug_status()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_parent_settings(monkeypatch, tmp_path):
+    """Parent settings (e.g. mandarin) never read the real ~/.stackchan in tests."""
+    from stackchan_mcp.parent_settings import reset_parent_settings
+
+    monkeypatch.setenv(
+        "STACKCHAN_PARENT_SETTINGS_PATH", str(tmp_path / "parent_settings_isolated.json")
+    )
+    reset_parent_settings()
+    yield
+    reset_parent_settings()

@@ -27,7 +27,11 @@ def store(tmp_path):
 
 def test_settings(store, caplog, monkeypatch):
     assert store.get() == dict(
-        volume=40, rest_after_min=5, camera_presence=False, notifications=False
+        volume=40,
+        rest_after_min=5,
+        camera_presence=False,
+        notifications=False,
+        mandarin=True,
     )
     events = []
     store.add_listener(lambda settings, keys: events.append((settings, keys)))

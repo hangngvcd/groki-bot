@@ -78,7 +78,9 @@ class ParentClient:
 
 
 def cli_value(key, value):
-    if key in {"camera_presence", "notifications"}:
+    from .parent_settings import SCHEMA
+
+    if SCHEMA.get(key, {}).get("type") == "boolean":
         if value.lower() not in {"on", "off", "true", "false", "1", "0"}:
             raise ValueError("布林值請用 on/off/true/false/1/0 / invalid boolean")
         return value.lower() in {"on", "true", "1"}
@@ -113,8 +115,9 @@ async def run_mcp(client):
     async def xiaoya_set_setting(key: str, value: str) -> dict:
         """Change one parent setting after the parent confirmed it.
 
-        key: volume (0-100), rest_after_min (1-60), camera_presence or
-        notifications (on/off). value is given as text, e.g. "40" or "off".
+        key: volume (0-100), rest_after_min (1-60), camera_presence,
+        notifications or mandarin (on/off; mandarin = 鈴鈴 may speak 普通話
+        when 娜娜 asks, default on). value is given as text, e.g. "40" or "off".
         """
         try:
             parsed = cli_value(key, str(value))
@@ -269,9 +272,14 @@ def main(argv=None):
             print(
                 f"設定：音量 {settings['volume']}；休息 {settings['rest_after_min']} 分鐘；"
                 f"鏡頭偵測 {'開' if settings['camera_presence'] else '關'}；"
-                f"通知 {'開' if settings['notifications'] else '關'}"
+                f"通知 {'開' if settings['notifications'] else '關'}；"
+                f"普通話 {'開' if settings.get('mandarin', True) else '關'}"
             )
-            pending = [k for k, v in status.get("device_support", {}).items() if not v.get("applied_to_device")]
+            pending = [
+                k
+                for k, v in status.get("device_support", {}).items()
+                if not v.get("applied_to_device") and not v.get("applied_in_gateway")
+            ]
             if pending:
                 print("未推到部機（韌體未支援，只係儲存咗）：" + "、".join(pending))
         else:

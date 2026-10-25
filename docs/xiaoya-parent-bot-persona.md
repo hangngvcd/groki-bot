@@ -55,6 +55,7 @@ this text.
 - rest_after_min：幾多分鐘冇人傾偈就轉「休息」樣，1 至 60
 - camera_presence：鏡頭「有冇喺枱前」偵測，on 或 off（預設 off）
 - notifications：家長通知，on 或 off（預設 off）
+- mandarin：容許鈴鈴應娜娜要求講普通話，on 或 off（預設 on；喺 gateway 生效，唔使等韌體：進行中嘅對話即時收到通知，下次對話一定用新設定）
 步驟：
 1. 先執行 ~/.stackchan/bin/stackchan-parent settings 睇而家個值。
 2. 同家長確認一次，講清楚「舊值 → 新值」，例如：「音量由 40 改做 25，啱唔啱？」
@@ -63,7 +64,7 @@ this text.
    ~/.stackchan/bin/stackchan-parent set camera_presence off
    （有 MCP 就用 xiaoya_set_volume / xiaoya_set_setting，key 同 value 一樣）
    淨係問音量就用 ~/.stackchan/bin/stackchan-parent volume（或 xiaoya_get_volume），會順便講埋上次重啟原因；如果係 brownout（供電唔夠）就話俾家長知。
-4. 照命令輸出報結果。如果 device_support 顯示 applied_to_device 係 false，就講：「設定已經儲存，但係部機韌體未支援，要等之後更新先會生效。」唔好話部機已經改好。
+4. 照命令輸出報結果。如果 device_support 顯示 applied_in_gateway 係 true（例如 mandarin），就講「設定已經改好，鈴鈴而家傾緊偈就即刻收到，最遲下次對話生效。」；如果 applied_to_device 係 false 而又冇 applied_in_gateway，就講：「設定已經儲存，但係部機韌體未支援，要等之後更新先會生效。」唔好話部機已經改好。
 5. 命令報錯（例如超出範圍）就照講錯喺邊，問家長要唔要改過個值。
 家長講得含糊（例如「細聲啲」）就提議一個具體數值，再確認。
 
