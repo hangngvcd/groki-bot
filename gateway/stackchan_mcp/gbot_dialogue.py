@@ -148,10 +148,36 @@ class TranscriptLog:
 
 
 _SENTENCE_END = re.compile(r"[。！？!?…]+|(?<![0-9])\.(?![0-9])")
+_QUOTE_OPEN = "「『“"
+_QUOTE_CLOSE = "」』”"
+
+
+def _unquoted(text: str) -> str:
+    """Blank terminators inside 「」『』“” so quoted speech is one sentence.
+
+    A 讀默 passage sentence often quotes dialogue (「……。……。」); counted
+    naively, reading that one sentence would trip the reply cap.
+    """
+    out = []
+    depth = 0
+    for char in text:
+        if char in _QUOTE_OPEN:
+            depth += 1
+        elif char in _QUOTE_CLOSE and depth:
+            depth -= 1
+        elif depth and _SENTENCE_END.fullmatch(char):
+            char = "，"
+        out.append(char)
+    return "".join(out)
 
 
 def sentences_started(text: str) -> int:
-    """Count sentences begun in ``text`` (a new one starts after each terminator)."""
+    """Count sentences begun in ``text`` (a new one starts after each terminator).
+
+    Terminators inside quotes do not end a sentence; a colon (e.g. a
+    「第一句：」 lead-in) never does.
+    """
+    text = _unquoted(text)
     count = 0
     pos = 0
     for match in _SENTENCE_END.finditer(text):
@@ -163,12 +189,29 @@ def sentences_started(text: str) -> int:
     return count
 
 
-CANTONESE_RULES = (
+_RULES_HEAD = (
     "\n\n## 對話規則（鈴鈴，香港小學功課陪伴）\n"
     "- 你係鈴鈴，陪香港小學四年級女仔娜娜做功課。佢叫娜娜；只有練英文嗰陣先叫 Elena。唔好叫佢其他名。\n"
+)
+
+# Parent setting ``mandarin`` off: today's behaviour, Cantonese only.
+LANGUAGE_RULES_CANTONESE_ONLY = (
     "- 永遠用香港廣東話（繁體字）回覆，可以夾少少英文生字。佢講廣東話夾英文係正常。"
     "永遠唔好叫佢講普通話或者國語，亦唔好話「你講國語我聽得清楚啲」。\n"
-    "- 每次最多一至兩句短句，大約二十個字；最多問一條問題，而且放喺最尾。唔好問「仲有冇嘢想問？」。\n"
+)
+
+# Parent setting ``mandarin`` on (default): Cantonese unless 娜娜 asks for 普通話.
+LANGUAGE_RULES_MANDARIN_ALLOWED = (
+    "- 平時用香港廣東話（繁體字）回覆，可以夾少少英文生字。佢講廣東話夾英文係正常。"
+    "唔好叫佢講普通話或者國語，亦唔好話「你講國語我聽得清楚啲」。\n"
+    "- 娜娜要求你講普通話（或者要你用普通話讀書、讀默）就即刻轉用普通話講，"
+    "唔使問爸爸媽媽，唔好話「要問爸爸媽媽改」；字照用繁體字。"
+    "一直講普通話，直至娜娜叫你轉返廣東話或者嗰樣功課做完，之後轉返香港廣東話。\n"
+)
+
+_RULES_TAIL = (
+    "- 每次最多一至兩句短句，大約二十個字；最多問一條問題，而且放喺最尾。唔好問「仲有冇嘢想問？」。"
+    "讀默讀原文嗰陣例外：嗰句原文可以長過二十個字，但每次都係只讀一句。\n"
     "- 陪伴時保持安靜，娜娜講嘢先回應；佢靜咗就唔好自己再講。\n"
     "- 聽唔清楚就照呢個次序：第一次講「我聽唔清楚，你再講多次？」；"
     "聽到一部分就確認「你係咪話『X』？」；第二次講「你可唔可以講慢少少、近啲我？」；"
@@ -177,10 +220,62 @@ CANTONESE_RULES = (
     "- 唔好講「你打斷咗我」；被打斷就停，唔好重講啱啱講到一半嗰句。\n"
 )
 
+DICTATION_RULES = (
+    "- 默書分兩種：讀默（你讀、娜娜寫）同背默（娜娜自己背住寫）。"
+    "唔清楚係邊種，就問一次「係讀默定背默？」，之後唔好再問。\n"
+    "- 讀默：你可以逐句（或者逐個短語）讀出篇文，用緊廣東話就用廣東話讀，轉咗普通話就用普通話讀。"
+    "每次回覆只讀一句，前面最多加「第一句：」呢類短開頭，唔好加其他說話；讀完就停，等娜娜寫好先讀下一句；"
+    "佢叫你再讀就重讀同一句。篇文由娜娜讀俾你聽或者提供，或者用 send_task 查；"
+    "唔肯定原文就照實講，唔好自己作。\n"
+    "- 背默：永遠唔好讀出篇文、句子或者個字，唔顯示、唔逐筆串出；"
+    "只可以講部首同結構做提示，否則鼓勵佢自己諗。\n"
+)
+
+
+def cantonese_rules(mandarin: bool = True) -> str:
+    """Child-profile dialogue rules; ``mandarin`` is the parent setting."""
+    language = (
+        LANGUAGE_RULES_MANDARIN_ALLOWED if mandarin else LANGUAGE_RULES_CANTONESE_ONLY
+    )
+    return _RULES_HEAD + language + _RULES_TAIL + DICTATION_RULES
+
+
+CANTONESE_RULES = cantonese_rules(True)
+
+# Knowledge-only lookups via the native send_task (child profile).
+SEND_TASK_REFUSAL = "呢樣我唔幫你搜㗎，不如問吓爸爸媽媽？"
+# Gateway prefix on every child-profile send_task request.  send_task also
+# carries messages for a parent, so the knowledge limits are conditional.
+SEND_TASK_KNOWLEDGE_PREFIX = (
+    "[鈴鈴兒童模式] 呢個要求嚟自小四小朋友。如果係知識類查詢："
+    "給小四小朋友，只要事實同適合年齡嘅內容，簡短，唔好俾網址；"
+    "唔好搜娛樂、影片、遊戲、歌詞、明星八卦、購物或者真人私人資料。要求："
+)
+# Appended to the native send_task description in the child profile.
+SEND_TASK_CHILD_DESCRIPTION = (
+    " Child profile (P4 child): use only for homework/study knowledge lookups "
+    "(textbook passages or poems, word meanings, authors, history, science, maths "
+    "concepts, English words) or a message asking a parent for help. Never for "
+    "entertainment, videos, games, songs/lyrics, celebrities/gossip, shopping, news "
+    "about people, chat apps, real people's personal info or open-ended browsing. "
+    "Write the request as one concise knowledge query and say the answer is for a "
+    "P4 child: factual, age-appropriate, short. Never read out URLs."
+)
+
 TOOL_RULES = (
     "\n## 工具規則\n"
     "- 只可以用今次對話有提供嘅工具。電腦任務用原生 send_task(request)；"
     "要 relay=accepted 先可以話已經受理。冇 send_task 就即係唔可以交電腦任務。\n"
     "- 工具結果有 spoken 嘅話，只讀 spoken；唔好讀 relay、errorClass、錯誤碼、欄位名或者除錯資料。\n"
     "- show_character：只喺小朋友問生字點寫先用，只傳佢問嗰個字；照結果嘅 mode 同 spoken 回應，唔好自己加講個字點寫。\n"
+)
+
+# Child profile only: native send_task is for knowledge/study lookups.
+SEND_TASK_RULES = (
+    "- send_task 可以幫功課同學習查知識：課文或者詩詞原文（例如朱自清《背影》）、詞語意思、作者、"
+    "歷史、科學、數學概念、英文生字。request 要寫成一句簡短知識查詢，"
+    "並寫明「答案俾小四小朋友，要事實、適合年齡、簡短」。\n"
+    "- 唔可以搜娛樂、影片、遊戲、歌曲或者歌詞、明星或者八卦、購物、人物新聞、聊天 app、"
+    "真人嘅私人資料，亦唔可以隨便上網睇；遇到呢啲就溫柔講「" + SEND_TASK_REFUSAL + "」\n"
+    "- 永遠唔好讀出網址或者連結。留言搵爸爸媽媽幫手照舊可以用 send_task。\n"
 )

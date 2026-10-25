@@ -25,6 +25,7 @@ import aiohttp
 
 from . import child_profile
 from . import gbot_dialogue
+from .parent_settings import get_parent_settings, mandarin_enabled
 from .voice_output_queue import VoiceOutputQueue
 from .gbot_native_channel import NativeVoiceChannel
 
@@ -109,11 +110,21 @@ async def gather_with_cancel(*awaitables):
 class GbotVoiceBridge:
     _session_over = False
     _homework_forms = None
+    _parent_settings = None
 
     HOMEWORK_CHANGED_NOTE = (
         "[系統通知，唔使回應] Today's homework list was just changed by a parent. "
         "Earlier show_character / homework_list results are out of date: for the "
         "next character or homework request, call the tool again."
+    )
+    MANDARIN_ON_NOTE = (
+        "[系統通知，唔使回應] 爸爸媽媽啱啱改咗設定：而家容許講普通話。"
+        "平時照講香港廣東話；娜娜要求講普通話（或者用普通話讀書、讀默）就即刻轉，"
+        "唔使問爸爸媽媽；字照用繁體字。娜娜叫你轉返或者嗰樣功課做完，就轉返廣東話。"
+    )
+    MANDARIN_OFF_NOTE = (
+        "[系統通知，唔使回應] 爸爸媽媽啱啱改咗設定：由而家起只用香港廣東話（繁體字）回覆，"
+        "唔好再講普通話；永遠唔好叫佢講普通話或者國語。"
     )
 
     def __init__(
@@ -334,6 +345,12 @@ class GbotVoiceBridge:
             if not isinstance(name, str) or name in used:
                 raise ValueError("voice tool name collision")
             used.add(name)
+            if name == "send_task" and child_profile.enabled():
+                declaration = {
+                    **declaration,
+                    "description": str(declaration.get("description") or "")
+                    + gbot_dialogue.SEND_TASK_CHILD_DESCRIPTION,
+                }
             self._remote_tools[name] = declaration
             self._tool_schemas[name] = declaration.get("parameters", {})
             declarations.append(declaration)
@@ -356,7 +373,9 @@ class GbotVoiceBridge:
         )
         if "end_the_call" in self._remote_tools:
             instructions = instructions.replace("end_conversation", "end_the_call")
-        return instructions + gbot_dialogue.TOOL_RULES
+        return instructions + gbot_dialogue.TOOL_RULES + (
+            gbot_dialogue.SEND_TASK_RULES if child_profile.enabled() else ""
+        )
 
     def _safe_tool_name(self, name):
         return (
@@ -701,7 +720,11 @@ class GbotVoiceBridge:
                     if self._executor and self._local_tools_enabled
                     else ""
                 )
-                + (gbot_dialogue.CANTONESE_RULES if child_profile.enabled() else ""),
+                + (
+                    gbot_dialogue.cantonese_rules(mandarin_enabled())
+                    if child_profile.enabled()
+                    else ""
+                ),
                 "resumption": {"enabled": True},
                 "turn_detection": {
                     "type": "server_vad",
@@ -750,6 +773,8 @@ class GbotVoiceBridge:
             self.metrics["startup_stage"] = "started"
             if {"show_character", "homework_list"} & set(self._local_tools.values()):
                 self._watch_homework()
+            if child_profile.enabled():
+                self._watch_settings()
         except asyncio.CancelledError:
             await self.stop()
             raise
@@ -1230,6 +1255,8 @@ class GbotVoiceBridge:
                     result = self._desktop_failure(outcome, refused=True)
                 else:
                     self._desktop_epoch = self._user_epoch
+                    if child_profile.enabled():
+                        request = gbot_dialogue.SEND_TASK_KNOWLEDGE_PREFIX + request
                     result = await self._local(
                         "/tool",
                         {
@@ -1395,7 +1422,49 @@ class GbotVoiceBridge:
             return
         logger.info("Grok voice homework change noted action=%s", action)
 
+    def _watch_settings(self):
+        try:
+            settings = get_parent_settings()
+            settings.add_listener(self._on_settings_changed)
+        except Exception:
+            logger.debug("parent settings watch unavailable", exc_info=True)
+            return
+        self._parent_settings = settings
+
+    def _on_settings_changed(self, settings, changed):
+        if self._stopped or not self.running or "mandarin" not in changed:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        note = self.MANDARIN_ON_NOTE if settings.get("mandarin") else self.MANDARIN_OFF_NOTE
+        task = loop.create_task(self._note_context(note, "settings mandarin"))
+        self._tools.add(task)
+        task.add_done_callback(self._tools.discard)
+
+    async def _note_context(self, text, what):
+        # Context only: no response.create, so this costs no extra reply.
+        try:
+            await self._send(
+                {
+                    "type": "conversation.item.create",
+                    "item": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": text}],
+                    },
+                }
+            )
+        except Exception:
+            logger.debug("context note failed: %s", what, exc_info=True)
+            return
+        logger.info("Grok voice context noted: %s", what)
+
     async def stop(self):
+        if self._parent_settings is not None:
+            self._parent_settings.remove_listener(self._on_settings_changed)
+            self._parent_settings = None
         if self._homework_forms is not None:
             self._homework_forms.remove_change_listener(self._on_homework_changed)
             self._homework_forms = None

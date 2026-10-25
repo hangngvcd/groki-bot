@@ -179,7 +179,13 @@ async def test_gbot_receives_only_child_catalog(child, monkeypatch, native_end):
         assert {"鈴鈴", "娜娜", "Elena"} <= set(transcription["keyterms"])
         assert len(transcription["keyterms"]) <= 100
         assert "娜娜" in config["instructions"]
-        assert "永遠唔好叫佢講普通話" in config["instructions"]
+        # Parent setting mandarin defaults on: Cantonese unless 娜娜 asks.
+        assert "永遠唔好叫佢講普通話" not in config["instructions"]
+        assert "即刻轉用普通話講" in config["instructions"]
+        assert "係讀默定背默？" in config["instructions"]
+        assert "呢樣我唔幫你搜㗎，不如問吓爸爸媽媽？" in config["instructions"]
+        send_task = next(t for t in config["tools"] if t["name"] == "send_task")
+        assert "P4 child" in send_task["description"]
         assert "工具規則" in config["instructions"]
         executor_factory.assert_called_once()
         mac.assert_not_called()

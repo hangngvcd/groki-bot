@@ -396,7 +396,9 @@ def build_function_declarations(*, types=None) -> list[Any]:
         description=(
             "Call only when the child asks how to write a 生字（個字點寫）. "
             "Copy homework (抄): shows the full character for 5 s. "
-            "Dictation (默, or unknown): shows nothing; give a verbal 部首/結構 hint only."
+            "Dictation (默, or unknown): shows nothing; give a verbal 部首/結構 hint only. "
+            "In 讀默 (read-aloud dictation) you may re-read the dictated sentence, but "
+            "never spell out how to write the character; in 背默 never say it."
         ),
         parameters=types.Schema(
             type="OBJECT",
@@ -751,6 +753,12 @@ class ToolExtension:
     on_user_input: Callable[[str, bool], Any] | None = None
 
 
+def _mandarin_enabled() -> bool:
+    from .parent_settings import mandarin_enabled  # noqa: PLC0415
+
+    return mandarin_enabled()
+
+
 # The homework list is edited live by a parent; a dictation/refusal answer is
 # only valid for the moment it was given (08:36 incident: 抄生字 was added but
 # the model kept reusing the earlier "no copy homework" result).
@@ -882,6 +890,12 @@ class VoiceToolExecutor:
                 "練英文嘅時候用英文叫佢「Elena」。"
             )
             base += "\n如果小朋友要求改音量、休息時間、鏡頭、通知、wake word、聆聽模式，唔好用工具；溫柔講：「呢樣要問媽媽或者爸爸幫你改㗎。」"
+            if _mandarin_enabled():
+                base += (
+                    "\n講普通話唔係要改設定：娜娜要求講普通話（或者用普通話讀書、讀默）就直接轉用普通話，"
+                    "唔使問爸爸媽媽，唔好話「要問爸爸媽媽改」；字照用繁體字。"
+                    "娜娜叫你轉返或者嗰樣功課做完，就轉返香港廣東話。"
+                )
             base += (
                 "\n功課清單：問今日有咩功課就 call homework_list（清單由爸爸媽媽設定，唔好自己加減）。"
                 "小朋友話做完一項：先用一句短問題確認係邊項；等佢清楚答「係」／「好」先 call homework_done。"
@@ -895,8 +909,11 @@ class VoiceToolExecutor:
             base += (
                 "\n小朋友問生字點寫：call show_character，只傳佢問嗰個字；用詞語上下文揀字，只有冇上下文又同音唔清楚先問一句短問題。\n"
                 "mode=copy（抄生字）、shown=true：個字會喺畫面出10秒，叫佢睇清楚，收起之後自己喺簿寫一次。\n"
-                "mode=dictation（默書或者分唔到）、shown=false：永遠唔顯示、唔講出、唔逐筆串出成個字；只可以用把聲講部首同結構（有把握先講），否則鼓勵佢自己諗。\n"
-                "唔好讀出粵拼，唔好問佢揀模式，回覆要短。"
+                "mode=dictation（默書或者分唔到）、shown=false：永遠唔顯示、唔逐筆串出成個字點寫；"
+                "背默就唔好講出個字，只可以用把聲講部首同結構（有把握先講），否則鼓勵佢自己諗；"
+                "讀默就可以重讀原文嗰句，但都唔顯示、唔串出點寫。\n"
+                "默書分讀默（鈴鈴逐句讀、娜娜寫）同背默（唔讀出）；唔清楚就問一次「係讀默定背默？」。\n"
+                "唔好讀出粵拼，唔好問佢揀抄定默（顯示由功課清單決定），回覆要短。"
             )
         return "\n\n".join(
             [
@@ -1541,8 +1558,10 @@ class VoiceToolExecutor:
                 "character": c,
                 "spoken": spoken,
                 "note": (
-                    "Dictation: never show, say, spell or go stroke-by-stroke through "
-                    "the full character, and do not list every component. You may "
+                    "Dictation: never show, spell or go stroke-by-stroke through "
+                    "the full character, and do not list every component. In 背默 "
+                    "never say the character or the text; in 讀默 you may re-read "
+                    "the dictated sentence, nothing more. You may "
                     "describe only its radical and overall structure (部首、結構), "
                     "only if you are sure; otherwise just encourage. "
                     + SHOW_CHARACTER_FRESH_NOTE
