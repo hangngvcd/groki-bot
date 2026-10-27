@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from . import child_profile
+from .kws_miss_tip import KwsMissTip, get_kws_miss_tip
 
 RECENT_LIMIT = 10
 
@@ -82,6 +83,8 @@ class DebugStatus:
     """Gateway-wide runtime status. Each field is written only by the event method of the component that owns it."""
 
     clock: Callable[[], float] = time.time
+
+    kws_miss_tip: KwsMissTip = field(default_factory=get_kws_miss_tip, repr=False)
 
     # ---- device (ESP32 WebSocket connection)----
     device_connected_flag: bool = False
@@ -279,6 +282,12 @@ class DebugStatus:
         self.wake_last_wake_at = self.clock()
         self.wake_count += 1
 
+    def on_wake_word_hit(self) -> None:
+        self.kws_miss_tip.note_wake_word_hit()
+
+    def on_boot_listen(self) -> None:
+        self.kws_miss_tip.note_boot_listen()
+
     def on_wake_closed(self) -> None:
         self.wake_state = "DORMANT"
         self.wake_close_count += 1
@@ -318,6 +327,7 @@ class DebugStatus:
     def snapshot(self) -> dict[str, Any]:
         """Build the JSON for ``GET /debug/status``. recent lists newest first."""
         redacted = child_profile.enabled()
+        daily_wake = self.kws_miss_tip.counts()
         return {
             "generated_at": self.clock(),
             "device": {
@@ -359,6 +369,8 @@ class DebugStatus:
                 "available": self.wake_available,
                 "last_wake_at": self.wake_last_wake_at,
                 "wake_count": self.wake_count,
+                "wake_word_count": daily_wake["wake_word_count"],
+                "boot_listen_count": daily_wake["boot_listen_count"],
                 "close_count": self.wake_close_count,
             },
             "audio": {

@@ -198,3 +198,48 @@ async def test_implicit_listen_stays_dormant(monkeypatch, proxy_type, message, r
         assert snapshot["wake_count"] == wake_count
     finally:
         await proxy.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("proxy_type", [GbotVoiceProxy, GeminiVoiceProxy])
+async def test_explicit_boot_opens_wake_word_gate(monkeypatch, proxy_type):
+    from stackchan_mcp.wake_gate import WakeGate
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("STACKCHAN_BUTTON_ONLY_LISTEN", "0")
+    bridge = FakeBridge()
+    status = DebugStatus()
+    device = FakeVoiceOnlyESP32()
+    gate = WakeGate(kws=FakeKeywordSpotter([False]), clock=FakeClock())
+    proxy = proxy_type(
+        esp32_ref=lambda: device,
+        bridge_factory=lambda *args, **kwargs: bridge,
+        codec_factory=PCMCodec,
+        edge_tts_provider_factory=FakeEdgeTTSProvider,
+        wake_gate_factory=lambda: gate,
+        debug_status=status,
+        wake_confirm_hold_s=0,
+    )
+
+    async def send(message):
+        pass
+
+    try:
+        info = CloudConnectionInfo("wss://unused.invalid", "", "1", "device", "client")
+        assert await proxy.start(info, {}, send)
+        for message in NON_EXPLICIT_REQUESTS:
+            await proxy.send_device_json(message)
+        await proxy.send_device_binary(_pcm(100))
+        assert not bridge.audio_sent
+        assert status.snapshot()["wake_gate"]["boot_listen_count"] == 0
+
+        await proxy.send_device_json({"type": "listen", "state": "detect", "source": "button"})
+        await proxy.send_device_binary(_pcm(1200))
+        assert bridge.audio_sent == [_pcm(1200)]
+        snap = status.snapshot()["wake_gate"]
+        assert snap["boot_listen_count"] == 1
+        assert snap["wake_word_count"] == 0
+        assert snap["wake_count"] == 1
+        assert device.leds[-1] == (0, 180, 180)
+    finally:
+        await proxy.stop()

@@ -745,9 +745,7 @@ class GeminiVoiceProxy:
             return True
         if not self.connected and not self._reopen_for_device_message(message):
             return False
-        msg_type = message.get("type", "")
-        if button_only_listen_enabled():
-            msg_type = str(msg_type).strip().lower()
+        msg_type = str(message.get("type", "")).strip().lower()
         if msg_type == "abort":
             interrupt = getattr(self._bridge, "interrupt", None)
             if interrupt is not None:
@@ -755,20 +753,20 @@ class GeminiVoiceProxy:
             else:
                 await self._abort_in_flight_tts()
         elif msg_type == "listen":
-            state = message.get("state", "")
+            state = str(message.get("state", "")).strip().lower()
             if button_only_listen_enabled():
-                state = str(state).strip().lower()
                 if state in {"start", "detect"} and not is_explicit_listen_request(message):
                     logger.debug(
                         "button-only: ignoring listen state=%s mode=%s (not a button press)",
                         state, message.get("mode", ""),
                     )
                     return True
-            if state in {"start", "detect"} and button_only_listen_enabled():
+            if is_explicit_listen_request(message):
                 gate = self._maybe_rebuild_wake_gate()
                 if gate is not None:
                     gate.open()
                     self._status.on_wake_woke()
+                    self._status.on_boot_listen()
                     await self._signal_manual_vad_start(self._bridge)
                     await self._set_leds_safe(*LISTENING_LED_RGB)
                     await self._send_device_emotion_safe(LISTENING_EMOTION)
@@ -905,8 +903,16 @@ class GeminiVoiceProxy:
             return
         if decision.closed:
             self._status.on_wake_closed()
+        # A KWS miss stays silent: no failure sound or child-facing feedback.
         if decision.woke:
             self._status.on_wake_woke()
+            self._status.on_wake_word_hit()
+        self._status.kws_miss_tip.maybe_check_connected(
+            device_connected=self._status.device_connected_flag,
+            connected_since=self._status.device_connected_since,
+            listening_mode=self._status.listening_mode,
+            wake_available=self._status.wake_available,
+        )
         if decision.closed:
             await self._signal_manual_vad_end(bridge)
             if not self._tts_active:

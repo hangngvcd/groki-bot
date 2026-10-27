@@ -442,3 +442,11 @@ async def test_volume_api_cli(tmp_path, monkeypatch, forms, capsys):
         assert "poweron" in capsys.readouterr().out
         assert await asyncio.to_thread(main, ["--url", base, "volume", "150"]) == 1
         forms.unregister_sender(sender)
+
+
+def test_intro_teaches_name_and_button():
+    from stackchan_mcp.xiaoya_forms import INTRO_TEXT
+
+    assert "鈴鈴" in INTRO_TEXT
+    assert "撳" in INTRO_TEXT
+    assert "叫我「鈴鈴」，或者撳一下我，我就聽你。" in INTRO_TEXT

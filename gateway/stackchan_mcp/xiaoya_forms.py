@@ -102,9 +102,10 @@ def _today() -> str:
 
 # Spoken by the gateway (edge-tts) only when the device has no vo.intro.1
 # clip; keep in sync with tools/lingling_assets/lines.json.
+# Firmware flash is required for the ≤200ms BOOT chime / 350ms double-press window.
 INTRO_TEXT = (
     "娜娜你好！我係鈴鈴，一隻會慢慢長大嘅白貓仔。"
-    "你做功課嗰陣我會陪住你，有嘢想問就叫我個名，或者撳一下個掣。"
+    "你做功課嗰陣我會陪住你。叫我「鈴鈴」，或者撳一下我，我就聽你。"
 )
 INTRO_VOICE = "zh-HK-HiuMaanNeural"
 

@@ -73,3 +73,15 @@ def _isolated_parent_settings(monkeypatch, tmp_path):
     reset_parent_settings()
     yield
     reset_parent_settings()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_kws_miss_tip(monkeypatch, tmp_path):
+    """Daily wake tests never touch real state or message the parent helper."""
+    from stackchan_mcp import kws_miss_tip
+
+    monkeypatch.setenv("STACKCHAN_KWS_MISS_TIP_PATH", str(tmp_path / "kws_tip.json"))
+    monkeypatch.setattr(kws_miss_tip, "_send", lambda *args: None)
+    kws_miss_tip.reset_kws_miss_tip()
+    yield
+    kws_miss_tip.reset_kws_miss_tip()
