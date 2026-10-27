@@ -80,6 +80,8 @@ class ParentClient:
 def cli_value(key, value):
     from .parent_settings import SCHEMA
 
+    if SCHEMA.get(key, {}).get("type") == "string":
+        return value
     if SCHEMA.get(key, {}).get("type") == "boolean":
         if value.lower() not in {"on", "off", "true", "false", "1", "0"}:
             raise ValueError("布林值請用 on/off/true/false/1/0 / invalid boolean")

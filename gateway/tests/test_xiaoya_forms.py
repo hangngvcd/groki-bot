@@ -450,3 +450,11 @@ def test_intro_teaches_name_and_button():
     assert "鈴鈴" in INTRO_TEXT
     assert "撳" in INTRO_TEXT
     assert "叫我「鈴鈴」，或者撳一下我，我就聽你。" in INTRO_TEXT
+
+
+@pytest.fixture(autouse=True)
+def isolated_games(tmp_path, monkeypatch):
+    import stackchan_mcp.xiaoya_games as module
+
+    monkeypatch.setattr(module, "_games", module.XiaoyaGames(
+        tmp_path / "games.json", pin_source=lambda: ""))

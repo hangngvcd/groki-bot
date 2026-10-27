@@ -169,6 +169,7 @@ TOOL_METADATA: dict[str, ToolMetadata] = {
     "ask_claude": ToolMetadata(False, None, 35.0),
     "get_current_datetime": ToolMetadata(False, None, 2.0),
     "homework_list": ToolMetadata(False, None, 2.0),
+    "play_minigame": ToolMetadata(True, "homework", 3.0),
     "homework_done": ToolMetadata(True, "homework", 3.0),
     "note_homework_stuck": ToolMetadata(True, "homework_stuck", 3.0),
     "notify_dad_stuck": ToolMetadata(True, "homework_stuck", 8.0),
@@ -370,6 +371,11 @@ def build_function_declarations(*, types=None) -> list[Any]:
         ),
     )
 
+    play_minigame = types.FunctionDeclaration(
+        name="play_minigame",
+        description="Start the immediate evolution-unlocked local game. No child choice; never send_task. Without unlock read spoken only.",
+        parameters=types.Schema(type="OBJECT", properties={}),
+    )
     homework_list = types.FunctionDeclaration(
         name="homework_list",
         description="Read 娜娜's homework list for today (set by her parents) and which items are done.",
@@ -504,6 +510,7 @@ def build_function_declarations(*, types=None) -> list[Any]:
             end_conversation,
             homework_list,
             homework_done,
+            play_minigame,
             note_homework_stuck,
             notify_dad_stuck,
             show_character,
@@ -965,6 +972,7 @@ class VoiceToolExecutor:
                     "娜娜叫你轉返或者嗰樣功課做完，就轉返香港廣東話。"
                 )
             base += (
+                "\n玩遊戲：call play_minigame；ok=true 即結束語音回合交本地遊戲；ok=false 只讀 spoken。永遠唔用 send_task 玩遊戲。升級只講收到，唔可以留返稍後玩。"
                 "\n功課清單：問今日有咩功課就 call homework_list（清單由爸爸媽媽設定，唔好自己加減）。"
                 "小朋友話做完一項：先用一句短問題確認係邊項；等佢清楚答「係」／「好」先 call homework_done。"
                 "答「唔係」就唔好 call 任何工具。ok=true 就講「收到」；level_up=true 就只講「收到」，"
@@ -1249,6 +1257,12 @@ class VoiceToolExecutor:
             return self._dispatch_get_datetime()
         if name == "show_character":
             return await self._dispatch_show_character(args)
+        if name == "play_minigame":
+            from .xiaoya_games import get_xiaoya_games
+            from .xiaoya_forms import get_xiaoya_forms
+
+            games = get_xiaoya_games()
+            return games.consume_invite_start() if games.has_pending() else games.refuse_play(get_xiaoya_forms().snapshot())
         if name in {"homework_list", "homework_done"}:
             return self._dispatch_homework(name, args)
         if name in {"note_homework_stuck", "notify_dad_stuck"}:
@@ -1727,6 +1741,13 @@ class VoiceToolExecutor:
             # 鈴鈴 plays her own level-up animation + praise line once this
             # turn is over; the agent then keeps its reply to a short 收到.
             "level_up": result["level_up"],
+            "game_unlock": result.get("game_unlock"),
+            "invite_spoken": "變身喇！嚟玩！" if result.get("game_unlock") else "",
+            "local_game_handoff": (
+                "Say only 收到, end voice turn; gateway local-loop owner must call "
+                "consume_invite_start after form animation. Never send_task or bank."
+                if result.get("game_unlock") else ""
+            ),
         }
 
     @staticmethod

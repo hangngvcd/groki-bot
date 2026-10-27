@@ -32,6 +32,7 @@ def test_settings(store, caplog, monkeypatch):
         camera_presence=False,
         notifications=False,
         mandarin=True,
+        pin_minigame="",
     )
     events = []
     store.add_listener(lambda settings, keys: events.append((settings, keys)))

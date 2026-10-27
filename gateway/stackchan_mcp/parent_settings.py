@@ -12,6 +12,10 @@ import tempfile
 
 logger = logging.getLogger(__name__)
 SCHEMA = {
+    "pin_minigame": {
+        "type": "string", "default": "", "enum": ["", "G1", "G2", "G3"],
+        "description_zh": "小遊戲固定款式（留空輪流）",
+    },
     "volume": {
         "type": "integer",
         "min": 0,
@@ -43,6 +47,7 @@ SCHEMA = {
     },
 }
 TICKETS = {
+    "pin_minigame": "30",
     "rest_after_min": "12/15",
     "camera_presence": "23",
     "notifications": "19",
@@ -91,9 +96,11 @@ def validate(values):
         if key not in SCHEMA:
             raise ValueError(f"Unknown setting: {key}")
         rule = SCHEMA[key]
-        expected = bool if rule["type"] == "boolean" else int
+        expected = {"boolean": bool, "integer": int, "string": str}[rule["type"]]
         if type(value) is not expected:
             raise ValueError(f"{key}: expected {rule['type']}")
+        if "enum" in rule and value not in rule["enum"]:
+            raise ValueError(f"{key}: invalid choice")
         if expected is int and not rule["min"] <= value <= rule["max"]:
             raise ValueError(f"{key}: expected {rule['min']}..{rule['max']}")
     return values

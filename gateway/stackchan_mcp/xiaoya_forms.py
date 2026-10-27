@@ -272,7 +272,13 @@ class XiaoyaForms:
         )
         self._schedule_push()
         self._notify_change(action, source)
-        return {**self.snapshot(), "level_up": new > old, "previous_form": old}
+        unlock = None
+        if new > old:
+            from .xiaoya_games import get_xiaoya_games
+
+            unlock = get_xiaoya_games().on_level_up(old, new)
+        return {**self.snapshot(), "level_up": new > old, "previous_form": old,
+                "game_unlock": unlock}
 
     def add_change_listener(self, callback: Callable[[str, str], None]) -> None:
         if callback not in self._change_listeners:

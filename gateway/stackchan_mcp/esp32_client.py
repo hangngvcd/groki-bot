@@ -614,6 +614,11 @@ class ESP32Manager:
                     from .xiaoya_forms import get_xiaoya_forms
 
                     get_xiaoya_forms().note_device_event(data)
+                    from .xiaoya_games import get_xiaoya_games
+
+                    game_result = get_xiaoya_games().note_device_event(data)
+                    for message in game_result.get("messages", []):
+                        await get_xiaoya_forms().send_device(message)
                     handler = getattr(cloud_proxy, "handle_xiaoya_event", None)
                     if handler is not None:
                         handler(data)
