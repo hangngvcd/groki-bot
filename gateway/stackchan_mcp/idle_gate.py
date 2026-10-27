@@ -34,7 +34,11 @@ class IdleGate:
         auto_head_hold_s: float = 0.75,
         poll_interval_s: float = 0.5,
         clock: Callable[[], float] = time.monotonic,
+        on_poll=None,
+        on_device_state=None,
     ) -> None:
+        self.on_poll = on_poll
+        self.on_device_state = on_device_state
         self.esp32 = esp32
         self.usb_transport = usb_transport
         self.quiet_seconds = quiet_seconds
@@ -90,6 +94,8 @@ class IdleGate:
             return
         now = self._clock()
         self._device_state = normalized
+        if self.on_device_state is not None:
+            self.on_device_state(normalized)
         self._last_voice_activity_s = now
         if normalized != "idle":
             self._request_lock(True)
@@ -116,6 +122,8 @@ class IdleGate:
 
     async def evaluate_once(self) -> bool:
         """Evaluate the four idle conditions and send lock if needed."""
+        if self.on_poll is not None:
+            await self.on_poll()
         should_unlock = self._should_unlock()
         target_locked = not should_unlock
         return await self._set_modify_lock(target_locked)

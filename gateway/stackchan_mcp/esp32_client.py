@@ -614,6 +614,12 @@ class ESP32Manager:
                     from .xiaoya_forms import get_xiaoya_forms
 
                     get_xiaoya_forms().note_device_event(data)
+                    from .camera_presence import get_camera_presence, presence_message
+                    presence = get_camera_presence()
+                    presence.note_device_event(data)
+                    if data.get("event") == "form_state":
+                        await get_xiaoya_forms().send_device(
+                            presence_message(presence.is_feature_on()))
                     from .xiaoya_games import get_xiaoya_games
 
                     game_result = get_xiaoya_games().note_device_event(data)

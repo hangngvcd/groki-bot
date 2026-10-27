@@ -1,0 +1,207 @@
+import pytest
+
+from stackchan_mcp.camera_presence import CameraPresence
+
+
+def test_default_off_and_session_start():
+    now = [0.0]
+    policy = CameraPresence(clock=lambda: now[0])
+    assert not policy.is_feature_on()
+    now[0] = 200
+    assert policy.tick() is None
+    assert policy.note_face() is None
+    policy.start_homework_session()
+    assert policy.is_feature_on()
+
+
+def test_leave_once_return_rotation_and_short_absence():
+    now = [0.0]
+    p = CameraPresence(clock=lambda: now[0])
+    p.start_homework_session()
+    now[0] = 10
+    p.note_face()
+    now[0] = 129.9
+    assert p.tick() is None
+    assert p.note_face() is None
+    now[0] = 249.9
+    assert p.tick().clip == "vo.leave_wait.1"
+    now[0] = 900
+    assert p.tick() is None
+    assert p.note_face().clip == "vo.welcome_back.1"
+    assert p.note_face() is None
+    now[0] = 1020
+    assert p.note_face().clip == "vo.welcome_back.2"
+
+
+def test_manual_overrides_day_done_and_icon_transitions():
+    from stackchan_mcp.camera_presence import presence_message
+
+    p = CameraPresence()
+    assert p.drain_messages() == []
+    p.start_homework_session()
+    p.start_homework_session()
+    assert p.drain_messages() == [presence_message(True)]
+    p.on_parent_setting(False)
+    p.start_homework_session()
+    assert not p.is_feature_on()
+    assert p.drain_messages() == [presence_message(False)]
+    p.on_parent_setting(True)
+    assert p.is_feature_on()
+    p.end_homework_day()
+    assert not p.is_feature_on()
+    p.on_parent_setting(True)
+    assert p.is_feature_on()
+
+
+@pytest.mark.parametrize("reason", ["photo", "evolve", "minigame", "speaking", "intro"])
+def test_suppression_pauses_absence_and_drops_welcome(reason):
+    now = [0.0]
+    p = CameraPresence(clock=lambda: now[0])
+    p.start_homework_session()
+    now[0] = 10
+    p.note_face()
+    now[0] = 130
+    assert p.tick().kind == "leave_tip"
+    p.set_suppress(reason, True)
+    now[0] = 1000
+    assert p.tick() is None
+    assert p.note_face() is None
+    p.set_suppress(reason, False)
+    assert p.note_face() is None
+    now[0] = 1119
+    assert p.tick() is None
+    now[0] = 1120
+    assert p.tick().kind == "leave_tip"
+
+
+def test_grace_and_redo_once():
+    now = [0.0]
+    p = CameraPresence(clock=lambda: now[0])
+    p.start_homework_session()
+    now[0] = 9.9
+    assert p.tick() is None
+    assert p.note_face() is None
+    p.set_pending_redo("爸爸想你再試一次。")
+    now[0] = 130
+    assert p.tick().kind == "leave_tip"
+    action = p.note_face()
+    assert action.kind == "redo"
+    assert action.spoken == "爸爸想你再試一次。"
+    assert p.note_face() is None
+    now[0] = 250
+    assert p.note_face().kind == "welcome"
+
+
+def test_stored_preference_and_frames_contract():
+    import inspect
+    from stackchan_mcp import camera_presence
+    from stackchan_mcp.parent_settings import SCHEMA
+
+    assert SCHEMA["camera_presence"]["default"] is False
+    assert CameraPresence(
+        settings_getter=lambda: {"camera_presence": True}
+    ).is_feature_on()
+    assert "detection frames never saved/uploaded" in camera_presence.__doc__
+    source = inspect.getsource(camera_presence)
+    assert all(
+        token not in source
+        for token in ("open(", "write_bytes(", "requests.", "httpx.", "cv2.")
+    )
+
+
+def test_parent_explicit_off_when_stored_default_already_false(tmp_path):
+    from stackchan_mcp.parent_settings import ParentSettings
+
+    settings = ParentSettings(tmp_path / "settings.json")
+    p = CameraPresence(settings_getter=settings.get)
+    settings.add_listener(
+        lambda values, keys: (
+            p.on_parent_setting(values["camera_presence"])
+            if "camera_presence" in keys
+            else None
+        )
+    )
+    p.start_homework_session()
+    settings.set("camera_presence", False, source="parent")
+    assert not p.is_feature_on()
+
+
+@pytest.mark.parametrize("reason", ["photo", "evolve", "intro"])
+def test_board_lifecycle_suppresses_policy(reason):
+    now = [0.0]
+    p = CameraPresence(clock=lambda: now[0])
+    p.start_homework_session()
+    p.note_device_event(
+        {"event": "presence_activity", "reason": reason, "active": True}
+    )
+    now[0] = 200
+    assert p.tick() is None
+    p.note_device_event(
+        {"event": "presence_activity", "reason": reason, "active": False}
+    )
+    now[0] = 319
+    assert p.tick() is None
+    now[0] = 320
+    assert p.tick().kind == "leave_tip"
+
+
+@pytest.mark.asyncio
+async def test_homework_voice_entry_and_completion(tmp_path, monkeypatch):
+    from stackchan_mcp import camera_presence, xiaoya_forms
+    from stackchan_mcp.voice_tools import VoiceToolExecutor
+
+    p = CameraPresence()
+    forms = xiaoya_forms.XiaoyaForms(tmp_path / "forms.json")
+    monkeypatch.setattr(camera_presence, "_presence", p)
+    monkeypatch.setattr(xiaoya_forms, "_forms", forms)
+    forms.add_items(["中文", "英文"], source="parent")
+    VoiceToolExecutor._dispatch_homework("homework_list", {})
+    assert p.is_feature_on()
+    VoiceToolExecutor._dispatch_homework("homework_done", {"item": "中文"})
+    assert p.is_feature_on()
+    VoiceToolExecutor._dispatch_homework("homework_done", {"item": "英文"})
+    assert not p.is_feature_on()
+    p.on_parent_setting(True)
+    VoiceToolExecutor._dispatch_homework("homework_list", {})
+    assert p.is_feature_on()  # Completed list does not undo dad's later manual ON.
+
+
+@pytest.mark.asyncio
+async def test_track_and_idle_poll_deliver_local_lines(tmp_path, monkeypatch):
+    from stackchan_mcp import camera_presence, xiaoya_forms, xiaoya_games
+    from stackchan_mcp.gateway import Gateway
+
+    now = [0.0]
+    p = CameraPresence(clock=lambda: now[0])
+    forms = xiaoya_forms.XiaoyaForms(tmp_path / "forms.json")
+    games = xiaoya_games.XiaoyaGames(tmp_path / "games.json")
+    monkeypatch.setattr(camera_presence, "_presence", p)
+    monkeypatch.setattr(xiaoya_forms, "_forms", forms)
+    monkeypatch.setattr(xiaoya_games, "_games", games)
+    messages = []
+
+    async def sender(message):
+        messages.append(message)
+
+    class FaceRequest:
+        async def json(self):
+            return {"x": 0.5, "y": 0.5, "confidence": 0.9}
+
+    task = forms.register_sender(sender)
+    if task:
+        await task
+    gw = Gateway()
+    try:
+        p.start_homework_session()
+        now[0] = 10
+        assert (await gw._handle_track(FaceRequest())).status == 200
+        now[0] = 130
+        await gw.idle_gate.evaluate_once()
+        assert any(m.get("clip") == "vo.leave_wait.1" for m in messages)
+        await gw._handle_track(FaceRequest())
+        await gw.idle_gate.evaluate_once()
+        lines = [m for m in messages if m.get("cmd") == "presence_line"]
+        assert [m["kind"] for m in lines] == ["leave_tip", "welcome"]
+        assert lines[1]["clip"] == "vo.welcome_back.1"
+    finally:
+        forms.unregister_sender(sender)

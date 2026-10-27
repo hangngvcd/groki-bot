@@ -1713,9 +1713,13 @@ class VoiceToolExecutor:
     def _dispatch_homework(name: str, args: dict[str, Any]) -> dict[str, Any]:
         from .xiaoya_forms import get_xiaoya_forms  # noqa: PLC0415
 
+        from .camera_presence import get_camera_presence
+        presence = get_camera_presence()
         forms = get_xiaoya_forms()
         if name == "homework_list":
             snap = forms.snapshot()
+            if snap["total"] > snap["done"]:
+                presence.start_homework_session()
             if not snap["items"]:
                 return {"ok": True, "items": [], "spoken": "今日爸爸媽媽未加功課清單。",
                         "note": HOMEWORK_LIST_FRESH_NOTE}

@@ -61,8 +61,9 @@ APPLIED = {
 }
 
 
-# Settings consumed by the gateway itself (no device message needed).
+# Settings whose policy is applied by the gateway; device UI may need firmware.
 GATEWAY = {
+    "camera_presence": "Gateway desk presence policy (ticket 23); camera_on protocol stub, firmware icon pending",
     "mandarin": (
         "鈴鈴語言規則：進行中嘅對話即時收到通知，下次對話嘅 prompt 一定用新設定"
     ),
@@ -83,7 +84,7 @@ def device_support():
                 "applied_to_device": False,
                 "reason": f"stored; firmware has no message yet (ticket {ticket})",
             }
-            for key, ticket in TICKETS.items()
+            for key, ticket in TICKETS.items() if key not in GATEWAY
         }
     )
     return support
@@ -168,6 +169,13 @@ class ParentSettings:
             for key, value in values.items()
             if self._settings[key] != value
         }
+        # A repeated explicit toggle still overrides the session's effective state.
+        if "camera_presence" in values and "camera_presence" not in changed:
+            for listener in self._listeners:
+                try:
+                    listener(self.get(), {"camera_presence"})
+                except Exception:
+                    logger.exception("Parent presence override listener failed")
         if not changed:
             return {"changed": {}, "settings": self.get()}
         settings = {**self._settings, **values}

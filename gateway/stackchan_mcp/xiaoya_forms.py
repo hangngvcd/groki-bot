@@ -272,6 +272,12 @@ class XiaoyaForms:
         )
         self._schedule_push()
         self._notify_change(action, source)
+        from .camera_presence import get_camera_presence
+        presence = get_camera_presence()
+        if total > 0 and done == total:
+            presence.end_homework_day()
+        if action == "redo":
+            presence.set_pending_redo("爸爸想你再試一次，我陪你呀。")
         unlock = None
         if new > old:
             from .xiaoya_games import get_xiaoya_games

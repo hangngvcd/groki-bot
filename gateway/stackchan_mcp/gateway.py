@@ -124,10 +124,16 @@ class Gateway:
             self.esp32,
             usb_transport=self.usb_transport,
         )
+        from .camera_presence import get_camera_presence
+        self.camera_presence = get_camera_presence()
+        self._presence_actions = []
         self.idle_gate = IdleGate(
             self.esp32,
             usb_transport=self.usb_transport,
         )
+        self.idle_gate.on_poll = self._poll_camera_presence
+        self.idle_gate.on_device_state = lambda state: self.camera_presence.set_suppress(
+            "device_speaking", state == "speaking")
         self.touch_bridge = TouchEventBridge(
             self.esp32,
             poll_interval_s=float(os.getenv("STACKCHAN_TOUCH_POLL_INTERVAL_S", "0.1")),
@@ -165,7 +171,33 @@ class Gateway:
     def _notify_face_detected(self) -> None:
         self._last_face_at = time.time()
         self.idle_gate.notify_face_detected()
+        self._sync_presence_suppression()
+        action = self.camera_presence.note_face()
+        if action is not None:
+            self._presence_actions.append(action)
         self.face_tracker.notify_face_reported()
+
+    def _sync_presence_suppression(self):
+        from .xiaoya_games import get_xiaoya_games
+        self.camera_presence.set_suppress("speaking", get_debug_status().tts_active)
+        self.camera_presence.set_suppress("minigame", bool(get_xiaoya_games().active))
+
+    async def _poll_camera_presence(self):
+        from .xiaoya_forms import get_xiaoya_forms
+        self._sync_presence_suppression()
+        action = self.camera_presence.tick()
+        actions, self._presence_actions = self._presence_actions, []
+        if action is not None:
+            actions.append(action)
+        forms = get_xiaoya_forms()
+        for message in self.camera_presence.drain_messages():
+            await forms.send_device(message)
+        for action in actions:
+            if not self.camera_presence.is_feature_on() or self.camera_presence.is_suppressed():
+                continue
+            await forms.send_device({"type": "xiaoya", "cmd": "presence_line",
+                                     "kind": action.kind, "clip": action.clip,
+                                     "spoken": action.spoken})
 
     def face_tracking_status(self) -> dict:
         """The "face_tracking" section of /debug/status."""
