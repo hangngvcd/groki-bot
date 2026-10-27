@@ -165,6 +165,7 @@ async def test_gbot_receives_only_child_catalog(child, monkeypatch, native_end):
             "send_task",
             "search_conversations",
             "end_the_call" if native_end else "end_conversation",
+            "end_homework_session",
             "homework_list",
             "homework_done",
             "homework_photo_snap",
@@ -207,6 +208,7 @@ def test_gemini_child_catalog_excludes_search_and_other_tools(child):
         for declaration in tool.function_declarations or []
     } == {
         "end_conversation",
+        "end_homework_session",
         "homework_list",
         "play_minigame",
         "homework_done",
@@ -230,6 +232,7 @@ async def test_extensions_cannot_broaden_child_catalog(child):
     try:
         assert {entry["name"] for entry in executor.declarations()} == {
             "end_conversation",
+            "end_homework_session",
             "homework_list",
             "homework_done",
             "homework_photo_snap",

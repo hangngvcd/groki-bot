@@ -51,11 +51,12 @@ def test_success_unlock_and_payload(flow):
     assert forms.snapshot()["done"] == 0
     result = photo.attempt_capture()
     assert result["photo_sent"] and result["game_unlock"] and result["level_up"]
+    assert {"type": "xiaoya", "cmd": "celebrate", "level": "item"} in result["device_messages"]
     assert result["invite_spoken"] and result["local_game_handoff"]
     assert sent[0][0] == PARENT_HELPER_BOT
     assert "中文" in sent[0][1] and str(photo.captures_dir) in sent[0][1]
     assert "對話" not in sent[0][1]
-    assert [m["phase"] for m in result["device_messages"]] == ["shutter", "done"]
+    assert [m["phase"] for m in result["device_messages"] if m["cmd"] == "homework_photo"] == ["shutter", "done"]
     assert not presence._suppress
 
 

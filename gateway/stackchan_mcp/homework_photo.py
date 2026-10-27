@@ -192,7 +192,8 @@ class HomeworkPhoto:
                 "parent_notified": sent,
                 "no_photo": not has_photo,
                 "photo_pending": False,
-                "device_messages": [self.message("done")],
+                "device_messages": [self.message("done"), *result.get("device_messages", [])],
+                "spoken": result.get("spoken", ""),
             }
         finally:
             self.item = None

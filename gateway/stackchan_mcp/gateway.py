@@ -192,6 +192,7 @@ class Gateway:
         if action is not None:
             actions.append(action)
         forms = get_xiaoya_forms()
+        forms.check_session_timeout()
         for message in self.camera_presence.drain_messages():
             await forms.send_device(message)
         for action in actions:

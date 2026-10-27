@@ -1387,6 +1387,9 @@ class GbotVoiceBridge:
 
             forms = get_xiaoya_forms()
             forms.add_change_listener(self._on_homework_changed)
+            snap = forms.snapshot()
+            if snap["total"] > snap["done"]:
+                forms.start_homework_session()
         except Exception:
             logger.debug("homework change watch unavailable", exc_info=True)
             return

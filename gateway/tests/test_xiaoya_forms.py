@@ -78,7 +78,8 @@ async def test_only_up_and_push_animates_skipped_levels(forms, tmp_path):
     sent = []
 
     async def sender(message):
-        sent.append(message)
+        if message["cmd"] == "form":
+            sent.append(message)
 
     await forms.register_sender(sender)
     assert sent == [{"type": "xiaoya", "cmd": "form", "form": 1, "from": 1, "animate": False}]

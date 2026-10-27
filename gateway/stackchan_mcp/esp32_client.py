@@ -923,6 +923,8 @@ class ESP32Manager:
         state = str(message.get("state", "")).lower()
         if msg_type == "listen":
             if state in {"start", "detect"}:
+                from .xiaoya_forms import get_xiaoya_forms
+                get_xiaoya_forms().note_interaction()
                 if callback is not None:
                     callback("listening")
                 if state == "detect" and self.on_wake_detected is not None:

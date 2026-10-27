@@ -164,6 +164,7 @@ TOOL_METADATA: dict[str, ToolMetadata] = {
     "set_avatar": ToolMetadata(True, "device", 5.0),
     "set_all_leds": ToolMetadata(True, "device", 5.0),
     "express_emotion": ToolMetadata(True, "device", 5.0),
+    "end_homework_session": ToolMetadata(True, "homework", 3.0),
     "end_conversation": ToolMetadata(True, "conversation", 5.0),
     "ask_grokbot": ToolMetadata(False, None, 8.0),
     "ask_claude": ToolMetadata(False, None, 35.0),
@@ -365,6 +366,12 @@ def build_function_declarations(*, types=None) -> list[Any]:
         ),
     )
 
+    end_homework_session = types.FunctionDeclaration(
+        name="end_homework_session",
+        description="End homework session when the child says 收工. Short breaks keep the session active.",
+        parameters=types.Schema(type="OBJECT", properties={}),
+    )
+
     get_current_datetime = types.FunctionDeclaration(
         name="get_current_datetime",
         description="Get the current date, time and day of the week",
@@ -544,6 +551,7 @@ def build_function_declarations(*, types=None) -> list[Any]:
     if child_profile.enabled():
         return [
             end_conversation,
+            end_homework_session,
             homework_list,
             homework_done,
             homework_photo_snap,
@@ -557,6 +565,7 @@ def build_function_declarations(*, types=None) -> list[Any]:
     return [
         *device,
         end_conversation,
+        end_homework_session,
         *grokbot,
         *claude,
         get_current_datetime,
@@ -1014,7 +1023,7 @@ class VoiceToolExecutor:
                 "\n玩遊戲：call play_minigame；ok=true 即結束語音回合交本地遊戲；ok=false 只讀 spoken。永遠唔用 send_task 玩遊戲。升級只講收到，唔可以留返稍後玩。"
                 "\n功課清單：問今日有咩功課就 call homework_list（清單由爸爸媽媽設定，唔好自己加減）。"
                 "小朋友話做完一項：call homework_done 確認項目並開始影相；照 spoken 引導，photo_pending 時擺好後 call homework_photo_snap；重試照 spoken，取消 call homework_photo_cancel。唔好用其他方法標做完。"
-                "答「唔係」就唔好標完成。影相取消要 call homework_photo_cancel。status=ask 時讀 spoken 同最多三個 choices；photo_pending=true 時讀 spoken 引導／重試，唔好只講收到。完成後 ok=true 就講「收到」；level_up=true 就只講「收到」，"
+                "答「唔係」就唔好標完成。影相取消要 call homework_photo_cancel。status=ask 時讀 spoken 同最多三個 choices；photo_pending=true 時讀 spoken 引導／重試，唔好只講收到。完成後 ok=true 讀 spoken 嘅努力讚賞，唔講叻、聰明、天才；level_up=true 就只講「收到」，"
                 "讚賞由鈴鈴自己播，唔好再加讚。ok=false 就讀 spoken。攞唔到功課清單唔好作。"
                 "\n留言搵家長幫手：call send_task 前先講「我睇吓先」，同樣先確認一次，"
                 "並喺 request 講明小朋友已確認。只有 relay=accepted 先講「收到」；否則讀 spoken 失敗提示。"
@@ -1087,6 +1096,8 @@ class VoiceToolExecutor:
         """Only provider-confirmed user input is forwarded to explicit extensions."""
         if self._tools_closed:
             return
+        from .xiaoya_forms import get_xiaoya_forms
+        get_xiaoya_forms().note_interaction()
         for extension in self._extensions:
             if extension.on_user_input is not None:
                 result = extension.on_user_input(text, finished)
@@ -1277,6 +1288,11 @@ class VoiceToolExecutor:
         """
         if name in self._extension_routes:
             return await self._extension_routes[name].dispatch(name, args)
+        from .xiaoya_forms import get_xiaoya_forms
+        get_xiaoya_forms().note_interaction()
+        if name == "end_homework_session":
+            get_xiaoya_forms().end_homework_session()
+            return {"ok": True, "spoken": "今日辛苦晒，休息吓啦。"}
         if name == "end_conversation":
             return await self._dispatch_end_conversation()
         if name == "set_all_leds" and self._should_defer_set_all_leds():
@@ -1766,8 +1782,8 @@ class VoiceToolExecutor:
         forms = get_xiaoya_forms()
         if name == "homework_list":
             snap = forms.snapshot()
-            if snap["total"] > snap["done"]:
-                presence.start_homework_session()
+            presence.start_homework_session()
+            forms.start_homework_session()
             if not snap["items"]:
                 return {"ok": True, "items": [], "spoken": "今日爸爸媽媽未加功課清單。",
                         "note": HOMEWORK_LIST_FRESH_NOTE}

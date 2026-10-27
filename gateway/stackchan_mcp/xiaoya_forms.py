@@ -43,7 +43,9 @@ import logging
 import os
 from pathlib import Path
 import tempfile
+import time
 from typing import Any, Awaitable, Callable
+from zoneinfo import ZoneInfo
 
 from .parent_settings import get_parent_settings, private_directory
 
@@ -51,6 +53,7 @@ logger = logging.getLogger(__name__)
 
 FORM_NAMES_ZH = {1: "小苗貓", 2: "小翼貓", 3: "寶石貓", 4: "星冠貓"}
 MAX_TASKS = 50
+SESSION_IDLE_SECONDS = 30 * 60
 
 Sender = Callable[[dict[str, Any]], Awaitable[None]]
 
@@ -97,7 +100,7 @@ def _clean_items(raw: Any) -> list[dict[str, Any]]:
 
 
 def _today() -> str:
-    return _dt.datetime.now().astimezone().date().isoformat()
+    return _dt.datetime.now(ZoneInfo("Asia/Hong_Kong")).date().isoformat()
 
 
 # Spoken by the gateway (edge-tts) only when the device has no vo.intro.1
@@ -137,10 +140,15 @@ class XiaoyaForms:
         path: str | os.PathLike | None = None,
         today: Callable[[], str] = _today,
         volume_source: Callable[[], int] | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ):
         self.path = Path(
             path or os.getenv("STACKCHAN_XIAOYA_FORMS_PATH", "~/.stackchan/xiaoya_forms.json")
         ).expanduser()
+        self._clock = clock
+        self.session_active = False
+        self._last_interaction = clock()
+        self._session_timer = None
         self._copy_mode_said = False
         self._active_vocab_item = None
         self._today = today
@@ -161,11 +169,44 @@ class XiaoyaForms:
         except (OSError, ValueError, TypeError, KeyError):
             logger.warning("鈴鈴 form state corrupt; starting from F1: %s", self.path)
 
+    def session_message(self):
+        return {"type": "xiaoya", "cmd": "session", "active": self.session_active}
+
+    def start_homework_session(self):
+        changed = not self.session_active
+        self.session_active = True
+        self.note_interaction()
+        if changed:
+            self._schedule(self.send_device(self.session_message()))
+
+    def note_interaction(self):
+        self._last_interaction = self._clock()
+        if self._session_timer is not None:
+            self._session_timer.cancel()
+        if self.session_active:
+            try:
+                self._session_timer = asyncio.get_running_loop().call_later(
+                    SESSION_IDLE_SECONDS, self.check_session_timeout)
+            except RuntimeError:
+                pass
+
+    def end_homework_session(self):
+        if self._session_timer is not None:
+            self._session_timer.cancel()
+            self._session_timer = None
+        if self.session_active:
+            self.session_active = False
+            self._schedule(self.send_device(self.session_message()))
+
+    def check_session_timeout(self):
+        if self.session_active and self._clock() - self._last_interaction >= SESSION_IDLE_SECONDS:
+            self.end_homework_session()
+
     # -- state ---------------------------------------------------------------
 
     @staticmethod
     def _fresh(date: str, announced: int = 1) -> dict[str, Any]:
-        return {"date": date, "items": [], "next_id": 1, "form": 1, "announced_form": announced}
+        return {"date": date, "items": [], "next_id": 1, "form": 1, "announced_form": announced, "celebrated_all": False}
 
     @staticmethod
     def _load(data: dict[str, Any]) -> dict[str, Any]:
@@ -191,6 +232,7 @@ class XiaoyaForms:
             "next_id": next_id,
             "form": max(form, form_for_progress(done, len(items))),
             "announced_form": announced,
+            "celebrated_all": data.get("celebrated_all", False) is True,
         }
 
     def _save(self) -> None:
@@ -309,6 +351,8 @@ class XiaoyaForms:
         presence = get_camera_presence()
         if total > 0 and done == total:
             presence.end_homework_day()
+            if action != "done":
+                self.end_homework_session()
         if action == "redo":
             presence.set_pending_redo("爸爸想你再試一次，我陪你呀。")
         unlock = None
@@ -384,7 +428,32 @@ class XiaoyaForms:
         already = item["done"]
         item["done"] = True
         result = self._commit("done", source)
-        return {**result, "item": dict(item), "already_done": already}
+        messages = []
+        if not already:
+            all_done = result["total"] > 0 and result["done"] == result["total"]
+            level = "all" if all_done and not self._state["celebrated_all"] else "item"
+            if level == "all":
+                self._state["celebrated_all"] = True
+                self._save()
+            messages.append({"type": "xiaoya", "cmd": "celebrate", "level": level})
+            self._schedule(self._send_completion(messages))
+            # End locally now, but transmit false only after celebration.
+            if all_done:
+                if self._session_timer is not None:
+                    self._session_timer.cancel()
+                    self._session_timer = None
+                was_active = self.session_active
+                self.session_active = False
+                if was_active:
+                    messages.append(self.session_message())
+        return {**result, "item": dict(item), "already_done": already,
+                "device_messages": messages,
+                "spoken": "你一路努力做，完成晒今日功課喇！" if messages and messages[0]["level"] == "all"
+                else "你肯花心機完成呢一份，辛苦晒！"}
+
+    async def _send_completion(self, messages):
+        for message in messages:
+            await self.send_device(message)
 
     def note_device_event(self, message: dict[str, Any]) -> None:
         if message.get("event") == "form_state":
@@ -414,6 +483,8 @@ class XiaoyaForms:
             self._session_ready = True
             self._schedule_push(force=True)
             self._schedule(self.send_volume())
+            self.check_session_timeout()
+            self._schedule(self.send_device(self.session_message()))
 
     # -- device output -------------------------------------------------------
 
@@ -427,6 +498,9 @@ class XiaoyaForms:
         self._sender = sender
         self._session_ready = push
         self._start_midnight_loop()
+        if push:
+            self.check_session_timeout()
+            self._schedule(self.send_device(self.session_message()))
         return self._schedule_push(force=True) if push else None
 
     def unregister_sender(self, sender: Sender | None = None) -> None:
@@ -534,7 +608,7 @@ class XiaoyaForms:
 
     async def _midnight_loop(self) -> None:
         while True:
-            now = _dt.datetime.now().astimezone()
+            now = _dt.datetime.now(ZoneInfo("Asia/Hong_Kong"))
             tomorrow = (now + _dt.timedelta(days=1)).replace(hour=0, minute=0, second=5, microsecond=0)
             await asyncio.sleep(max(1.0, (tomorrow - now).total_seconds()))
             if self._roll_day():
