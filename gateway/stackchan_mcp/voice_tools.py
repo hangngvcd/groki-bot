@@ -175,6 +175,7 @@ TOOL_METADATA: dict[str, ToolMetadata] = {
     "homework_photo_cancel": ToolMetadata(True, "homework", 3.0),
     "note_homework_stuck": ToolMetadata(True, "homework_stuck", 3.0),
     "notify_dad_stuck": ToolMetadata(True, "homework_stuck", 8.0),
+    "homework_vocab_context": ToolMetadata(True, "glyph", 5.0),
     "show_character": ToolMetadata(True, "glyph", 5.0),
     "self.tracking.start": ToolMetadata(True, "face_tracking", 8.0),
     "self.tracking.stop": ToolMetadata(True, "face_tracking", 8.0),
@@ -414,11 +415,31 @@ def build_function_declarations(*, types=None) -> list[Any]:
         parameters=types.Schema(type="OBJECT", properties={}),
     )
 
+    homework_vocab_context = types.FunctionDeclaration(
+        name="homework_vocab_context",
+        description=(
+            "Record the active homework item whenever 娜娜 starts or switches items. "
+            "Set copy_mode_said=true ONLY when she herself verbally asserts copying "
+            "(我抄生字 / 呢個係抄生字 / 抄生字). Never infer it from a title, "
+            "a question, a negation, or a parent's words. Never ask 係咪抄生字 "
+            "to elicit an assertion. New item or day requires a fresh assertion. "
+            "If the item is unclear, do not guess; copy remains unavailable."
+        ),
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={
+                "item": types.Schema(type="STRING", description="Active homework title or #id from homework_list."),
+                "copy_mode_said": types.Schema(type="BOOLEAN", description="True only for Nana's explicit verbal copy assertion; otherwise false."),
+            },
+            required=["item", "copy_mode_said"],
+        ),
+    )
+
     show_character = types.FunctionDeclaration(
         name="show_character",
         description=(
             "Call only when the child asks how to write a 生字（個字點寫）. "
-            "Copy homework (抄): shows the full character on screen; follow spoken only—"
+            "Copy only after Nana verbally opts in via homework_vocab_context (never title 抄): shows the full character on screen; follow spoken only—"
             "never add 部首/結構. "
             "Dictation (默, or unknown): shows nothing; speak ONLY radical/structure "
             "fields from the tool result when present, otherwise only encourage "
@@ -531,6 +552,7 @@ def build_function_declarations(*, types=None) -> list[Any]:
             note_homework_stuck,
             notify_dad_stuck,
             show_character,
+            homework_vocab_context,
         ]
     return [
         *device,
@@ -851,12 +873,12 @@ def _mandarin_enabled() -> bool:
     return mandarin_enabled()
 
 
-# The homework list is edited live by a parent; a dictation/refusal answer is
-# only valid for the moment it was given (08:36 incident: 抄生字 was added but
-# the model kept reusing the earlier "no copy homework" result).
+# Homework and Nana's spoken mode context can change during a voice session;
+# a refusal/display result is only valid for the moment it was given.
 SHOW_CHARACTER_FRESH_NOTE = (
     "This result is only valid right now: a parent can change today's homework "
-    "list at any time. For every new character request, call show_character "
+    "list at any time, and Nana can assert copying or switch items. "
+    "For every new character request, call show_character "
     "again; never reuse this or an earlier show_character result."
 )
 HOMEWORK_LIST_FRESH_NOTE = (
@@ -1015,7 +1037,7 @@ class VoiceToolExecutor:
                 "唔准自己估部首同結構；結果冇呢啲欄位就只鼓勵佢自己諗；"
                 "讀默就可以重讀原文嗰句，但都唔顯示、唔串出點寫。\n"
                 "默書分讀默（鈴鈴逐句讀、娜娜寫）同背默（唔讀出）；唔清楚就問一次「係讀默定背默？」。\n"
-                "唔好讀出粵拼，唔好問佢揀抄定默（顯示由功課清單決定），回覆要短。"
+                "唔好讀出粵拼，唔好問佢「係咪抄生字」嚟套答案。開始或換項就 call homework_vocab_context；只有娜娜自己講「我抄生字／呢個係抄生字／抄生字」先設 copy_mode_said=true，唔用標題「抄」判斷；換項或新一日要再講，有「默」仍永遠唔顯示，回覆要短。"
             )
         return "\n\n".join(
             [
@@ -1272,6 +1294,15 @@ class VoiceToolExecutor:
             return await self._dispatch_ask_claude(args)
         if name == "get_current_datetime":
             return self._dispatch_get_datetime()
+        if name == "homework_vocab_context":
+            from .xiaoya_forms import get_xiaoya_forms
+
+            forms = get_xiaoya_forms()
+            try:
+                forms.set_vocab_context(args["item"], copy_mode_said=args["copy_mode_said"])
+            except (ValueError, LookupError) as exc:
+                return {"ok": False, "error": str(exc)}
+            return {"ok": True, "copy_mode_said": forms.copy_mode_said}
         if name == "show_character":
             return await self._dispatch_show_character(args)
         if name == "play_minigame":
@@ -1646,7 +1677,7 @@ class VoiceToolExecutor:
             items = forms.snapshot()["items"]
         except Exception:  # undeterminable -> treat as dictation (spec section 10)
             items = None
-        if vocab_mode(items) == "dictation":
+        if vocab_mode(items, copy_mode_said=forms.copy_mode_said) == "dictation":
             # 默書 (or mode unknown): never render or send the character.
             # Only mention 默書 when an unfinished 默 item really exists; an empty or
             # unreadable list is still treated as dictation, but said honestly.
@@ -1665,7 +1696,7 @@ class VoiceToolExecutor:
                 spoken = (
                     "今日要默書，我唔出個字。我講吓提示，你自己諗吓。"
                     if has_dictation
-                    else "今日清單未有抄生字功課，我唔出個字住。我講吓提示俾你諗吓。"
+                    else "我唔出個字住。我講吓提示俾你諗吓。"
                 )
                 note = (
                     "Dictation: never show, spell or go stroke-by-stroke through "
@@ -1680,7 +1711,7 @@ class VoiceToolExecutor:
                 spoken = (
                     "今日要默書，我唔出個字。你自己諗吓。"
                     if has_dictation
-                    else "今日清單未有抄生字功課，我唔出個字住。你自己諗吓。"
+                    else "我唔出個字住。你自己諗吓。"
                 )
                 note = (
                     "Dictation: never show, spell or go stroke-by-stroke through "

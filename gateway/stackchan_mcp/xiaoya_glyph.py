@@ -22,10 +22,11 @@ DEFAULT_HOLD_MS = 10000
 _FILES = {"kai": "FreeHKKai-4700.ttf", "sans": "NotoSansHK-Regular.otf"}
 
 
-def vocab_mode(items) -> Literal["dictation", "copy"]:
+def vocab_mode(items, *, copy_mode_said: bool = False) -> Literal["dictation", "copy"]:
     if not isinstance(items, list) or any(
         not isinstance(item, dict)
         or not isinstance(item.get("title"), str)
+        or not item["title"].strip()
         or "done" not in item
         for item in items
     ):
@@ -33,7 +34,7 @@ def vocab_mode(items) -> Literal["dictation", "copy"]:
     titles = [item["title"] for item in items if not item["done"]]
     if any("默" in title for title in titles):
         return "dictation"
-    return "copy" if any("抄" in title for title in titles) else "dictation"
+    return "copy" if copy_mode_said and titles else "dictation"
 
 
 def clean_characters(text: str) -> str:

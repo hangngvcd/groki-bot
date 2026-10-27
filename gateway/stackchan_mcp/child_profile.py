@@ -17,6 +17,7 @@ VOICE_TOOL_NAMES = frozenset(
         "homework_photo_snap",
         "homework_photo_cancel",
         "show_character",
+        "homework_vocab_context",
         "note_homework_stuck",
         "notify_dad_stuck",
     }

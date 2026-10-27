@@ -26,12 +26,12 @@ from stackchan_mcp.xiaoya_glyph import (
     ("items", "expected"),
     [
         ([{"title": "默書", "done": False}], "dictation"),
-        ([{"title": "抄寫", "done": False}], "copy"),
+        ([{"title": "抄寫", "done": False}], "dictation"),
         (
             [{"title": "默書", "done": False}, {"title": "抄寫", "done": False}],
             "dictation",
         ),
-        ([{"title": "默書", "done": True}, {"title": "抄寫", "done": False}], "copy"),
+        ([{"title": "默書", "done": True}, {"title": "抄寫", "done": False}], "dictation"),
         ([{"title": "抄寫", "done": True}], "dictation"),
         ([], "dictation"),
         ([{"title": "數學", "done": False}], "dictation"),
@@ -92,7 +92,7 @@ def test_bad_hold(hold):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "case", ["copy", "dictation", "bad", "offline", "render_failure"]
+    "case", ["copy", "dictation", "unasserted", "bad", "offline", "render_failure"]
 )
 async def test_tool_device(monkeypatch, tmp_path, case):
     monkeypatch.setenv("STACKCHAN_CHILD_PROFILE", "1")
@@ -110,6 +110,10 @@ async def test_tool_device(monkeypatch, tmp_path, case):
 
         monkeypatch.setattr(xiaoya_glyph, "render_glyph_png", fail)
     executor = VoiceToolExecutor()
+    if case != "unasserted":
+        assert (await executor.execute("homework_vocab_context", {
+            "item": "#1", "copy_mode_said": True,
+        }))["ok"]
     proxy = SimpleNamespace(
         start=AsyncMock(return_value=True),
         stop=AsyncMock(),
@@ -159,10 +163,10 @@ async def test_tool_device(monkeypatch, tmp_path, case):
                 )
             else:
                 assert glyphs == []
-                assert result["ok"] is (case == "dictation")
-                if case == "dictation":
+                assert result["ok"] is (case in {"dictation", "unasserted"})
+                if case in {"dictation", "unasserted"}:
                     assert result["shown"] is False and result["mode"] == "dictation"
-                    assert result["spoken"].startswith("今日要默書")
+                    assert result["spoken"].startswith("今日要默書") is (case == "dictation")
     finally:
         await executor.close()
         await manager.stop()
@@ -219,7 +223,7 @@ async def test_undeterminable_mode_shows_nothing(monkeypatch, tmp_path):
         assert "radical" in result["note"] or "部首" in result["note"]
         assert "never invent" in result["note"]
         assert "默書" not in result["spoken"]
-        assert "未有抄生字功課" in result["spoken"]
+        assert "我唔出個字住" in result["spoken"]
         assert result.get("structure") == "左右"
         sender.assert_not_awaited()
     finally:
@@ -235,6 +239,7 @@ def test_child_instructions_cover_both_modes(monkeypatch):
     assert "有顯示時唔好講部首同結構" in text
     assert "唔准自己估" in text
     assert "粵拼" in text
+    assert "homework_vocab_context" in text and "唔用標題「抄」" in text
 
 
 def _pixels(png: bytes):
@@ -276,7 +281,7 @@ def test_glyph_mirror_can_be_disabled(monkeypatch):
     [
         ([], [], False),  # empty list
         (["數學工作紙"], [False], False),  # no 抄 / 默 item
-        (["中文默書", "中文抄生字"], [True, False], False),  # 默 already done -> copy
+        (["中文默書", "中文抄生字"], [True, False], False),  # 默 done does not imply copy
         (["英文默書"], [False], True),  # unfinished 默
         (["英文默書"], [True], False),  # 默 done, nothing else
     ],
@@ -294,16 +299,69 @@ async def test_dictation_wording_matches_list(monkeypatch, tmp_path, titles, don
     executor = VoiceToolExecutor()
     try:
         result = await executor.execute("show_character", {"character": "蝶"})
-        if titles == ["中文默書", "中文抄生字"]:
-            assert result["mode"] == "copy"
-            return
         assert result["mode"] == "dictation" and result["shown"] is False
         assert ("今日要默書" in result["spoken"]) is dictation_words
         if not dictation_words:
             # 蝶 has offline structure/radical → tool promises a hint, not invention.
-            assert result["spoken"] == "今日清單未有抄生字功課，我唔出個字住。我講吓提示俾你諗吓。"
+            assert result["spoken"] == "我唔出個字住。我講吓提示俾你諗吓。"
             assert result.get("structure") == "左右"
             assert "虫" in result.get("radical", "")
         sender.assert_not_awaited()
     finally:
         await executor.close()
+
+
+@pytest.mark.asyncio
+async def test_copy_assertion_item_and_day_scope(monkeypatch, tmp_path):
+    monkeypatch.setenv("STACKCHAN_CHILD_PROFILE", "1")
+    day = ["2026-10-27"]
+    forms = xiaoya_forms.XiaoyaForms(tmp_path / "forms.json", today=lambda: day[0])
+    forms.add_items(["中文抄生字", "數學"], source="parent")
+    monkeypatch.setattr(xiaoya_forms, "_forms", forms)
+    sender = AsyncMock(return_value=True)
+    monkeypatch.setattr(forms, "send_device", sender)
+    from stackchan_mcp import xiaoya_glyph
+    monkeypatch.setattr(xiaoya_glyph, "render_glyph_png", lambda c: b"png")
+    executor = VoiceToolExecutor()
+    async def context(item, said=False):
+        result = await executor.execute("homework_vocab_context", {
+            "item": item, "copy_mode_said": said,
+        })
+        assert result["ok"]
+    async def shown(expected):
+        result = await executor.execute("show_character", {"character": "蝶"})
+        assert result["shown"] is expected
+    try:
+        await shown(False)  # title alone cannot grant copy
+        await context("#1", True)  # 娜娜: 我抄生字
+        await shown(True)
+        await shown(True)  # same item/session retains assertion
+        unknown = await executor.execute("homework_vocab_context", {
+            "item": "unknown", "copy_mode_said": False,
+        })
+        assert not unknown["ok"]
+        await shown(False)
+        await context("#1", True)
+        await context("#2")
+        assert not forms.copy_mode_said
+        await shown(False)
+        await context("#1")  # returning does not restore the old assertion
+        await shown(False)
+        await context("#1", True)
+        await shown(True)
+        forms.add_items(["英文"], source="parent")
+        await shown(False)
+        await context("#1", True)
+        day[0] = "2026-10-28"
+        assert not forms.copy_mode_said
+        forms.add_items(["中文抄生字"], source="parent")
+        await shown(False)
+        await context("#1", True)
+        await shown(True)
+    finally:
+        await executor.close()
+
+
+@pytest.mark.parametrize("items", [None, [], [{"title": "", "done": False}], [{"title": "默書", "done": False}]])
+def test_assertion_cannot_override_unknown_or_dictation(items):
+    assert vocab_mode(items, copy_mode_said=True) == "dictation"

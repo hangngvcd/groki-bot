@@ -141,6 +141,8 @@ class XiaoyaForms:
         self.path = Path(
             path or os.getenv("STACKCHAN_XIAOYA_FORMS_PATH", "~/.stackchan/xiaoya_forms.json")
         ).expanduser()
+        self._copy_mode_said = False
+        self._active_vocab_item = None
         self._today = today
         self._state = self._fresh(today())
         self._sender: Sender | None = None
@@ -212,9 +214,38 @@ class XiaoyaForms:
         logger.info("鈴鈴 form: new day %s, reset to F1", today)
         # announced_form stays: the device still shows yesterday's form until
         # the next push, which sends a silent F1.
+        self._copy_mode_said = False
+        self._active_vocab_item = None
         self._state = self._fresh(today, announced=self._state["announced_form"])
         self._save()
         return True
+
+    @property
+    def copy_mode_said(self) -> bool:
+        self._roll_day()
+        return self._copy_mode_said
+
+    def set_vocab_context(self, item, *, copy_mode_said: bool = False) -> None:
+        """Voice-only context: titles themselves never grant copy mode.
+
+        Calling for a different item clears the previous assertion, including
+        when returning to an item that previously allowed copying.
+        """
+        self._roll_day()
+        try:
+            active = self._find(item)
+            if active["done"]:
+                raise ValueError("Homework item is already done")
+        except (ValueError, LookupError):
+            self._copy_mode_said = False
+            self._active_vocab_item = None
+            raise
+        key = (active["id"], active["title"])
+        if key != self._active_vocab_item:
+            self._copy_mode_said = False
+        self._active_vocab_item = key
+        if copy_mode_said:
+            self._copy_mode_said = True
 
     def _counts(self) -> tuple[int, int]:
         items = self._state["items"]
@@ -262,6 +293,8 @@ class XiaoyaForms:
         raise LookupError(f"有幾項都似：{names} / ambiguous")
 
     def _commit(self, action: str, source: str) -> dict[str, Any]:
+        self._copy_mode_said = False
+        self._active_vocab_item = None
         old = self._state["form"]
         done, total = self._counts()
         new = max(old, form_for_progress(done, total))  # only up within a day

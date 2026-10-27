@@ -114,6 +114,7 @@ async def test_copy_note_forbids_structure(monkeypatch, tmp_path):
     monkeypatch.setenv("STACKCHAN_CHILD_PROFILE", "1")
     forms = xiaoya_forms.XiaoyaForms(tmp_path / "forms.json")
     forms.add_items(["中文抄生字"], source="parent")
+    forms.set_vocab_context("#1", copy_mode_said=True)
     monkeypatch.setattr(xiaoya_forms, "_forms", forms)
     sender = AsyncMock(return_value=True)
     monkeypatch.setattr(forms, "send_device", sender)

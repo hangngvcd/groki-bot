@@ -172,6 +172,7 @@ async def test_gbot_receives_only_child_catalog(child, monkeypatch, native_end):
             "note_homework_stuck",
             "notify_dad_stuck",
             "show_character",
+            "homework_vocab_context",
         }
         assert config["turn_detection"] == {
             "type": "server_vad",
@@ -214,6 +215,7 @@ def test_gemini_child_catalog_excludes_search_and_other_tools(child):
         "note_homework_stuck",
         "notify_dad_stuck",
         "show_character",
+        "homework_vocab_context",
     }
 
 
@@ -235,6 +237,7 @@ async def test_extensions_cannot_broaden_child_catalog(child):
             "note_homework_stuck",
             "notify_dad_stuck",
             "show_character",
+            "homework_vocab_context",
         }
         assert (await executor.execute("camera_capture", {}))["ok"] is False
         dispatch.assert_not_awaited()
