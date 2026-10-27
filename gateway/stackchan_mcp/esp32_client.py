@@ -610,6 +610,11 @@ class ESP32Manager:
                         await cloud_proxy.send_device_json(data)
 
                 elif msg_type == "xiaoya":
+                    if data.get("event") == "battery":
+                        percent = data.get("percent")
+                        if type(percent) is int:
+                            self._debug_status.on_device_battery(max(0, min(100, percent)))
+                        continue
                     # 鈴鈴 device events stay inside the gateway (never sent to the cloud).
                     from .xiaoya_forms import get_xiaoya_forms
 

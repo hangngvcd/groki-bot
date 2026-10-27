@@ -2,7 +2,7 @@
 import asyncio
 import json
 import logging
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from types import SimpleNamespace
 
 from aiohttp.test_utils import TestClient, TestServer
@@ -390,3 +390,40 @@ async def test_parent_mcp_volume_tools(monkeypatch):
     assert {"xiaoya_get_volume", "xiaoya_set_volume"} <= seen["names"]
     assert calls == [("volume", None), ("volume", {"volume": 25})]
     assert "0..100" in str(seen["bad"])
+
+
+@pytest.mark.parametrize(
+    "event,expected",
+    [
+        ({"percent": 73}, 73),
+        ({"percent": 0}, 0),
+        ({"percent": 100}, 100),
+        ({"percent": -5}, 0),
+        ({"percent": 105}, 100),
+        ({"percent": True}, 25),
+        ({"percent": "73"}, 25),
+        ({"percent": 73.5}, 25),
+        ({"percent": None}, 25),
+        ({}, 25),
+    ],
+)
+@pytest.mark.asyncio
+async def test_device_battery_event_updates_parent_status(store, event, expected):
+    from stackchan_mcp.esp32_client import ESP32Manager
+
+    debug = DebugStatus(clock=lambda: 123)
+    debug.on_device_battery(25)
+    proxy = Mock(stop=AsyncMock(), send_device_json=AsyncMock())
+
+    class BatterySocket:
+        request = None
+
+        async def __aiter__(self):
+            yield json.dumps({"type": "xiaoya", "event": "battery", **event})
+
+    manager = ESP32Manager(debug_status=debug, cloud_proxy_factory=lambda: proxy)
+    await manager._handler(BatterySocket())
+    payload = build_parent_status(debug.snapshot(), store.get(), {}, {})
+    assert payload["device"]["battery_percent"] == expected
+    proxy.send_device_json.assert_not_called()
+    proxy.handle_xiaoya_event.assert_not_called()
