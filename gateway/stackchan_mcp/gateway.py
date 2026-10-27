@@ -29,6 +29,7 @@ from .gbot_voice_proxy import GbotVoiceProxy
 from .idle_behavior import IdleBehavior
 from .idle_gate import IdleGate
 from .mac_control import resolve_claude_bin
+from .mdns_announce import GatewayMdnsAnnouncer
 from .touch_bridge import TouchEventBridge
 from .tracking_bridge import TrackingBridge
 from .tts import synthesize_and_send
@@ -97,6 +98,7 @@ class Gateway:
             for message in child_profile.diagnostics():
                 logger.warning("Child profile: %s", message)
         self.voice_input_bridge = VoiceInputBridge()
+        self.mdns_announcer = GatewayMdnsAnnouncer()
         # USB Serial/JTAG transport for low-latency control traffic.
         # Initialised before esp32 so the voice backend factory can hand it
         # to GeminiVoiceProxy without a forward reference. With the cable in,
@@ -393,6 +395,7 @@ class Gateway:
             vision_url=self.vision_url,
             vision_token=self.vision_token,
         )
+        self.mdns_announcer.start(host=host, port=ws_port)
         await self.touch_bridge.start()
         await self.idle_behavior.start()
 
@@ -596,6 +599,7 @@ class Gateway:
     async def stop(self) -> None:
         """Stop the gateway."""
         self._running = False
+        self.mdns_announcer.stop()
         if getattr(self, "_parent_runner", None) is not None:
             await self._parent_runner.cleanup()
             self._parent_runner = None

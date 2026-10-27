@@ -44,6 +44,7 @@ Environment variables:
   HOST              Bind address for the ESP32 WebSocket server (default 0.0.0.0).
   WS_PORT           Port for the ESP32 WebSocket server (default 8765).
   CAPTURE_PORT      Port for the HTTP capture server (default 8766).
+  STACKCHAN_MDNS    Set to 1 to advertise _xiaoya-gateway._tcp (default off).
 
   GEMINI_API_KEY    Google AI Studio key for Gemini Live voice conversation.
 

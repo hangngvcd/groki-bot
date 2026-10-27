@@ -64,6 +64,9 @@ wakeword = [
     # import fails with "Library not loaded: libonnxruntime".
     "sherpa-onnx-core==1.13.2",
 ]
+mdns = [
+    "zeroconf>=0.132",
+]
 
 [project.urls]
 Homepage = "https://github.com/JosssphZhou/groki-bot"
