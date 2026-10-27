@@ -86,6 +86,14 @@ class CameraPresence:
     def set_pending_redo(self, spoken_or_clip=None):
         self._pending_redo = spoken_or_clip
 
+    def consume_pending_redo(self):
+        """Consume once on button/wake, or on a qualified desk return."""
+        line, self._pending_redo = self._pending_redo, None
+        if not line:
+            return None
+        return PresenceAction("redo", clip=line if line.startswith("vo.") else "",
+                              spoken="" if line.startswith("vo.") else line)
+
     def is_suppressed(self):
         return self._blocked()
 
@@ -113,12 +121,7 @@ class CameraPresence:
         if not returning or self._blocked():
             return None
         if self._pending_redo:
-            line, self._pending_redo = self._pending_redo, None
-            return PresenceAction(
-                "redo",
-                clip=line if line.startswith("vo.") else "",
-                spoken="" if line.startswith("vo.") else line,
-            )
+            return self.consume_pending_redo()
         pool = WELCOME_CLIPS + JOKE_CLIPS
         clip = pool[self._index % len(pool)]
         self._index += 1

@@ -81,11 +81,11 @@ async def handle_capture(request: web.Request) -> web.Response:
     """Pause desk presence for the entire explicit photo transaction."""
     from .camera_presence import get_camera_presence
     presence = get_camera_presence()
-    presence.set_suppress("photo", True)
+    presence.set_suppress("photo_upload", True)
     try:
         return await _handle_capture(request)
     finally:
-        presence.set_suppress("photo", False)
+        presence.set_suppress("photo_upload", False)
 
 
 async def _handle_capture(request: web.Request) -> web.Response:

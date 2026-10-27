@@ -171,6 +171,8 @@ TOOL_METADATA: dict[str, ToolMetadata] = {
     "homework_list": ToolMetadata(False, None, 2.0),
     "play_minigame": ToolMetadata(True, "homework", 3.0),
     "homework_done": ToolMetadata(True, "homework", 3.0),
+    "homework_photo_snap": ToolMetadata(True, "homework", 30.0),
+    "homework_photo_cancel": ToolMetadata(True, "homework", 3.0),
     "note_homework_stuck": ToolMetadata(True, "homework_stuck", 3.0),
     "notify_dad_stuck": ToolMetadata(True, "homework_stuck", 8.0),
     "show_character": ToolMetadata(True, "glyph", 5.0),
@@ -384,8 +386,8 @@ def build_function_declarations(*, types=None) -> list[Any]:
     homework_done = types.FunctionDeclaration(
         name="homework_done",
         description=(
-            "Record that 娜娜 finished one homework item. Call only after she clearly "
-            "confirmed (said 係/好) that this item is done."
+            "Start homework photo flow after the child reports an item done. "
+            "Omit item if unclear; follow the returned question/choices."
         ),
         parameters=types.Schema(
             type="OBJECT",
@@ -395,8 +397,21 @@ def build_function_declarations(*, types=None) -> list[Any]:
                     description="The item's #id or its title from homework_list",
                 )
             },
-            required=["item"],
         ),
+    )
+
+    homework_photo_snap = types.FunctionDeclaration(
+        name="homework_photo_snap",
+        description=(
+            "When photo_pending, capture once after child positions homework; "
+            "follow retry spoken. Completion marks done; never mark done another way."
+        ),
+        parameters=types.Schema(type="OBJECT", properties={}),
+    )
+    homework_photo_cancel = types.FunctionDeclaration(
+        name="homework_photo_cancel",
+        description="Cancel pending homework photo when child aborts.",
+        parameters=types.Schema(type="OBJECT", properties={}),
     )
 
     show_character = types.FunctionDeclaration(
@@ -510,6 +525,8 @@ def build_function_declarations(*, types=None) -> list[Any]:
             end_conversation,
             homework_list,
             homework_done,
+            homework_photo_snap,
+            homework_photo_cancel,
             play_minigame,
             note_homework_stuck,
             notify_dad_stuck,
@@ -974,8 +991,8 @@ class VoiceToolExecutor:
             base += (
                 "\n玩遊戲：call play_minigame；ok=true 即結束語音回合交本地遊戲；ok=false 只讀 spoken。永遠唔用 send_task 玩遊戲。升級只講收到，唔可以留返稍後玩。"
                 "\n功課清單：問今日有咩功課就 call homework_list（清單由爸爸媽媽設定，唔好自己加減）。"
-                "小朋友話做完一項：先用一句短問題確認係邊項；等佢清楚答「係」／「好」先 call homework_done。"
-                "答「唔係」就唔好 call 任何工具。ok=true 就講「收到」；level_up=true 就只講「收到」，"
+                "小朋友話做完一項：call homework_done 確認項目並開始影相；照 spoken 引導，photo_pending 時擺好後 call homework_photo_snap；重試照 spoken，取消 call homework_photo_cancel。唔好用其他方法標做完。"
+                "答「唔係」就唔好標完成。影相取消要 call homework_photo_cancel。status=ask 時讀 spoken 同最多三個 choices；photo_pending=true 時讀 spoken 引導／重試，唔好只講收到。完成後 ok=true 就講「收到」；level_up=true 就只講「收到」，"
                 "讚賞由鈴鈴自己播，唔好再加讚。ok=false 就讀 spoken。攞唔到功課清單唔好作。"
                 "\n留言搵家長幫手：call send_task 前先講「我睇吓先」，同樣先確認一次，"
                 "並喺 request 講明小朋友已確認。只有 relay=accepted 先講「收到」；否則讀 spoken 失敗提示。"
@@ -1263,7 +1280,7 @@ class VoiceToolExecutor:
 
             games = get_xiaoya_games()
             return games.consume_invite_start() if games.has_pending() else games.refuse_play(get_xiaoya_forms().snapshot())
-        if name in {"homework_list", "homework_done"}:
+        if name in {"homework_list", "homework_done", "homework_photo_snap", "homework_photo_cancel"}:
             return self._dispatch_homework(name, args)
         if name in {"note_homework_stuck", "notify_dad_stuck"}:
             return self._dispatch_stuck(name, args)
@@ -1732,27 +1749,13 @@ class VoiceToolExecutor:
                 "done": snap["done"],
                 "total": snap["total"],
             }
-        try:
-            result = forms.mark_done(args.get("item"), source="child-voice")
-        except (LookupError, ValueError) as exc:
-            return {"ok": False, "error": str(exc).strip("'\""), "spoken": "我喺清單搵唔到呢項，你再講一次係邊樣功課？"}
-        return {
-            "ok": True,
-            "item": result["item"]["title"],
-            "already_done": result["already_done"],
-            "done": result["done"],
-            "total": result["total"],
-            # 鈴鈴 plays her own level-up animation + praise line once this
-            # turn is over; the agent then keeps its reply to a short 收到.
-            "level_up": result["level_up"],
-            "game_unlock": result.get("game_unlock"),
-            "invite_spoken": "變身喇！嚟玩！" if result.get("game_unlock") else "",
-            "local_game_handoff": (
-                "Say only 收到, end voice turn; gateway local-loop owner must call "
-                "consume_invite_start after form animation. Never send_task or bank."
-                if result.get("game_unlock") else ""
-            ),
-        }
+        from .homework_photo import get_homework_photo
+        photo = get_homework_photo()
+        if name == "homework_photo_snap":
+            return photo.attempt_capture()
+        if name == "homework_photo_cancel":
+            return photo.cancel()
+        return photo.resolve(args.get("item"))
 
     @staticmethod
     def _dispatch_stuck(name: str, args: dict[str, Any]) -> dict[str, Any]:

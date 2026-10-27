@@ -156,12 +156,12 @@ async def run_mcp(client):
         return await homework({"remove": items})
 
     @server.tool()
-    async def xiaoya_homework_redo(items: list[str]) -> dict:
+    async def xiaoya_homework_redo(items: list[str], reason: str = "") -> dict:
         """Mark items (by #id or title) as needing a redo, when the parent asks.
 
         The item becomes pending again; 鈴鈴's form does not go down.
         """
-        return await homework({"redo": items})
+        return await homework({"redo": items, "reason": reason})
 
     @server.tool()
     async def xiaoya_get_volume() -> dict:
@@ -212,6 +212,7 @@ def main(argv=None):
             command.add_argument("value", nargs="?", type=int)
         if name == "homework":
             command.add_argument("action", nargs="?", choices=("list", "add", "remove", "redo"), default="list")
+            command.add_argument("--reason", default="")
             command.add_argument("items", nargs="*")
     args = parser.parse_args(argv)
     try:
@@ -243,6 +244,8 @@ def main(argv=None):
                 raise ValueError(f"用法：homework {args.action} 項目... / usage: homework {args.action} ITEM...")
             else:
                 values = {args.action: args.items}
+                if args.action == "redo" and args.reason:
+                    values["reason"] = args.reason
             data = client.call("homework", values)
             if data.get("ok"):
                 forms = data["forms"]

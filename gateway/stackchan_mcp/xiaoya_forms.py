@@ -327,14 +327,22 @@ class XiaoyaForms:
         self._state["items"] = [item for item in self._state["items"] if item["id"] not in targets]
         return self._commit("remove", source)
 
-    def redo_items(self, refs: Any, *, source: str) -> dict[str, Any]:
+    def redo_items(self, refs: Any, *, source: str, reason: str = "") -> dict[str, Any]:
         """Parent asks for a redo: the item is pending again, the form stays."""
         if not isinstance(refs, list) or not refs:
             raise ValueError("redo: expected a list of ids or titles")
         self._roll_day()
-        for item in [self._find(ref) for ref in refs]:
+        targets = [self._find(ref) for ref in refs]
+        for item in targets:
             item["done"] = False
-        return self._commit("redo", source)
+        result = self._commit("redo", source)
+        from .camera_presence import get_camera_presence
+        line = f"爸爸睇過，想你再整好 {targets[0]['title']} 少少，我陪你一齊睇吓邊度要改。"
+        reason = " ".join(str(reason or "").split())[:120]
+        if reason and not any(word in reason for word in ("亂", "懶", "蠢", "粗心", "又錯", "失望")):
+            line += f"可以一齊留意：{reason}。"
+        get_camera_presence().set_pending_redo(line)
+        return result
 
     def mark_done(self, ref: Any, *, source: str) -> dict[str, Any]:
         """娜娜 reports one item done (child voice tool, after she confirmed)."""

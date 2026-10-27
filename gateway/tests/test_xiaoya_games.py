@@ -176,6 +176,10 @@ async def test_voice_dispatch(games, tmp_path, monkeypatch):
     assert not result["ok"] and result["spoken"]
     forms.add_items(["中文"], source="parent")
     result = await executor._dispatch_tool_impl("homework_done", {"item": "中文"})
+    from stackchan_mcp.homework_photo import get_homework_photo
+    photo = get_homework_photo()
+    photo.send = lambda *args: None
+    result = photo.complete(False)
     assert result["game_unlock"] and result["invite_spoken"]
     assert games.begin_invite_after_evolve()["ok"]
     result = await executor._dispatch_tool_impl("play_minigame", {})

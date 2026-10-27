@@ -247,9 +247,13 @@ async def test_child_voice_tools_mark_done(monkeypatch, forms):
     listed = await executor._dispatch_tool_impl("homework_list", {})
     assert [item["title"] for item in listed["items"]] == ["中文", "數學"]
     done = await executor._dispatch_tool_impl("homework_done", {"item": "中文"})
+    from stackchan_mcp.homework_photo import get_homework_photo
+    photo = get_homework_photo()
+    photo.send = lambda *args: None
+    done = photo.complete(False)
     assert done["ok"] and done["level_up"] and (done["done"], done["total"]) == (1, 2)
     missing = await executor._dispatch_tool_impl("homework_done", {"item": "常識"})
-    assert not missing["ok"] and missing["spoken"]
+    assert missing["status"] == "ask" and missing["spoken"]
     assert forms.snapshot()["form"] == 2
 
 

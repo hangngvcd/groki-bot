@@ -158,8 +158,16 @@ async def test_homework_voice_entry_and_completion(tmp_path, monkeypatch):
     VoiceToolExecutor._dispatch_homework("homework_list", {})
     assert p.is_feature_on()
     VoiceToolExecutor._dispatch_homework("homework_done", {"item": "中文"})
+    from stackchan_mcp.homework_photo import get_homework_photo
+    photo = get_homework_photo()
+    photo.send = lambda *args: None
+    _completed = photo.complete(False)
     assert p.is_feature_on()
     VoiceToolExecutor._dispatch_homework("homework_done", {"item": "英文"})
+    from stackchan_mcp.homework_photo import get_homework_photo
+    photo = get_homework_photo()
+    photo.send = lambda *args: None
+    _completed = photo.complete(False)
     assert not p.is_feature_on()
     p.on_parent_setting(True)
     VoiceToolExecutor._dispatch_homework("homework_list", {})

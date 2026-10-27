@@ -211,15 +211,15 @@ def create_parent_app(token, settings=None, debug_status=None, forms=None):
         # for a redo).  Progress itself comes from 娜娜 marking items done.
         try:
             body = await request.json()
-            if not isinstance(body, dict) or len(body) != 1:
+            if not isinstance(body, dict) or len(set(body) - {"reason"}) != 1 or ("reason" in body and "redo" not in body):
                 raise ValueError('Expected one of {"add": [...]}, {"remove": [...]}, {"redo": [...]}')
-            (op, value), = body.items()
+            (op, value), = [(k, v) for k, v in body.items() if k != "reason"]
             if op == "add":
                 snapshot = forms.add_items(value, source="parent-api")
             elif op == "remove":
                 snapshot = forms.remove_items(value, source="parent-api")
             elif op == "redo":
-                snapshot = forms.redo_items(value, source="parent-api")
+                snapshot = forms.redo_items(value, source="parent-api", reason=body.get("reason", ""))
             else:
                 raise ValueError("op: expected add / remove / redo")
         except LookupError as exc:
