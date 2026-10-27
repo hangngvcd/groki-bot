@@ -167,6 +167,8 @@ async def test_gbot_receives_only_child_catalog(child, monkeypatch, native_end):
             "end_the_call" if native_end else "end_conversation",
             "homework_list",
             "homework_done",
+            "note_homework_stuck",
+            "notify_dad_stuck",
             "show_character",
         }
         assert config["turn_detection"] == {
@@ -204,6 +206,8 @@ def test_gemini_child_catalog_excludes_search_and_other_tools(child):
         "end_conversation",
         "homework_list",
         "homework_done",
+        "note_homework_stuck",
+        "notify_dad_stuck",
         "show_character",
     }
 
@@ -221,6 +225,8 @@ async def test_extensions_cannot_broaden_child_catalog(child):
             "end_conversation",
             "homework_list",
             "homework_done",
+            "note_homework_stuck",
+            "notify_dad_stuck",
             "show_character",
         }
         assert (await executor.execute("camera_capture", {}))["ok"] is False

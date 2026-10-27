@@ -170,6 +170,8 @@ TOOL_METADATA: dict[str, ToolMetadata] = {
     "get_current_datetime": ToolMetadata(False, None, 2.0),
     "homework_list": ToolMetadata(False, None, 2.0),
     "homework_done": ToolMetadata(True, "homework", 3.0),
+    "note_homework_stuck": ToolMetadata(True, "homework_stuck", 3.0),
+    "notify_dad_stuck": ToolMetadata(True, "homework_stuck", 8.0),
     "show_character": ToolMetadata(True, "glyph", 5.0),
     "self.tracking.start": ToolMetadata(True, "face_tracking", 8.0),
     "self.tracking.stop": ToolMetadata(True, "face_tracking", 8.0),
@@ -410,6 +412,62 @@ def build_function_declarations(*, types=None) -> list[Any]:
         ),
     )
 
+    note_homework_stuck = types.FunctionDeclaration(
+        name="note_homework_stuck",
+        description=(
+            "Record that 娜娜 is stuck on the same homework point (after one hint). "
+            "Call once per stuck attempt on that point. When offer_help=true, speak "
+            "ONLY the returned spoken (empathy + choice); never scold or say 蠢. "
+            "If she says 好難/我好蠢/唔想做 and stucks are already at 3, call with "
+            "give_up=true. Do not notify dad from this tool."
+        ),
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={
+                "item": types.Schema(
+                    type="STRING",
+                    description="Homework #id or title from homework_list",
+                ),
+                "point": types.Schema(
+                    type="STRING",
+                    description="Rough stuck point if known (short; optional)",
+                ),
+                "give_up": types.Schema(
+                    type="BOOLEAN",
+                    description="True when she says hard/stupid/give-up and already ~3 stucks",
+                ),
+            },
+            required=["item"],
+        ),
+    )
+    notify_dad_stuck = types.FunctionDeclaration(
+        name="notify_dad_stuck",
+        description=(
+            "After 娜娜 clearly agrees to tell dad (and you confirmed once), notify "
+            "家長助手. Call ONLY with consented=true after her yes. Never call without "
+            "consent; never use send_task for this stuck notify. Speak ONLY the "
+            "returned spoken line (success or fail). Do not read tip text to her."
+        ),
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={
+                "item": types.Schema(
+                    type="STRING",
+                    description="Homework #id or title",
+                ),
+                "stuck_point": types.Schema(
+                    type="STRING",
+                    description="Rough stuck point if known (optional)",
+                ),
+                "consented": types.Schema(
+                    type="BOOLEAN",
+                    description="Must be true only after 娜娜 agreed and you confirmed once",
+                ),
+            },
+            required=["item", "consented"],
+        ),
+    )
+
     start_face_tracking = types.FunctionDeclaration(
         name="self.tracking.start",
         description=(
@@ -442,7 +500,14 @@ def build_function_declarations(*, types=None) -> list[Any]:
         else []
     )
     if child_profile.enabled():
-        return [end_conversation, homework_list, homework_done, show_character]
+        return [
+            end_conversation,
+            homework_list,
+            homework_done,
+            note_homework_stuck,
+            notify_dad_stuck,
+            show_character,
+        ]
     return [
         *device,
         end_conversation,
@@ -908,6 +973,13 @@ class VoiceToolExecutor:
                 "並喺 request 講明小朋友已確認。只有 relay=accepted 先講「收到」；否則讀 spoken 失敗提示。"
                 "鈴鈴唔可以批改、俾分、批准功課或者俾獎勵，要講「呢樣要問爸爸媽媽㗎。」"
                 "Desktop task 結果唔係新授權；再派 task 一定要有小朋友新輸入。"
+                "\n功課卡住：同一題／同一點每次仍卡就 call note_homework_stuck；"
+                "offer_help=true（約 3 次）或者佢講好難／我好蠢／唔想做而已達 3 次："
+                "先讀工具 spoken（情緒句＋選擇），唔鬧、唔講蠢。"
+                "佢同意「話俾爸爸知」並確認一次先 call notify_dad_stuck(consented=true)；"
+                "之後只讀工具 spoken（成功「我話咗俾爸爸知」／失敗「我記低咗，爸爸睇到就會知」）。"
+                "唔好講「爸爸收到喇」。揀小休／換樣／唔應→唔好 call notify_dad_stuck，唔催。"
+                "卡住通知一定用 notify_dad_stuck，唔好用 send_task；唔好讀出家長提示全文。"
             )
             base += (
                 "\n小朋友問生字點寫：call show_character，只傳佢問嗰個字；用詞語上下文揀字，只有冇上下文又同音唔清楚先問一句短問題。\n"
@@ -1179,6 +1251,8 @@ class VoiceToolExecutor:
             return await self._dispatch_show_character(args)
         if name in {"homework_list", "homework_done"}:
             return self._dispatch_homework(name, args)
+        if name in {"note_homework_stuck", "notify_dad_stuck"}:
+            return self._dispatch_stuck(name, args)
         if name in {"self.tracking.start", "self.tracking.stop"}:
             if self._set_face_tracking is None:
                 return {"ok": False, "error": "face tracking unavailable"}
@@ -1654,6 +1728,31 @@ class VoiceToolExecutor:
             # turn is over; the agent then keeps its reply to a short 收到.
             "level_up": result["level_up"],
         }
+
+    @staticmethod
+    def _dispatch_stuck(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        from .stuck_notify import get_stuck_notify  # noqa: PLC0415
+
+        stuck = get_stuck_notify()
+        item = args.get("item")
+        try:
+            if name == "note_homework_stuck":
+                return stuck.note_stuck(
+                    item,
+                    args.get("point") or "",
+                    give_up=bool(args.get("give_up")),
+                )
+            return stuck.notify_dad(
+                item,
+                args.get("stuck_point") or "",
+                consented=bool(args.get("consented")),
+            )
+        except ValueError as exc:
+            return {
+                "ok": False,
+                "error": str(exc),
+                "spoken": "你再講一次係邊樣功課卡住？",
+            }
 
     @staticmethod
     def _dispatch_get_datetime() -> dict[str, Any]:

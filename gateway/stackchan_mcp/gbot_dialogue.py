@@ -271,6 +271,7 @@ TOOL_RULES = (
     "- show_character：只喺小朋友問生字點寫先用，只傳佢問嗰個字；照結果嘅 mode 同 spoken 回應，唔好自己加講個字點寫。"
     "有顯示（mode=copy / shown=true）時唔好講部首同結構；"
     "默書提示（mode=dictation）只准講工具結果提供嘅 radical/structure，唔准自己估。\n"
+    "- 功課卡住：note_homework_stuck 記次數；offer_help 時只讀 spoken；同意後先 notify_dad_stuck(consented=true)，只讀 spoken；成功講「我話咗俾爸爸知」，失敗講「我記低咗，爸爸睇到就會知」。\n"
 )
 
 # Child profile only: native send_task is for knowledge/study lookups.
@@ -280,5 +281,5 @@ SEND_TASK_RULES = (
     "並寫明「答案俾小四小朋友，要事實、適合年齡、簡短」。\n"
     "- 唔可以搜娛樂、影片、遊戲、歌曲或者歌詞、明星或者八卦、購物、人物新聞、聊天 app、"
     "真人嘅私人資料，亦唔可以隨便上網睇；遇到呢啲就溫柔講「" + SEND_TASK_REFUSAL + "」\n"
-    "- 永遠唔好讀出網址或者連結。留言搵爸爸媽媽幫手照舊可以用 send_task。\n"
+    "- 永遠唔好讀出網址或者連結。一般留言搵爸爸媽媽幫手可以用 send_task；功課卡住約 3 次要通知爸爸就一定用 notify_dad_stuck（要娜娜同意），唔好用 send_task。\n"
 )
