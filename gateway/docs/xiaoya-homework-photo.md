@@ -72,3 +72,54 @@ Firmware/runtime follow-ups:
   real device/cloud delivery requires hardware acceptance testing.
 
 No firmware was flashed; no game logic was reimplemented.
+
+## 42b: OV5640 WS text capture
+
+The default `HomeworkPhoto.capture` is now the lazy `PhotoCapture` adapter.
+The current ESP32 connection binds its forms sender and event loop at hello;
+replacement/disconnect fails pending requests. Voice snap awaits capture on a
+worker thread, so the receive loop remains available. Forms state and UI result
+processing stay on the event loop. An explicit cancel rejects late results before
+saving; simultaneous snaps are rejected.
+
+The adapter sends shutter UI first, then a separate capture authority:
+
+```json
+{"type":"system","command":"xiaoya.photo","nonce":"<32 URL-safe random characters>"}
+```
+
+Guide/shutter/done/cancel phases never authorize sensor capture. Only one pending
+nonce exists; its deadline is 18 seconds total (send included, maximum 20).
+Only events from the active device connection with an exact pending nonce are
+accepted. Unsolicited, stale and replayed results are ignored. Transport identity
+and authorization are inherited from the existing device connection; no new
+HTTP capture endpoint or cloud upload is introduced.
+
+A single frame may arrive as WS **text JSON**:
+
+```json
+{"type":"xiaoya","event":"homework_photo","status":"frame","nonce":"<echo>","mime":"image/jpeg","encoding":"base64","data":"<base64>"}
+```
+
+The SpotPear firmware uses bounded chunks instead:
+
+```json
+{"type":"xiaoya","event":"homework_photo","status":"uploading","nonce":"<echo>","mime":"image/jpeg","encoding":"base64","bytes":12345,"chunks":5}
+{"type":"xiaoya","event":"homework_photo","status":"chunk","nonce":"<echo>","i":0,"data":"<base64>"}
+{"type":"xiaoya","event":"homework_photo","status":"complete","nonce":"<echo>"}
+```
+
+`i` is zero-based and strictly sequential; each chunk is independently base64
+encoded (firmware: up to 3072 decoded bytes / 4096 base64 characters). Gateway
+requires exact announced byte and chunk counts, strict base64 and JPEG SOI/EOI,
+and caps decoded JPEG bytes at 1 MiB and chunk count at 512. Firmware caps the
+encoded JPEG at 200 KiB before any data is sent. Binary WS remains Opus-only.
+Malformed/oversized uploads and matching `camera_unavailable`, `capture_failed`
+or `too_large` statuses raise OSError into the existing retry/冇相 path. Pending
+buffers are cleared on completion, cancellation, timeout and connection change.
+
+JPEG events are consumed before any cloud handler. Only this explicit homework
+path saves a private local photo under `~/.stackchan/captures/homework`, using
+the existing 24-hour cleanup policy. Presence frames are never accepted here.
+The parent helper notification still uses the existing saved-path delivery;
+this change does not verify Mac permissions or parent attachment delivery live.

@@ -577,6 +577,10 @@ class ESP32Manager:
                         )
                         from .xiaoya_forms import get_xiaoya_forms
 
+                        from .camera_presence import get_camera_presence
+                        get_camera_presence().set_suppress("camera_detector", True)
+                        from .photo_capture import get_photo_capture
+                        get_photo_capture().bind(get_xiaoya_forms().send_device, asyncio.get_running_loop())
                         form_task = get_xiaoya_forms().register_sender(
                             connection.send_xiaoya, push=False
                         )
@@ -610,6 +614,16 @@ class ESP32Manager:
                         await cloud_proxy.send_device_json(data)
 
                 elif msg_type == "xiaoya":
+                    if connection is not self._connection:
+                        continue
+                    if data.get("event") == "homework_photo":
+                        from .photo_capture import get_photo_capture
+                        get_photo_capture().note_device_event(data)
+                        continue  # JPEG never reaches any cloud handler
+                    if data.get("event") in {"presence_hit", "presence_status"}:
+                        from .camera_presence import get_camera_presence
+                        get_camera_presence().note_device_event(data)
+                        continue  # metadata only; reject image fields locally
                     if data.get("event") == "battery":
                         percent = data.get("percent")
                         if type(percent) is int:
@@ -647,6 +661,10 @@ class ESP32Manager:
         finally:
             if cloud_proxy is not None:
                 await cloud_proxy.stop()
+            if connection is self._connection:
+                from .photo_capture import get_photo_capture
+                from .xiaoya_forms import get_xiaoya_forms
+                get_photo_capture().unbind(get_xiaoya_forms().send_device)
             connection.disconnect()
             async with self._lock:
                 if self._connection is connection:

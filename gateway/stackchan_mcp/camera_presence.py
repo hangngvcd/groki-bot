@@ -6,6 +6,7 @@ The board camera detector supplies face hits; this module never starts a camera.
 
 from dataclasses import dataclass
 import time
+import math
 
 LEAVE_ABSENCE_S = 120.0
 ENABLE_GRACE_S = 10.0
@@ -33,6 +34,7 @@ class CameraPresence:
         self._pending_redo = None
         self._index = 0
         self._messages = []
+        self._actions = []
         self._last_face = clock()
         self._grace_until = clock()
         self._away = False
@@ -77,11 +79,27 @@ class CameraPresence:
 
     def note_device_event(self, message):
         """Board lifecycle hook; begin/end events are firmware follow-ups."""
-        if message.get("event") == "presence_activity":
+        if message.get("event") == "presence_status":
+            if (set(message) <= {"type", "event", "running", "hits_enabled"} and
+                    type(message.get("running")) is bool and type(message.get("hits_enabled")) is bool):
+                self.set_suppress("camera_detector", not (message["running"] and message["hits_enabled"]))
+        elif message.get("event") == "presence_hit":
+            confidence = message.get("confidence")
+            if (set(message) <= {"type", "event", "confidence"} and
+                    type(confidence) in (int, float) and math.isfinite(confidence) and
+                    0.5 <= confidence <= 1.0):
+                action = self.note_face()
+                if action is not None:
+                    self._actions.append(action)
+        elif message.get("event") == "presence_activity":
             reason = message.get("reason")
             active = message.get("active")
             if reason in {"photo", "evolve", "intro"} and type(active) is bool:
                 self.set_suppress(reason, active)
+
+    def drain_actions(self):
+        actions, self._actions = self._actions, []
+        return actions
 
     def set_pending_redo(self, spoken_or_clip=None):
         self._pending_redo = spoken_or_clip

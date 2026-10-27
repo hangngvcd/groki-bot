@@ -88,3 +88,29 @@ Firmware follow-ups:
 - Emit photo/evolve/intro lifecycle events, covering first boot and cancellations;
   ticket 33 should suppress for the full photo interaction, not just upload.
 - No firmware was flashed by this ticket.
+
+## 42b: device metadata hits and readiness
+
+```json
+{"type":"xiaoya","event":"presence_hit","confidence":0.7}
+{"type":"xiaoya","event":"presence_status","running":true,"hits_enabled":false}
+```
+
+`presence_hit` accepts only type/event/confidence fields, a finite numeric
+confidence in [0.5, 1.0], and never image fields. It calls `note_face()` locally;
+any resulting welcome/redo action is drained by the existing presence poller.
+Both events stop in the local ESP32 handler and never reach cloud handlers.
+
+`presence_status` requires boolean running/hits_enabled fields. A failed probe,
+or a working camera without an enabled detector, suppresses leave/welcome
+policy with `camera_detector`. Every new device connection starts suppressed
+until its status arrives. The firmware camera badge can light after a successful
+OV5640 probe while this policy remains suppressed. Parent/session ON remains a
+request, not proof of a running detector. Existing UI phase suppression remains.
+
+The experimental firmware heuristic is OFF by default. It samples tiny grayscale
+frames locally at <=1 Hz only while presence is requested and photo UI is inactive.
+It emits confidence 0.7 for a bounded mean/variance/mid-brightness band; a textured
+empty desk can pass. **Heuristic only until face model.** Do not enable leave/
+welcome acceptance until dad has checked both occupied and empty scenes live.
+No presence frames are saved, uploaded, or made available through HTTP.

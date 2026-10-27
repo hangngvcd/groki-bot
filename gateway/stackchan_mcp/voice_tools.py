@@ -1328,6 +1328,9 @@ class VoiceToolExecutor:
             games = get_xiaoya_games()
             return games.consume_invite_start() if games.has_pending() else games.refuse_play(get_xiaoya_forms().snapshot())
         if name in {"homework_list", "homework_done", "homework_photo_snap", "homework_photo_cancel"}:
+            if name == "homework_photo_snap":
+                from .homework_photo import get_homework_photo
+                return await get_homework_photo().attempt_capture_async()
             return self._dispatch_homework(name, args)
         if name in {"note_homework_stuck", "notify_dad_stuck"}:
             return self._dispatch_stuck(name, args)

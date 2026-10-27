@@ -189,6 +189,7 @@ class Gateway:
         self._sync_presence_suppression()
         action = self.camera_presence.tick()
         actions, self._presence_actions = self._presence_actions, []
+        actions.extend(self.camera_presence.drain_actions())
         if action is not None:
             actions.append(action)
         forms = get_xiaoya_forms()

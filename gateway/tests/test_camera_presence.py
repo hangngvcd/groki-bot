@@ -213,3 +213,47 @@ async def test_track_and_idle_poll_deliver_local_lines(tmp_path, monkeypatch):
         assert lines[1]["clip"] == "vo.welcome_back.1"
     finally:
         forms.unregister_sender(sender)
+
+
+@pytest.mark.parametrize("confidence", [None, True, "0.7", -1, 0.49, 1.01, float("nan"), float("inf")])
+def test_device_presence_rejects_bad_confidence(confidence):
+    now = [0.0]
+    p = CameraPresence(clock=lambda: now[0])
+    p.start_homework_session()
+    now[0] = 121
+    p.note_device_event({"type": "xiaoya", "event": "presence_hit", "confidence": confidence})
+    assert p.tick().kind == "leave_tip"
+    assert p.drain_actions() == []
+
+
+def test_device_presence_hits_are_metadata_only_and_queue_return():
+    now = [0.0]
+    p = CameraPresence(clock=lambda: now[0])
+    p.start_homework_session()
+    now[0] = 121
+    assert p.tick().kind == "leave_tip"
+    hit = {"type": "xiaoya", "event": "presence_hit", "confidence": 0.7}
+    p.note_device_event({**hit, "data": "image forbidden"})
+    assert p.drain_actions() == []
+    p.note_device_event(hit)
+    assert p.drain_actions()[0].kind == "welcome"
+    assert p.drain_actions() == []
+    now[0] = 200
+    p.note_device_event(hit)
+    now[0] = 310
+    assert p.tick() is None
+
+
+def test_disabled_detector_suppresses_false_leave_until_hits_available():
+    now = [0.0]
+    p = CameraPresence(clock=lambda: now[0])
+    p.start_homework_session()
+    p.note_device_event({"event": "presence_status", "running": True, "hits_enabled": False})
+    now[0] = 500
+    assert p.tick() is None
+    p.note_device_event({"event": "presence_status", "running": True, "hits_enabled": True})
+    assert not p.is_suppressed()
+    now[0] = 619
+    assert p.tick() is None
+    now[0] = 620
+    assert p.tick().kind == "leave_tip"

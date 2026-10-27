@@ -1,5 +1,6 @@
 """Explicit homework photos, separate from metadata-only desk presence."""
 
+import asyncio
 from datetime import datetime
 import logging
 from pathlib import Path
@@ -58,11 +59,15 @@ class HomeworkPhoto:
         captures_dir=None,
     ):
         self.forms, self.presence = forms, presence
-        self.capture = capture or self._unavailable
+        if capture is None:
+            from .photo_capture import get_photo_capture
+            capture = get_photo_capture().capture
+        self.capture = capture
         self.assess, self.send = assess, send
         self.captures_dir = Path(
             captures_dir or "~/.stackchan/captures/homework"
         ).expanduser()
+        self._capturing = False
         self.item = None
         self.attempts = 0
         self.asked = False
@@ -127,19 +132,63 @@ class HomeworkPhoto:
             "device_messages": [self.message("guide")],
         }
 
-    def attempt_capture(self):
+    def _start_capture(self):
         if self.item is None:
             return {"ok": False, "error": "no_photo_pending"}
+        if self._capturing:
+            return {"ok": False, "error": "capture_pending"}
+        self._capturing = True
         self.attempts += 1
+        return None
+
+    def attempt_capture(self):
+        error = self._start_capture()
+        if error:
+            return error
+        item = self.item
+        try:
+            try:
+                frame = self.capture()
+            except Exception:
+                logger.warning("Homework capture failed", exc_info=True)
+                frame = None
+            return self._finish_capture(frame, item)
+        finally:
+            self._capturing = False
+
+    async def attempt_capture_async(self):
+        error = self._start_capture()
+        if error:
+            return error
+        item = self.item
+        try:
+            try:
+                frame = await asyncio.to_thread(self.capture)
+            except Exception:
+                logger.warning("Homework capture failed", exc_info=True)
+                frame = None
+            # State changes, forms scheduling and UI results stay on the loop.
+            return self._finish_capture(frame, item)
+        except asyncio.CancelledError:
+            self._cancel_capture()
+            raise
+        finally:
+            self._capturing = False
+
+    def _finish_capture(self, frame, item):
+        if self.item is not item:
+            return {"ok": True, "photo_pending": self.item is not None, "cancelled": True}
         path = None
         try:
-            frame = self.capture()
+            if frame is None:
+                raise OSError("no camera frame")
             path = self.save_frame(frame) if isinstance(frame, bytes) else str(frame)
             quality = self.assess(path)
         except Exception:
-            logger.warning("Homework capture failed", exc_info=True)
             quality = "blank"
-        messages = [self.message("shutter")] if path else []
+        from .photo_capture import PhotoCapture
+        adapter = isinstance(getattr(self.capture, "__self__", None), PhotoCapture)
+        messages = [self.message("shutter")] if path and not adapter else []
         if quality == "ok":
             result = self.complete(True, path)
         elif self.attempts < 3:
@@ -200,7 +249,14 @@ class HomeworkPhoto:
             self.presence.set_suppress("photo", False)
             self.cleanup()
 
+    def _cancel_capture(self):
+        from .photo_capture import PhotoCapture
+        adapter = getattr(self.capture, "__self__", None)
+        if isinstance(adapter, PhotoCapture):
+            adapter.cancel()
+
     def cancel(self):
+        self._cancel_capture()
         self.item, self.attempts, self.asked = None, 0, False
         self.presence.set_suppress("photo", False)
         return {
