@@ -395,10 +395,13 @@ def build_function_declarations(*, types=None) -> list[Any]:
         name="show_character",
         description=(
             "Call only when the child asks how to write a 生字（個字點寫）. "
-            "Copy homework (抄): shows the full character for 5 s. "
-            "Dictation (默, or unknown): shows nothing; give a verbal 部首/結構 hint only. "
-            "In 讀默 (read-aloud dictation) you may re-read the dictated sentence, but "
-            "never spell out how to write the character; in 背默 never say it."
+            "Copy homework (抄): shows the full character on screen; follow spoken only—"
+            "never add 部首/結構. "
+            "Dictation (默, or unknown): shows nothing; speak ONLY radical/structure "
+            "fields from the tool result when present, otherwise only encourage "
+            "(never invent 部首/結構). "
+            "In 讀默 you may re-read the dictated sentence, but never spell out how "
+            "to write the character; in 背默 never say the character itself."
         ),
         parameters=types.Schema(
             type="OBJECT",
@@ -908,9 +911,11 @@ class VoiceToolExecutor:
             )
             base += (
                 "\n小朋友問生字點寫：call show_character，只傳佢問嗰個字；用詞語上下文揀字，只有冇上下文又同音唔清楚先問一句短問題。\n"
-                "mode=copy（抄生字）、shown=true：個字會喺畫面出10秒，叫佢睇清楚，收起之後自己喺簿寫一次。\n"
+                "mode=copy（抄生字）、shown=true：個字會喺畫面出10秒，叫佢睇清楚，收起之後自己喺簿寫一次；"
+                "有顯示時唔好講部首同結構，只讀 spoken。\n"
                 "mode=dictation（默書或者分唔到）、shown=false：永遠唔顯示、唔逐筆串出成個字點寫；"
-                "背默就唔好講出個字，只可以用把聲講部首同結構（有把握先講），否則鼓勵佢自己諗；"
+                "背默就唔好講出個字；默書提示只准講工具結果提供嘅 radical/structure（香港廣東話名，例如三點水），"
+                "唔准自己估部首同結構；結果冇呢啲欄位就只鼓勵佢自己諗；"
                 "讀默就可以重讀原文嗰句，但都唔顯示、唔串出點寫。\n"
                 "默書分讀默（鈴鈴逐句讀、娜娜寫）同背默（唔讀出）；唔清楚就問一次「係讀默定背默？」。\n"
                 "唔好讀出粵拼，唔好問佢揀抄定默（顯示由功課清單決定），回覆要短。"
@@ -1517,6 +1522,7 @@ class VoiceToolExecutor:
 
     @staticmethod
     async def _dispatch_show_character(args: dict[str, Any]) -> dict[str, Any]:
+        from .char_structure import lookup_char_structure
         from .xiaoya_forms import get_xiaoya_forms
         from .xiaoya_glyph import (
             DEFAULT_HOLD_MS,
@@ -1546,27 +1552,49 @@ class VoiceToolExecutor:
                 and not item.get("done")
                 for item in items
             )
-            spoken = (
-                "今日要默書，我唔出個字。我講吓部首同結構，你自己諗吓。"
-                if has_dictation
-                else "今日清單未有抄生字功課，我唔出個字住。我講吓部首同結構俾你諗吓。"
-            )
-            return {
+            # Hint only the first glyph; multi-char requests stay encourage-only
+            # unless we later extend the tool to per-char hints.
+            hint_char = c[0]
+            hints = lookup_char_structure(hint_char)
+            if hints:
+                spoken = (
+                    "今日要默書，我唔出個字。我講吓提示，你自己諗吓。"
+                    if has_dictation
+                    else "今日清單未有抄生字功課，我唔出個字住。我講吓提示俾你諗吓。"
+                )
+                note = (
+                    "Dictation: never show, spell or go stroke-by-stroke through "
+                    "the full character, and do not list every component. In 背默 "
+                    "never say the character or the text; in 讀默 you may re-read "
+                    "the dictated sentence, nothing more. Speak ONLY the radical/"
+                    "structure fields provided in this result (HK Cantonese nicknames); "
+                    "never invent 部首 or 結構. "
+                    + SHOW_CHARACTER_FRESH_NOTE
+                )
+            else:
+                spoken = (
+                    "今日要默書，我唔出個字。你自己諗吓。"
+                    if has_dictation
+                    else "今日清單未有抄生字功課，我唔出個字住。你自己諗吓。"
+                )
+                note = (
+                    "Dictation: never show, spell or go stroke-by-stroke through "
+                    "the full character, and do not list every component. In 背默 "
+                    "never say the character or the text; in 讀默 you may re-read "
+                    "the dictated sentence, nothing more. No radical/structure was "
+                    "provided—only encourage (「你自己諗吓」); never invent 部首 or 結構. "
+                    + SHOW_CHARACTER_FRESH_NOTE
+                )
+            result = {
                 "ok": True,
                 "shown": False,
                 "mode": "dictation",
                 "character": c,
                 "spoken": spoken,
-                "note": (
-                    "Dictation: never show, spell or go stroke-by-stroke through "
-                    "the full character, and do not list every component. In 背默 "
-                    "never say the character or the text; in 讀默 you may re-read "
-                    "the dictated sentence, nothing more. You may "
-                    "describe only its radical and overall structure (部首、結構), "
-                    "only if you are sure; otherwise just encourage. "
-                    + SHOW_CHARACTER_FRESH_NOTE
-                ),
+                "note": note,
             }
+            result.update(hints)
+            return result
         try:
             png = await asyncio.to_thread(render_glyph_png, c)
             sent = await forms.send_device(glyph_message(png))
@@ -1575,10 +1603,23 @@ class VoiceToolExecutor:
         if not sent:
             return {"ok": False, "shown": False, "mode": "copy",
                     "spoken": "我而家顯示唔到個字，你可以問吓爸爸媽媽。",
-                    "note": SHOW_CHARACTER_FRESH_NOTE}
-        return {"ok": True, "shown": True, "mode": "copy", "character": c,
-                "seconds": DEFAULT_HOLD_MS // 1000,
-                "spoken": "睇清楚個字，收起咗之後自己喺簿度寫一次。"}
+                    "note": (
+                        "Copy mode but display failed. Do not invent 部首/結構. "
+                        + SHOW_CHARACTER_FRESH_NOTE
+                    )}
+        return {
+            "ok": True,
+            "shown": True,
+            "mode": "copy",
+            "character": c,
+            "seconds": DEFAULT_HOLD_MS // 1000,
+            "spoken": "睇清楚個字，收起咗之後自己喺簿度寫一次。",
+            "note": (
+                "Copy/shown: the glyph is on screen. Follow spoken only—"
+                "do NOT add 部首 or 結構 commentary. "
+                + SHOW_CHARACTER_FRESH_NOTE
+            ),
+        }
 
     @staticmethod
     def _dispatch_homework(name: str, args: dict[str, Any]) -> dict[str, Any]:

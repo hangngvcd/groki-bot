@@ -228,7 +228,8 @@ DICTATION_RULES = (
     "佢叫你再讀就重讀同一句。篇文由娜娜讀俾你聽或者提供，或者用 send_task 查；"
     "唔肯定原文就照實講，唔好自己作。\n"
     "- 背默：永遠唔好讀出篇文、句子或者個字，唔顯示、唔逐筆串出；"
-    "只可以講部首同結構做提示，否則鼓勵佢自己諗。\n"
+    "默書提示只准講工具結果提供嘅 radical/structure（部首同結構），唔准自己估；"
+    "結果冇呢啲欄位就只鼓勵佢自己諗。\n"
 )
 
 
@@ -267,7 +268,9 @@ TOOL_RULES = (
     "- 只可以用今次對話有提供嘅工具。電腦任務用原生 send_task(request)；"
     "要 relay=accepted 先可以話已經受理。冇 send_task 就即係唔可以交電腦任務。\n"
     "- 工具結果有 spoken 嘅話，只讀 spoken；唔好讀 relay、errorClass、錯誤碼、欄位名或者除錯資料。\n"
-    "- show_character：只喺小朋友問生字點寫先用，只傳佢問嗰個字；照結果嘅 mode 同 spoken 回應，唔好自己加講個字點寫。\n"
+    "- show_character：只喺小朋友問生字點寫先用，只傳佢問嗰個字；照結果嘅 mode 同 spoken 回應，唔好自己加講個字點寫。"
+    "有顯示（mode=copy / shown=true）時唔好講部首同結構；"
+    "默書提示（mode=dictation）只准講工具結果提供嘅 radical/structure，唔准自己估。\n"
 )
 
 # Child profile only: native send_task is for knowledge/study lookups.

@@ -216,9 +216,11 @@ async def test_undeterminable_mode_shows_nothing(monkeypatch, tmp_path):
         result = await executor.execute("show_character", {"character": "蝶"})
         assert result["mode"] == "dictation" and result["shown"] is False
         assert "png" not in result
-        assert "部首" in result["note"] or "radical" in result["note"]
+        assert "radical" in result["note"] or "部首" in result["note"]
+        assert "never invent" in result["note"]
         assert "默書" not in result["spoken"]
         assert "未有抄生字功課" in result["spoken"]
+        assert result.get("structure") == "左右"
         sender.assert_not_awaited()
     finally:
         await executor.close()
@@ -230,6 +232,8 @@ def test_child_instructions_cover_both_modes(monkeypatch):
     text = VoiceToolExecutor().instructions()
     assert "show_character" in text
     assert "部首同結構" in text and "永遠唔顯示" in text and "10秒" in text
+    assert "有顯示時唔好講部首同結構" in text
+    assert "唔准自己估" in text
     assert "粵拼" in text
 
 
@@ -296,7 +300,10 @@ async def test_dictation_wording_matches_list(monkeypatch, tmp_path, titles, don
         assert result["mode"] == "dictation" and result["shown"] is False
         assert ("今日要默書" in result["spoken"]) is dictation_words
         if not dictation_words:
-            assert result["spoken"] == "今日清單未有抄生字功課，我唔出個字住。我講吓部首同結構俾你諗吓。"
+            # 蝶 has offline structure/radical → tool promises a hint, not invention.
+            assert result["spoken"] == "今日清單未有抄生字功課，我唔出個字住。我講吓提示俾你諗吓。"
+            assert result.get("structure") == "左右"
+            assert "虫" in result.get("radical", "")
         sender.assert_not_awaited()
     finally:
         await executor.close()
