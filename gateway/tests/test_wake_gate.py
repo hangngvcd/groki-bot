@@ -644,7 +644,7 @@ def test_lingling_preset(monkeypatch):
         monkeypatch.setenv("STACKCHAN_WAKE_PHRASE", phrase)
         assert _keyword_from_env() == LINGLING_WAKE_KEYWORD
     assert keywords_file_body(LINGLING_WAKE_KEYWORD) == (
-        "l íng l íng :1 #0.05 @鈴鈴\nl ìng l ìng :1 #0.05 @鈴鈴\n"
+        "l íng l íng :1 #0.05 @鈴鈴\nl ìng l ìng :3 #0.05 @鈴鈴\n"
     )
     variants = parse_keyword_variants(LINGLING_WAKE_KEYWORD)
     assert [v.tag for v in variants] == ["鈴鈴", "鈴鈴"]

@@ -52,10 +52,10 @@ HEY_GROKI_WAKE_KEYWORD_VARIANTS = (
     "HH EY1 G R AH1 K IY0 @hey_groki_ah",
 )
 XIAOBAI_WAKE_KEYWORD = "x iǎo b ái :1 #0.02 @小白|S UW1 B AA1 S UW1 B AA1 :10 #0.02 @小白小白"
-# 鈴鈴: Mandarin líng líng plus a Cantonese-leaning lìng lìng line (ling4 ling4).  Synthetic eval
-# (kws_eval C1): 85% hits overall (HK voices 69%, CN 93%, TW 96%), 10 false triggers in 57 min of
-# deliberately confusable negatives.  Homophones (玲玲 / 零零) also wake it.
-LINGLING_WAKE_KEYWORD = "l íng l íng :1 #0.05 @鈴鈴|l ìng l ìng :1 #0.05 @鈴鈴"
+# 鈴鈴: Mandarin líng líng plus a Cantonese-leaning lìng lìng line (ling4 ling4).
+# C2 (dad 2026-10-27): boost Cantonese line to :3 (synth HK 69%→76%, more false triggers).
+# Synthetic eval (kws_eval): see tools/kws_eval/README.md C1 vs C2.
+LINGLING_WAKE_KEYWORD = "l íng l íng :1 #0.05 @鈴鈴|l ìng l ìng :3 #0.05 @鈴鈴"
 KWS_MODEL_NAME = "sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20"
 DEFAULT_SAMPLE_RATE = 16_000
 DEFAULT_PREROLL_S = 2.0
