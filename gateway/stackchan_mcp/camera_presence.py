@@ -10,8 +10,8 @@ import math
 
 LEAVE_ABSENCE_S = 120.0
 ENABLE_GRACE_S = 10.0
-WELCOME_CLIPS = tuple(f"vo.welcome_back.{i}" for i in range(1, 7))
-JOKE_CLIPS = tuple(f"vo.joke.{i}" for i in range(1, 4))
+WELCOME_CLIPS = ("vo.welcome_back.1", "vo.welcome_back.2")  # packed
+JOKE_CLIPS = ("vo.joke.1",)  # packed; .2/.3 deferred
 
 
 def presence_message(on: bool) -> dict:
@@ -25,6 +25,30 @@ class PresenceAction:
     spoken: str = ""
 
 
+class ClipPool:
+    """Round robin with at most five recent ids excluded when possible."""
+
+    def __init__(self, clips):
+        if not clips:
+            raise ValueError("clip pool must be nonempty")
+        self.clips = tuple(clips)
+        self.cursor = 0
+        self.recent = []
+        self.window = min(5, len(self.clips) - 1)
+
+    def next(self):
+        for _ in range(len(self.clips)):
+            clip = self.clips[self.cursor]
+            self.cursor = (self.cursor + 1) % len(self.clips)
+            if clip not in self.recent:
+                break
+        else:
+            clip = self.clips[self.cursor]
+            self.cursor = (self.cursor + 1) % len(self.clips)
+        self.recent = ([clip] + self.recent)[:self.window]
+        return clip
+
+
 class CameraPresence:
     def __init__(self, *, clock=time.monotonic, settings_getter=lambda: {}):
         self.clock = clock
@@ -32,7 +56,7 @@ class CameraPresence:
         self._manual_off = False
         self._suppress = set()
         self._pending_redo = None
-        self._index = 0
+        self._clips = ClipPool(WELCOME_CLIPS + JOKE_CLIPS)
         self._messages = []
         self._actions = []
         self._last_face = clock()
@@ -140,9 +164,7 @@ class CameraPresence:
             return None
         if self._pending_redo:
             return self.consume_pending_redo()
-        pool = WELCOME_CLIPS + JOKE_CLIPS
-        clip = pool[self._index % len(pool)]
-        self._index += 1
+        clip = self._clips.next()
         return PresenceAction("welcome", clip)
 
 

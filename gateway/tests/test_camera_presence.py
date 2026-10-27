@@ -257,3 +257,25 @@ def test_disabled_detector_suppresses_false_leave_until_hits_available():
     assert p.tick() is None
     now[0] = 620
     assert p.tick().kind == "leave_tip"
+
+
+@pytest.mark.parametrize("clips", [("a", "b"), ("a", "b", "c"), tuple("abcdefg")])
+def test_clip_pool_recent_window(clips):
+    from stackchan_mcp.camera_presence import ClipPool
+
+    pool = ClipPool(clips)
+    history = []
+    for _ in range(40):
+        clip = pool.next()
+        assert clip not in history[-min(5, len(clips) - 1):]
+        history.append(clip)
+
+
+def test_single_joke_and_exhausted_pool():
+    from stackchan_mcp.camera_presence import ClipPool, JOKE_CLIPS, WELCOME_CLIPS
+
+    assert WELCOME_CLIPS == ("vo.welcome_back.1", "vo.welcome_back.2")
+    assert JOKE_CLIPS == ("vo.joke.1",)
+    for clips in (JOKE_CLIPS, ("vo.joke.1",) * 3):
+        pool = ClipPool(clips)
+        assert [pool.next() for _ in range(30)] == ["vo.joke.1"] * 30

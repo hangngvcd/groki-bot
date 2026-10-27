@@ -114,3 +114,11 @@ It emits confidence 0.7 for a bounded mean/variance/mid-brightness band; a textu
 empty desk can pass. **Heuristic only until face model.** Do not enable leave/
 welcome acceptance until dad has checked both occupied and empty scenes live.
 No presence frames are saved, uploaded, or made available through HTTP.
+
+## Pack42b inventory
+
+Return rotation uses packed `vo.welcome_back.1`, `.2`, and `vo.joke.1`,
+with a recent window of min(5, pool size - 1). A single-clip pool always returns
+its clip. Leave tips use `vo.leave_wait.1`. Welcome .3+ and joke .2+ are deferred
+for pack headroom; praise.1 is also deferred. Break expiry has `vo.break_end.1`
+in pack42b (firmware falls back to `sfx.break_end`).
