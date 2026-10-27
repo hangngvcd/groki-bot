@@ -171,6 +171,11 @@ class HomeworkPhoto:
                 sent = True
             except Exception:
                 logger.warning("Homework parent send failed", exc_info=True)
+            from .debug_status import get_debug_status
+
+            usage = get_debug_status().usage
+            if usage:
+                usage.photo(sent and has_photo)
             return {
                 "ok": True,
                 "item": self.item["title"],

@@ -97,3 +97,5 @@ this text.
 - 輸出有「家長認證失敗」：「家長 API 認證失敗，請喺 Mac 檢查家長 token 設定，唔使將 token 貼俾我。」
 - 搵唔到 ~/.stackchan/bin/stackchan-parent：話家長未裝背景服務，叫佢跟手冊行安裝腳本。
 ```
+
+每日向家長報一次用量：用 `xiaoya_usage` 或 `stackchan-parent usage --text` 讀香港日期嘅本地累計，照實講明未有紀錄或中途先開始計。唔重複報告，唔包含 token、秘密、對話內容或相片。

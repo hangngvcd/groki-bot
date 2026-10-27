@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import sys
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlencode
 from urllib.request import Request, ProxyHandler, HTTPRedirectHandler, build_opener
 
 
@@ -96,6 +96,15 @@ async def run_mcp(client):
     from mcp.server.fastmcp import FastMCP
 
     server = FastMCP("xiaoya-parent")
+
+    @server.tool()
+    async def xiaoya_usage(date: str | None = None) -> dict:
+        """Read local daily usage counters for a Hong Kong date (last 14 days)."""
+        try:
+            endpoint = "usage" + ("?" + urlencode({"date": date}) if date else "")
+            return await asyncio.to_thread(client.call, endpoint)
+        except RuntimeError as exc:
+            return {"ok": False, "error": str(exc)}
 
     @server.tool()
     async def xiaoya_status() -> dict:
@@ -200,10 +209,12 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="小芽家長助手（鈴鈴）/ parent settings")
     parser.add_argument("--url", default="http://127.0.0.1:18772")
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("status", "settings", "set", "homework", "intro", "volume", "mcp"):
+    for name in ("status", "usage", "settings", "set", "homework", "intro", "volume", "mcp"):
         command = commands.add_parser(name)
         command.add_argument("--url", default=argparse.SUPPRESS)
-        if name == "status":
+        if name == "usage":
+            command.add_argument("--date")
+        if name in {"status", "usage"}:
             command.add_argument("--text", action="store_true")
         if name == "set":
             command.add_argument("key")
@@ -219,6 +230,13 @@ def main(argv=None):
         client = ParentClient(args.url)
         if args.command == "mcp":
             asyncio.run(run_mcp(client))
+            return 0
+        if args.command == "usage":
+            from .usage_stats import format_usage
+
+            endpoint = "usage" + ("?" + urlencode({"date": args.date}) if args.date else "")
+            data = client.call(endpoint)
+            print(format_usage(data["usage"], data["date"]) if args.text else json.dumps(data, ensure_ascii=False, indent=2))
             return 0
         if args.command == "volume":
             if args.value is not None and not 0 <= args.value <= 100:
@@ -287,6 +305,7 @@ def main(argv=None):
             ]
             if pending:
                 print("未推到部機（韌體未支援，只係儲存咗）：" + "、".join(pending))
+            print("今日用量：stackchan-parent usage --text")
         else:
             print(json.dumps(data, ensure_ascii=False, indent=2))
         return 0

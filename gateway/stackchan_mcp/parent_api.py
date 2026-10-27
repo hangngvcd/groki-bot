@@ -139,7 +139,7 @@ async def helper_health():
         return {"reachable": False, "agent_configured": False, "desktop_enabled": False}
 
 
-def create_parent_app(token, settings=None, debug_status=None, forms=None):
+def create_parent_app(token, settings=None, debug_status=None, forms=None, usage=None):
     device_token = os.getenv("STACKCHAN_TOKEN", "")
     if device_token and hmac.compare_digest(token.encode(), device_token.encode()):
         logger.error("Parent API refused: parent token equals device token")
@@ -182,6 +182,17 @@ def create_parent_app(token, settings=None, debug_status=None, forms=None):
             debug_status.snapshot(), settings.get(), os.environ, await helper_health()
         )
         return web.json_response({"ok": True, "status": payload})
+
+    async def get_usage(request):
+        from .usage_stats import get_usage_stats
+
+        store = usage if usage is not None else get_usage_stats()
+        try:
+            day = request.query.get("date")
+            result = store.snapshot(day)
+        except ValueError as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+        return web.json_response({"ok": True, "date": day or store.now().date().isoformat(), "usage": result})
 
     async def get_settings(request):
         return web.json_response(
@@ -269,6 +280,7 @@ def create_parent_app(token, settings=None, debug_status=None, forms=None):
         )
 
     app = web.Application(middlewares=[guard])
+    app.router.add_get("/parent/v1/usage", get_usage)
     app.router.add_get("/parent/v1/status", status)
     app.router.add_get("/parent/v1/settings", get_settings)
     app.router.add_post("/parent/v1/settings", post_settings)

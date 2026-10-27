@@ -381,7 +381,12 @@ class Gateway:
     async def start(self) -> None:
         """Start the ESP32 WebSocket server and HTTP capture server."""
         from .parent_api import start_parent_api
+        from .usage_stats import get_usage_stats
 
+        usage = get_usage_stats()
+        get_debug_status().usage = usage
+        usage.flush()
+        self._usage_task = asyncio.create_task(usage.run())
         self._parent_runner = await start_parent_api()
         host = os.getenv("HOST", "0.0.0.0")
         ws_port = int(os.getenv("WS_PORT", os.getenv("PORT", "8765")))
@@ -615,6 +620,11 @@ class Gateway:
         if self.usb_transport is not None:
             await self.usb_transport.stop()
         await self.esp32.stop()
+        if getattr(self, "_usage_task", None):
+            self._usage_task.cancel()
+            await asyncio.gather(self._usage_task, return_exceptions=True)
+            get_debug_status().usage.flush()
+            get_debug_status().usage = None
         logger.info("Gateway stopped")
 
 

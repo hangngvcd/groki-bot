@@ -512,6 +512,8 @@ class GeminiVoiceProxy:
         bridge = self._bridge
         if bridge is not None:
             await bridge.send_audio(chunk)
+            if self._status.usage:
+                self._status.usage.audio()
 
     async def _reopen_session(self, reason: str) -> bool:
         started = time.monotonic()
@@ -555,6 +557,8 @@ class GeminiVoiceProxy:
             self._reopen_pcm_bytes -= len(chunk)
             try:
                 await bridge.send_audio(chunk)
+                if self._status.usage:
+                    self._status.usage.audio()
             except Exception as exc:
                 logger.warning("reopen audio flush failed: %s", type(exc).__name__)
                 self._reopen_pcm.clear()
