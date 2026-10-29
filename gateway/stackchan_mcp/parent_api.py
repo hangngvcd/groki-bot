@@ -148,6 +148,8 @@ def create_parent_app(token, settings=None, debug_status=None, forms=None, usage
     debug_status = debug_status if debug_status is not None else get_debug_status()
     forms = forms if forms is not None else get_xiaoya_forms()
     settings.register_pusher("volume", forms.send_volume)
+    from .battery_calibration import register_pushers, get_battery_calibration, fit_csv, validate_curve
+    register_pushers(settings, forms)
 
     @web.middleware
     async def guard(request, handler):
@@ -279,7 +281,32 @@ def create_parent_app(token, settings=None, debug_status=None, forms=None, usage
             }
         )
 
+    async def battery_cal(request):
+        try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                raise ValueError("expected calibration command object")
+            action = body.get("action")
+            cal = get_battery_calibration()
+            if action == "start":
+                result = {"csv": await cal.start(forms.send_device, body.get("interval_s", 30))}
+            elif action == "stop":
+                result = {"csv": await cal.stop(forms.send_device)}
+            elif action == "fit":
+                result = {"proposed_curve_raw": fit_csv(cal.csv_path(body.get("csv")))}
+            elif action in {"apply", "reset"}:
+                if action == "apply" and ("raw" in body) == bool(body.get("csv")):
+                    raise ValueError("apply requires either csv or raw")
+                raw = None if action == "reset" else (validate_curve(body["raw"]) if "raw" in body else fit_csv(cal.csv_path(body.get("csv"))))
+                result = settings.update({"battery_curve_raw": raw}, source="parent-api")
+            else:
+                raise ValueError("action: expected start/stop/fit/apply/reset")
+            return web.json_response({"ok": True, **result})
+        except (OSError, ValueError, TypeError) as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
     app = web.Application(middlewares=[guard])
+    app.router.add_post("/parent/v1/battery-cal", battery_cal)
     app.router.add_get("/parent/v1/usage", get_usage)
     app.router.add_get("/parent/v1/status", status)
     app.router.add_get("/parent/v1/settings", get_settings)

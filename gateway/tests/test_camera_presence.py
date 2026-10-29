@@ -274,8 +274,26 @@ def test_clip_pool_recent_window(clips):
 def test_single_joke_and_exhausted_pool():
     from stackchan_mcp.camera_presence import ClipPool, JOKE_CLIPS, WELCOME_CLIPS
 
-    assert WELCOME_CLIPS == ("vo.welcome_back.1", "vo.welcome_back.2")
-    assert JOKE_CLIPS == ("vo.joke.1",)
-    for clips in (JOKE_CLIPS, ("vo.joke.1",) * 3):
+    assert WELCOME_CLIPS == tuple(f"vo.welcome_back.{i}" for i in range(1, 7))
+    assert JOKE_CLIPS == tuple(f"vo.joke.{i}" for i in range(1, 4))
+    for clips in (("vo.joke.1",), ("vo.joke.1",) * 3):
         pool = ClipPool(clips)
         assert [pool.next() for _ in range(30)] == ["vo.joke.1"] * 30
+
+
+def test_full_packed_pools_and_recent_avoid():
+    from stackchan_mcp.camera_presence import WELCOME_CLIPS, JOKE_CLIPS, PRAISE_CLIPS, ClipPool
+    assert PRAISE_CLIPS == tuple(f"vo.praise.{i}" for i in range(1, 5))
+    pool = ClipPool(WELCOME_CLIPS + JOKE_CLIPS)
+    recent = []
+    for _ in range(40):
+        clip = pool.next()
+        assert clip not in recent[-5:]
+        recent.append(clip)
+    now = [0.0]
+    presence = CameraPresence(clock=lambda: now[0])
+    presence.on_parent_setting(True)
+    for _ in range(9):
+        now[0] += 130
+        action = presence.note_face()
+        assert action.kind == ("joke" if action.clip in JOKE_CLIPS else "welcome")

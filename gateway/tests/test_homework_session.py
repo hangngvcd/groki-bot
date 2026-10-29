@@ -58,3 +58,18 @@ async def test_voice_list_and_shougong(tmp_path, monkeypatch):
         assert result['ok'] and not forms.session_active
     finally:
         await executor.close()
+
+
+def test_parent_configurable_session_timeout(tmp_path):
+    from stackchan_mcp.parent_settings import get_parent_settings
+    settings = get_parent_settings()
+    settings.set("session_idle_min", 2, source="parent")
+    now = [0.0]
+    forms = XiaoyaForms(tmp_path / "timeout.json", clock=lambda: now[0])
+    forms.start_homework_session()
+    now[0] = 119
+    forms.check_session_timeout()
+    assert forms.session_active
+    now[0] = 120
+    forms.check_session_timeout()
+    assert not forms.session_active

@@ -28,7 +28,7 @@ class KwsMissTip:
         self.path = Path(
             path
             or os.getenv(
-                "STACKCHAN_KWS_MISS_TIP_PATH", "~/.stackchan/kws_miss_tip.json"
+                "STACKCHAN_KWS_MISS_TIP_PATH", str(Path(os.getenv("STACKCHAN_STATE_DIR", "~/.stackchan")) / "kws_miss_tip.json")
             )
         ).expanduser()
         self.today = today or (lambda: datetime.now().astimezone().date())

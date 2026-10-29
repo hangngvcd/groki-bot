@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 import json
 import logging
 import os
@@ -12,6 +13,9 @@ import tempfile
 
 logger = logging.getLogger(__name__)
 SCHEMA = {
+    "battery_curve_raw": {"type": "array", "default": None},
+    "battery_low_threshold_pct": {"type": "integer", "min": 5, "max": 50, "default": 20},
+    "session_idle_min": {"type": "integer", "min": 1, "max": 240, "default": 30},
     "pin_minigame": {
         "type": "string", "default": "", "enum": ["", "G1", "G2", "G3"],
         "description_zh": "小遊戲固定款式（留空輪流）",
@@ -57,12 +61,15 @@ TICKETS = {
 # Settings the gateway sends to the device (ticket 15c: volume via
 # {"type": "xiaoya", "cmd": "volume", "volume": N}, re-sent on every connect).
 APPLIED = {
+    "battery_curve_raw": "sent on session ready and when changed",
+    "battery_low_threshold_pct": "sent on session ready and when changed",
     "volume": "sent to 鈴鈴 now if connected, otherwise on her next connect",
 }
 
 
 # Settings whose policy is applied by the gateway; device UI may need firmware.
 GATEWAY = {
+    "session_idle_min": "homework session idle safety timeout",
     "camera_presence": "Gateway desk presence policy (ticket 23); camera_on protocol stub, firmware icon pending",
     "mandarin": (
         "鈴鈴語言規則：進行中嘅對話即時收到通知，下次對話嘅 prompt 一定用新設定"
@@ -97,6 +104,11 @@ def validate(values):
         if key not in SCHEMA:
             raise ValueError(f"Unknown setting: {key}")
         rule = SCHEMA[key]
+        if key == "battery_curve_raw":
+            from .battery_calibration import validate_curve
+            if value is not None:
+                validate_curve(value)
+            continue
         expected = {"boolean": bool, "integer": int, "string": str}[rule["type"]]
         if type(value) is not expected:
             raise ValueError(f"{key}: expected {rule['type']}")
@@ -117,7 +129,7 @@ class ParentSettings:
         self.path = Path(
             path
             or os.getenv(
-                "STACKCHAN_PARENT_SETTINGS_PATH", "~/.stackchan/parent_settings.json"
+                "STACKCHAN_PARENT_SETTINGS_PATH", str(Path(os.getenv("STACKCHAN_STATE_DIR", "~/.stackchan")) / "parent_settings.json")
             )
         ).expanduser()
         self._settings = {key: rule["default"] for key, rule in SCHEMA.items()}
@@ -135,7 +147,7 @@ class ParentSettings:
             )
 
     def get(self):
-        return dict(self._settings)
+        return deepcopy(self._settings)
 
     def add_listener(self, listener):
         self._listeners.append(listener)
@@ -164,6 +176,7 @@ class ParentSettings:
 
     def update(self, values, source):
         validate(values)
+        values = deepcopy(values)
         changed = {
             key: {"old": self._settings[key], "new": value}
             for key, value in values.items()

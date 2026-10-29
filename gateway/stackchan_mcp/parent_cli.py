@@ -86,6 +86,8 @@ def cli_value(key, value):
         if value.lower() not in {"on", "off", "true", "false", "1", "0"}:
             raise ValueError("布林值請用 on/off/true/false/1/0 / invalid boolean")
         return value.lower() in {"on", "true", "1"}
+    if key == "battery_curve_raw":
+        return None if value == "null" else [int(x) for x in value.split(",")]
     try:
         return int(value)
     except ValueError:
@@ -195,6 +197,19 @@ async def run_mcp(client):
             return {"ok": False, "error": str(exc)}
 
     @server.tool()
+    async def xiaoya_battery_cal(action: str, csv: str | None = None, raw: list[int] | None = None, interval_s: int = 30) -> dict:
+        """Parent discharge calibration: start/stop/fit/apply/reset. Fit only proposes."""
+        values = {"action": action, "interval_s": interval_s}
+        if csv is not None:
+            values["csv"] = csv
+        if raw is not None:
+            values["raw"] = raw
+        try:
+            return await asyncio.to_thread(client.call, "battery-cal", values)
+        except RuntimeError as exc:
+            return {"ok": False, "error": str(exc)}
+
+    @server.tool()
     async def xiaoya_replay_intro() -> dict:
         """Ask 鈴鈴 to play her pre-recorded self-intro again (parent asked)."""
         try:
@@ -225,9 +240,31 @@ def main(argv=None):
             command.add_argument("action", nargs="?", choices=("list", "add", "remove", "redo"), default="list")
             command.add_argument("--reason", default="")
             command.add_argument("items", nargs="*")
+    battery = commands.add_parser("battery-cal")
+    battery.add_argument("action", choices=("start", "stop", "fit", "apply", "reset"))
+    battery.add_argument("csv", nargs="?")
+    battery.add_argument("--interval", type=int, default=30)
+    battery.add_argument("--raw")
+    threshold = commands.add_parser("battery-threshold")
+    threshold.add_argument("pct", type=int)
     args = parser.parse_args(argv)
     try:
         client = ParentClient(args.url)
+        if args.command == "battery-threshold":
+            data = client.call("settings", {"battery_low_threshold_pct": args.pct})
+            print(json.dumps(data, indent=2))
+            return 0 if data.get("ok") else 1
+        if args.command == "battery-cal":
+            if args.action == "apply" and bool(args.csv) == bool(args.raw):
+                raise ValueError("apply requires either CSV or --raw r0,..,r5")
+            values = {"action": args.action, "interval_s": args.interval}
+            if args.csv:
+                values["csv"] = args.csv
+            if args.raw:
+                values["raw"] = [int(x) for x in args.raw.split(",")]
+            data = client.call("battery-cal", values)
+            print(json.dumps(data, indent=2))
+            return 0 if data.get("ok") else 1
         if args.command == "mcp":
             asyncio.run(run_mcp(client))
             return 0

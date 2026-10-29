@@ -144,3 +144,16 @@ scripts/xiaoya_services.sh uninstall
 ```
 
 會停止兩個 LaunchAgent，移除 plist 同家長 CLI wrapper。設定檔、家長 token、已儲存設定同 log 會保留喺本機；有需要先自行整理，唔好將佢哋上載。
+
+
+## 44b：家長通道補充
+
+- Mac 先確認 `node --version` 至少 22.19，同 `gbot --version` 有回應。
+  `STACKCHAN_PARENT_BOT_ID` 應指向爸爸專用助手；唔好用小朋友 agent。
+  現有安裝腳本未自動檢查呢兩項，安裝前要手動核對。
+- 喺 Grok Bot app 開啟家長助手聊天通知。`stackchan-parent set notifications on`
+  係另一個一般通知設定；求助通知唔受呢個開關限制。
+- 功課清單用家長助手或 `stackchan-parent homework add/remove/redo` 修改；
+  小朋友 agent 只可以報進度，唔應用佢做家長後台。
+- 電池校準見 [爸爸校準命令](../gateway/docs/xiaoya-battery-calibration.md)。
+  功課 session 安全 timeout 可用 `stackchan-parent set session_idle_min 30` 改。

@@ -434,12 +434,14 @@ class GeminiVoiceProxy:
             await self._bridge.start()
         except Exception as exc:
             logger.warning("Gemini Live bridge start failed: %s", exc)
+            await self._send_offline_tip()
             self._ready_event.set()
             return False
 
         ok = await self._bridge.wait_connected(timeout=10.0)
         if not ok:
             logger.warning("Gemini Live session did not connect within 10 s")
+            await self._send_offline_tip()
             self._ready_event.set()
             return False
 
@@ -537,6 +539,7 @@ class GeminiVoiceProxy:
             self._reopen_pcm.clear()
             self._reopen_pcm_bytes = 0
             self._reported_dead = True
+            await self._send_offline_tip()
             logger.warning(
                 "voice session reopen failed reason=%s elapsed_ms=%.0f: %s",
                 reason, (time.monotonic() - started) * 1000, exc,
@@ -940,6 +943,17 @@ class GeminiVoiceProxy:
             self._signal_wake_chime()
         for chunk in decision.forward_pcm:
             await self._send_upstream_pcm(chunk)
+
+    async def _send_offline_tip(self) -> None:
+        """Existing packed cue for a failed voice connection, child profile only."""
+        if not child_profile.enabled() or self._send_to_device is None:
+            return
+        try:
+            await self._send_to_device(json.dumps({
+                "type": "xiaoya", "cmd": "offline_tip", "clip": "vo.offline.wake",
+            }))
+        except Exception:
+            logger.warning("offline tip could not reach device")
 
     async def _handle_session_dead(self) -> None:
         """The upstream session is gone: close listening.

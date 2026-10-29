@@ -344,3 +344,31 @@ async def test_real_bridge_timeout_error_then_wake_opens_new_session(monkeypatch
         assert not [e for e in first_ws.sent if e.get("type") == "input_audio_buffer.append"]
     finally:
         await proxy.stop()
+
+
+@pytest.mark.asyncio
+async def test_child_failed_reopen_plays_packed_offline_tip(monkeypatch):
+    monkeypatch.setenv("STACKCHAN_CHILD_PROFILE", "1")
+    proxy = GbotVoiceProxy()
+    send = AsyncMock()
+    proxy._send_to_device = send
+    proxy._set_leds_safe = AsyncMock()
+    bridge = FakeBridge()
+    bridge.fail = True
+    monkeypatch.setattr(proxy, "_new_bridge", lambda: bridge)
+    assert not await proxy._reopen_session("test")
+    messages = [json.loads(call.args[0]) for call in send.await_args_list]
+    assert messages == [{"type":"xiaoya", "cmd":"offline_tip", "clip":"vo.offline.wake"}]
+
+
+
+@pytest.mark.asyncio
+async def test_offline_tip_child_only_and_transport_failure(monkeypatch):
+    proxy = GbotVoiceProxy()
+    proxy._send_to_device = AsyncMock()
+    monkeypatch.setenv("STACKCHAN_CHILD_PROFILE", "0")
+    await proxy._send_offline_tip()
+    proxy._send_to_device.assert_not_awaited()
+    monkeypatch.setenv("STACKCHAN_CHILD_PROFILE", "1")
+    proxy._send_to_device.side_effect = OSError("disconnected")
+    await proxy._send_offline_tip()  # Cannot prevent the normal failure cleanup.

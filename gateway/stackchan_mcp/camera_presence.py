@@ -10,8 +10,9 @@ import math
 
 LEAVE_ABSENCE_S = 120.0
 ENABLE_GRACE_S = 10.0
-WELCOME_CLIPS = ("vo.welcome_back.1", "vo.welcome_back.2")  # packed
-JOKE_CLIPS = ("vo.joke.1",)  # packed; .2/.3 deferred
+WELCOME_CLIPS = tuple(f"vo.welcome_back.{i}" for i in range(1, 7))
+JOKE_CLIPS = tuple(f"vo.joke.{i}" for i in range(1, 4))
+PRAISE_CLIPS = tuple(f"vo.praise.{i}" for i in range(1, 5))
 
 
 def presence_message(on: bool) -> dict:
@@ -165,7 +166,7 @@ class CameraPresence:
         if self._pending_redo:
             return self.consume_pending_redo()
         clip = self._clips.next()
-        return PresenceAction("welcome", clip)
+        return PresenceAction("joke" if clip in JOKE_CLIPS else "welcome", clip)
 
 
 _presence = None

@@ -29,7 +29,7 @@ COUNTERS = (
 
 class UsageStats:
     def __init__(self, directory=None, clock=clock_time.time):
-        self.directory = Path(directory or "~/.stackchan/usage").expanduser()
+        self.directory = Path(directory or os.getenv("STACKCHAN_USAGE_DIR", "~/.stackchan/usage")).expanduser()
         self.clock = clock
         self.connected = self.voice = self.window = self.conversed = False
         self.last = self.now()

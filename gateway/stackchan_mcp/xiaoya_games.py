@@ -71,7 +71,7 @@ class XiaoyaGames:
         self.path = Path(
             path
             or os.getenv(
-                "STACKCHAN_XIAOYA_GAMES_PATH", "~/.stackchan/xiaoya_games.json"
+                "STACKCHAN_XIAOYA_GAMES_PATH", str(Path(os.getenv("STACKCHAN_STATE_DIR", "~/.stackchan")) / "xiaoya_games.json")
             )
         ).expanduser()
         self.clock = clock

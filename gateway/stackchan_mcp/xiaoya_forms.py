@@ -143,7 +143,7 @@ class XiaoyaForms:
         clock: Callable[[], float] = time.monotonic,
     ):
         self.path = Path(
-            path or os.getenv("STACKCHAN_XIAOYA_FORMS_PATH", "~/.stackchan/xiaoya_forms.json")
+            path or os.getenv("STACKCHAN_XIAOYA_FORMS_PATH", str(Path(os.getenv("STACKCHAN_STATE_DIR", "~/.stackchan")) / "xiaoya_forms.json"))
         ).expanduser()
         self._clock = clock
         self.session_active = False
@@ -186,7 +186,7 @@ class XiaoyaForms:
         if self.session_active:
             try:
                 self._session_timer = asyncio.get_running_loop().call_later(
-                    SESSION_IDLE_SECONDS, self.check_session_timeout)
+                    get_parent_settings().get()["session_idle_min"] * 60, self.check_session_timeout)
             except RuntimeError:
                 pass
 
@@ -199,7 +199,7 @@ class XiaoyaForms:
             self._schedule(self.send_device(self.session_message()))
 
     def check_session_timeout(self):
-        if self.session_active and self._clock() - self._last_interaction >= SESSION_IDLE_SECONDS:
+        if self.session_active and self._clock() - self._last_interaction >= get_parent_settings().get()["session_idle_min"] * 60:
             self.end_homework_session()
 
     # -- state ---------------------------------------------------------------
@@ -483,6 +483,10 @@ class XiaoyaForms:
             self._session_ready = True
             self._schedule_push(force=True)
             self._schedule(self.send_volume())
+            from .battery_calibration import register_pushers
+            settings = get_parent_settings()
+            register_pushers(settings, self)
+            self._schedule(settings.push_to_device(("battery_curve_raw", "battery_low_threshold_pct")))
             self.check_session_timeout()
             self._schedule(self.send_device(self.session_message()))
 

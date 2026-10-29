@@ -624,6 +624,10 @@ class ESP32Manager:
                         from .camera_presence import get_camera_presence
                         get_camera_presence().note_device_event(data)
                         continue  # metadata only; reject image fields locally
+                    if data.get("event") == "battery_raw":
+                        from .battery_calibration import get_battery_calibration
+                        get_battery_calibration().record(data)
+                        continue
                     if data.get("event") == "battery":
                         percent = data.get("percent")
                         if type(percent) is int:

@@ -61,7 +61,7 @@ class StuckNotify:
     def __init__(self, path=None, *, today=None, send=None):
         self.path = Path(
             path
-            or os.getenv("STACKCHAN_STUCK_NOTIFY_PATH", "~/.stackchan/stuck_notify.json")
+            or os.getenv("STACKCHAN_STUCK_NOTIFY_PATH", str(Path(os.getenv("STACKCHAN_STATE_DIR", "~/.stackchan")) / "stuck_notify.json"))
         ).expanduser()
         self.today = today or (lambda: datetime.now().astimezone().date())
         self.send = send or _send
@@ -236,6 +236,9 @@ class StuckNotify:
             self.send(PARENT_HELPER_BOT, tip)
         except Exception:
             logger.warning("stuck-notify parent send failed", exc_info=True)
+            # A failed attempt must never become an already-notified success.
+            entry["notified"] = False
+            self._persist()
             return {"ok": True, "sent": False, "spoken": SPOKEN_FAIL}
 
         return {"ok": True, "sent": True, "spoken": SPOKEN_OK}

@@ -33,6 +33,9 @@ def test_settings(store, caplog, monkeypatch):
         notifications=False,
         mandarin=True,
         pin_minigame="",
+        battery_curve_raw=None,
+        battery_low_threshold_pct=20,
+        session_idle_min=30,
     )
     events = []
     store.add_listener(lambda settings, keys: events.append((settings, keys)))
@@ -101,7 +104,7 @@ async def test_pushers(store):
     assert pusher.await_count == 2
     support = device_support()
     assert support["volume"]["applied_to_device"]  # ticket 15c: xiaoya volume cmd
-    assert all(not item["applied_to_device"] for key, item in support.items() if key != "volume")
+    assert all(not item["applied_to_device"] for key, item in support.items() if key not in {"volume", "battery_curve_raw", "battery_low_threshold_pct"})
 
 
 def test_pure_status(store):

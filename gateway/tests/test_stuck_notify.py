@@ -136,9 +136,11 @@ def test_send_failure_spoken_fail_not_received(tmp_path):
     assert result["sent"] is False
     assert result["spoken"] == SPOKEN_FAIL
     assert "爸爸收到" not in result["spoken"]
-    # Reserved: no second spam attempt.
+    # Failed delivery remains retryable and must never claim success.
     again = stuck.notify_dad("科學", consented=True)
-    assert again.get("already_notified") is True
+    assert not again.get("already_notified")
+    assert again["spoken"] == SPOKEN_FAIL
+    assert stuck.snapshot("科學")["notified"] is False
 
 
 def test_format_parent_tip_has_no_transcript_or_photo():

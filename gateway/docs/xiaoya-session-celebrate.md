@@ -4,7 +4,9 @@ The gateway uses the existing forms Sender and ready handshake:
 `{"type":"xiaoya","cmd":"session","active":true}` (or false).
 A homework list ask or voice session armed with unfinished homework starts the session. `end_homework_session` is the
 voice tool for 收工. Any user input/tool interaction refreshes a 30 minute
-monotonic inactivity timer. Reconnect re-sends the current flag after form_state.
+monotonic inactivity timer. Dad can change the safety timeout with
+`stackchan-parent set session_idle_min 30` (1–240 minutes); the gateway poll
+applies the current value to active sessions too. Reconnect re-sends the current flag after form_state.
 The flag survives a connection loss in gateway memory, not a gateway restart.
 Short breaks keep it active; firmware must also retain it across local breaks.
 

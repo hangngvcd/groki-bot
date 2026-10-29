@@ -21,8 +21,7 @@ every 0.5 seconds. Missing face hits for 120 seconds produces exactly one
 `vo.leave_wait.1` (「我喺度等你呀」). There is no countdown, nag or negative face.
 Further absence is silent. On return, play one clip, rotating through
 `vo.welcome_back.1`–`vo.welcome_back.6`, then `vo.joke.1`–`vo.joke.3`.
-These are reserved local Cantonese clip IDs, each at most 3 seconds; final audio
-assets are a firmware follow-up. Use one line, no follow-up question, no LLM.
+These local Cantonese clip IDs are packed (44b inventory), each at most 3 seconds. Use one line, no follow-up question, no LLM.
 Short absences do not prompt. A pending redo replaces that return's welcome once;
 forms redo currently supplies a gentle generic line. `set_pending_redo` also
 accepts a local `vo.*` clip ID or a future parent-provided line.
@@ -115,10 +114,12 @@ empty desk can pass. **Heuristic only until face model.** Do not enable leave/
 welcome acceptance until dad has checked both occupied and empty scenes live.
 No presence frames are saved, uploaded, or made available through HTTP.
 
-## Pack42b inventory
+## 44b packed inventory
 
-Return rotation uses packed `vo.welcome_back.1`, `.2`, and `vo.joke.1`,
-with a recent window of min(5, pool size - 1). A single-clip pool always returns
-its clip. Leave tips use `vo.leave_wait.1`. Welcome .3+ and joke .2+ are deferred
-for pack headroom; praise.1 is also deferred. Break expiry has `vo.break_end.1`
-in pack42b (firmware falls back to `sfx.break_end`).
+Return rotation uses `vo.welcome_back.1`–`.6` and `vo.joke.1`–`.3`,
+with a recent window of min(5, pool size - 1). Joke IDs use `kind:joke`.
+A single-clip pool always returns its clip. Leave tips use `vo.leave_wait.1`.
+`PRAISE_CLIPS` contains `vo.praise.1`–`.4`; the device accepts `kind:praise`.
+Completion already returns a spoken praise line to the agent, so the gateway
+sends no additional local praise after `celebrate`. This avoids duplicate lines.
+No new persona copy is introduced. Break expiry uses `vo.break_end.1`.
