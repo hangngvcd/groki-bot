@@ -368,7 +368,7 @@ def build_function_declarations(*, types=None) -> list[Any]:
 
     end_homework_session = types.FunctionDeclaration(
         name="end_homework_session",
-        description="End homework session when the child says 收工. Short breaks keep the session active.",
+        description="End homework session when the child says sau gung or has finished homework. Short breaks keep the session active.",
         parameters=types.Schema(type="OBJECT", properties={}),
     )
 

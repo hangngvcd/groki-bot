@@ -67,7 +67,7 @@ def test_default_declarations_are_voice_only_without_mac_control():
     from stackchan_mcp.mac_control import MAC_TOOL_NAMES
 
     names = [decl.name for decl in build_function_declarations()]
-    assert names == ["end_conversation", "get_current_datetime"]
+    assert names == ["end_conversation", "end_homework_session", "get_current_datetime"]
     assert not set(names) & (set(TOOL_MAP) | MAC_TOOL_NAMES | {"express_emotion"})
 
 
@@ -89,7 +89,12 @@ def test_ask_claude_offered_when_claude_cli_installed(monkeypatch, tmp_path):
     monkeypatch.setenv("STACKCHAN_CLAUDE_BIN", _fake_claude_cli(tmp_path))
 
     names = [decl.name for decl in build_function_declarations()]
-    assert names == ["end_conversation", "ask_claude", "get_current_datetime"]
+    assert names == [
+        "end_conversation",
+        "end_homework_session",
+        "ask_claude",
+        "get_current_datetime",
+    ]
     assert "ask_claude(question)" in default_system_instruction()
 
 
@@ -252,6 +257,7 @@ def test_build_function_declarations_match_tool_map():
     assert names == set(TOOL_MAP) | MAC_TOOL_NAMES | {
         "express_emotion",
         "end_conversation",
+        "end_homework_session",
         "ask_claude",
         "get_current_datetime",
     }
@@ -260,12 +266,13 @@ def test_build_function_declarations_match_tool_map():
 def test_build_function_declarations_includes_agent_tools():
     decls = build_function_declarations()
     names = [decl.name for decl in decls]
-    assert names[:7] == [
+    assert names[:8] == [
         "move_head",
         "set_avatar",
         "set_all_leds",
         "express_emotion",
         "end_conversation",
+        "end_homework_session",
         "ask_claude",
         "get_current_datetime",
     ]
@@ -353,7 +360,7 @@ def test_build_live_config_includes_system_instruction_and_tools():
     assert _modality_values(cfg.response_modalities) == ["AUDIO"]
     assert len(cfg.tools) == 2
     assert cfg.tools[0].google_search is not None
-    assert len(cfg.tools[1].function_declarations) == 18
+    assert len(cfg.tools[1].function_declarations) == 19
 
 
 def test_build_live_config_includes_google_search():
@@ -558,6 +565,7 @@ def test_face_tracking_tools_offered_with_shipped_defaults(monkeypatch):
     names = [decl.name for decl in build_function_declarations()]
     assert names == [
         "end_conversation",
+        "end_homework_session",
         "get_current_datetime",
         "self.tracking.start",
         "self.tracking.stop",

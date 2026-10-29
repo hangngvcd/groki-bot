@@ -282,8 +282,17 @@ async def test_failed_gbot_has_no_backend_fallback(monkeypatch, profile, failure
         ) as device:
             await device.send(json.dumps({"type": "hello", "features": {"mcp": False}}))
             if profile == "1":
+                async def receive_until_closed():
+                    while True:
+                        message = json.loads(await device.recv())
+                        assert message == {
+                            "type": "xiaoya",
+                            "cmd": "offline_tip",
+                            "clip": "vo.offline.wake",
+                        }
+
                 with pytest.raises(websockets.exceptions.ConnectionClosed) as closed:
-                    await asyncio.wait_for(device.recv(), 1)
+                    await asyncio.wait_for(receive_until_closed(), 1)
                 assert closed.value.rcvd.code == 1011
                 assert "Voice backend unavailable" in closed.value.rcvd.reason
                 assert not gateway.esp32.device_connected
