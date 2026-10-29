@@ -1,18 +1,26 @@
 """Desk presence policy: metadata only; detection frames never saved/uploaded.
 
-No camera, image bytes, storage, network or LLM access. Timers are in memory.
+No camera or image access. Timers are in memory; optional tips use the parent helper.
 The board camera detector supplies face hits; this module never starts a camera.
 """
 
 from dataclasses import dataclass
 import time
 import math
+import logging
+import threading
+
+from .stuck_notify import PARENT_HELPER_BOT, _send
+
+logger = logging.getLogger(__name__)
 
 LEAVE_ABSENCE_S = 120.0
 ENABLE_GRACE_S = 10.0
 WELCOME_CLIPS = tuple(f"vo.welcome_back.{i}" for i in range(1, 7))
 JOKE_CLIPS = tuple(f"vo.joke.{i}" for i in range(1, 4))
 PRAISE_CLIPS = tuple(f"vo.praise.{i}" for i in range(1, 5))
+# Firmware falls back to .1 when an older pack lacks .2/.3.
+LEAVE_CLIPS = tuple(f"vo.leave_wait.{i}" for i in range(1, 4))
 
 
 def presence_message(on: bool) -> dict:
@@ -51,13 +59,16 @@ class ClipPool:
 
 
 class CameraPresence:
-    def __init__(self, *, clock=time.monotonic, settings_getter=lambda: {}):
+    def __init__(self, *, clock=time.monotonic, settings_getter=lambda: {}, send=None):
         self.clock = clock
+        self._settings_getter = settings_getter
+        self._send = send or _send
         self._on = False
         self._manual_off = False
         self._suppress = set()
         self._pending_redo = None
         self._clips = ClipPool(WELCOME_CLIPS + JOKE_CLIPS)
+        self._leave_clips = ClipPool(LEAVE_CLIPS)
         self._messages = []
         self._actions = []
         self._last_face = clock()
@@ -153,22 +164,54 @@ class CameraPresence:
     def _blocked(self):
         return bool(self._suppress) or self.clock() < self._grace_until
 
+    def _leave_seconds(self, settings):
+        minutes = settings.get("presence_leave_min")
+        if type(minutes) is int and 1 <= minutes <= 30:
+            return minutes * 60
+        return LEAVE_ABSENCE_S
+
+    def _notify_away(self, minutes):
+        """Transport and journaling run outside the device/event-loop thread."""
+        sent = False
+        try:
+            self._send(PARENT_HELPER_BOT, f"【鈴鈴提示】娜娜行開咗 {minutes} 分鐘。")
+            sent = True
+        except Exception:
+            # Exception text may contain the payload; deliberately omit it.
+            logger.warning("presence-away parent send failed")
+        try:
+            from .parent_recovery import RecoveryStore
+
+            RecoveryStore().presence_away_event(sent)
+        except Exception:
+            logger.warning("Could not persist presence-away recovery event")
+
     def tick(self):
+        settings = self._settings_getter()
+        leave_seconds = self._leave_seconds(settings)
         if not self._on:
             return None
         if self._blocked():
             self._last_face = self.clock()
             return None
-        if not self._away and self.clock() - self._last_face >= LEAVE_ABSENCE_S:
+        if not self._away and self.clock() - self._last_face >= leave_seconds:
             self._away = True
-            return PresenceAction("leave_tip", "vo.leave_wait.1")
+            if settings.get("notifications") is True:
+                try:
+                    threading.Thread(
+                        target=self._notify_away, args=(int(leave_seconds / 60),), daemon=True
+                    ).start()
+                except Exception:
+                    logger.warning("Could not start presence-away notification")
+            return PresenceAction("leave_tip", self._leave_clips.next())
         return None
 
     def note_face(self):
+        leave_seconds = self._leave_seconds(self._settings_getter())
         if not self._on:
             return None
         now = self.clock()
-        returning = self._away or now - self._last_face >= LEAVE_ABSENCE_S
+        returning = self._away or now - self._last_face >= leave_seconds
         self._last_face = now
         self._away = False
         if not returning or self._blocked():

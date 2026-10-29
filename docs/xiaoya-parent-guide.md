@@ -152,8 +152,19 @@ scripts/xiaoya_services.sh uninstall
   `STACKCHAN_PARENT_BOT_ID` 應指向爸爸專用助手；唔好用小朋友 agent。
   現有安裝腳本未自動檢查呢兩項，安裝前要手動核對。
 - 喺 Grok Bot app 開啟家長助手聊天通知。`stackchan-parent set notifications on`
-  係另一個一般通知設定；求助通知唔受呢個開關限制。
+  係離席通知開關，預設 **OFF**；求助通知唔受呢個開關限制。
 - 功課清單用家長助手或 `stackchan-parent homework add/remove/redo` 修改；
   小朋友 agent 只可以報進度，唔應用佢做家長後台。
 - 電池校準見 [爸爸校準命令](../gateway/docs/xiaoya-battery-calibration.md)。
   功課 session 安全 timeout 可用 `stackchan-parent set session_idle_min 30` 改。
+
+## 行開門檻同通知（23／44f）
+
+`stackchan-parent set presence_leave_min 3` 可以改「行開幾多分鐘先當行開」，
+可揀整數 1–30，預設 2 分鐘。鏡頭偵測有效開緊、又冇暫停時先會計。
+
+`notifications` 預設 **OFF**。爸爸主動用
+`stackchan-parent set notifications on` 開啟後，每段離席達門檻只送一次
+「【鈴鈴提示】娜娜行開咗 X 分鐘。」去現有家長助手；返嚟後先重新計。
+冇相、對話、信心值或檔案路徑。關返用 `stackchan-parent set notifications off`。
+Ticket 32「只有求助／功課相即時推送」照舊，除非爸爸主動開啟通知。

@@ -48,6 +48,14 @@ class RecoveryStore:
         state['events'] = state['events'][-500:]
         self.save(state)
 
+    def presence_away_event(self, sent):
+        state = self.read()
+        state['sequence'] += 1
+        state['events'].append({'id': str(state['sequence']), 'kind': 'presence_away',
+                                'sent': sent})
+        state['events'] = state['events'][-500:]
+        self.save(state)
+
     def photos(self):
         return [{**p, 'available': Path(p['path']).is_file()} for p in self.read()['photos']]
 

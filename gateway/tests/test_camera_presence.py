@@ -311,3 +311,140 @@ def test_explicit_status():
     for present, confidence in [(False,0.9),(True,0.4),(None,0.9),(True,float('nan')),(True,1.1)]:
         presence.note_device_event({'event':'presence_status','present':present,'confidence':confidence})
         assert presence._last_face == 20
+
+
+@pytest.mark.parametrize("invalid", [None, True, "3", 0, 31, 2.5])
+def test_invalid_leave_threshold_uses_default(invalid):
+    now = [0]
+    p = CameraPresence(clock=lambda: now[0], settings_getter=lambda: {
+        "camera_presence": True, "presence_leave_min": invalid,
+    })
+    now[0] = 119
+    assert p.tick() is None
+    now[0] = 120
+    assert p.tick().kind == "leave_tip"
+
+
+def test_live_threshold_for_tick_and_note_face(tmp_path):
+    from stackchan_mcp.parent_settings import ParentSettings, GATEWAY, TICKETS
+
+    settings = ParentSettings(tmp_path / "settings.json")
+    assert settings.get()["presence_leave_min"] == 2
+    assert "presence_leave_min" in GATEWAY
+    assert TICKETS["presence_leave_min"] == "23"
+    now = [0]
+    p = CameraPresence(clock=lambda: now[0], settings_getter=settings.get)
+    p.on_parent_setting(True)
+    settings.set("presence_leave_min", 3, source="parent")
+    now[0] = 120
+    assert p.tick() is None
+    assert p.note_face() is None
+    settings.set("presence_leave_min", 1, source="parent")
+    now[0] = 180
+    assert p.note_face().kind == "welcome"
+    now[0] = 240
+    assert p.tick().kind == "leave_tip"
+    for invalid in (True, 0, 31, "3"):
+        with pytest.raises(ValueError):
+            settings.set("presence_leave_min", invalid, source="parent")
+
+
+@pytest.mark.parametrize("notifications", [None, False, True])
+def test_away_notification_episode_and_return(notifications, tmp_path, monkeypatch):
+    from threading import Event
+    from stackchan_mcp.parent_recovery import RecoveryStore
+    from stackchan_mcp.stuck_notify import PARENT_HELPER_BOT
+
+    monkeypatch.setenv("STACKCHAN_STATE_DIR", str(tmp_path))
+    finished = Event()
+    original = RecoveryStore.presence_away_event
+
+    def record(store, sent):
+        original(store, sent)
+        finished.set()
+
+    monkeypatch.setattr(RecoveryStore, "presence_away_event", record)
+    settings = {"camera_presence": True, "presence_leave_min": 3}
+    if notifications is not None:
+        settings["notifications"] = notifications
+    calls = []
+    now = [0]
+    p = CameraPresence(clock=lambda: now[0], settings_getter=lambda: settings,
+                       send=lambda *args: calls.append(args))
+    now[0] = 180
+    assert p.tick().kind == "leave_tip"
+    if notifications is True:
+        assert finished.wait(2)
+        assert calls == [(PARENT_HELPER_BOT, "【鈴鈴提示】娜娜行開咗 3 分鐘。")]
+        assert RecoveryStore().events()[0]["sent"] is True
+    assert p.tick() is None
+    assert p.note_face().kind == "welcome"
+    finished.clear()
+    now[0] = 360
+    assert p.tick().kind == "leave_tip"
+    if notifications is True:
+        assert finished.wait(2)
+        assert len(calls) == 2
+        assert [e["kind"] for e in RecoveryStore().events()] == ["presence_away"] * 2
+    else:
+        assert calls == []
+
+
+def test_notification_off_suppressed_and_nonblocking_failure(tmp_path, monkeypatch, caplog):
+    from threading import Event, current_thread
+    from stackchan_mcp.parent_recovery import RecoveryStore
+
+    monkeypatch.setenv("STACKCHAN_STATE_DIR", str(tmp_path))
+    entered, release, finished = Event(), Event(), Event()
+    original = RecoveryStore.presence_away_event
+
+    def record(store, sent):
+        original(store, sent)
+        finished.set()
+
+    monkeypatch.setattr(RecoveryStore, "presence_away_event", record)
+
+    def send(*args):
+        assert current_thread().daemon
+        entered.set()
+        assert release.wait(2)
+        raise RuntimeError("SECRET payload")
+
+    now = [0]
+    p = CameraPresence(clock=lambda: now[0],
+                       settings_getter=lambda: {"notifications": True}, send=send)
+    now[0] = 500
+    assert p.tick() is None
+    p.on_parent_setting(True)
+    assert p.tick() is None  # Enable grace.
+    p.set_suppress("camera_detector", True)
+    now[0] = 1000
+    assert p.tick() is None
+    assert not entered.is_set()
+    p.set_suppress("camera_detector", False)
+    now[0] = 1120
+    try:
+        assert p.tick().kind == "leave_tip"
+        assert entered.wait(2)  # Sender remains blocked while tick has returned.
+        assert p.tick() is None
+    finally:
+        release.set()
+    assert finished.wait(2)
+    assert RecoveryStore().events() == [{"id": "1", "kind": "presence_away", "sent": False}]
+    assert "presence-away parent send failed" in caplog.text
+    assert "SECRET" not in caplog.text
+
+
+def test_leave_tip_rotates_pool():
+    from stackchan_mcp.camera_presence import LEAVE_CLIPS
+
+    now = [0.0]
+    p = CameraPresence(clock=lambda: now[0])
+    p.start_homework_session()
+    seen = []
+    for _ in range(3):
+        now[0] += 1000
+        p.note_face()
+        now[0] += 200
+        seen.append(p.tick().clip)
+    assert seen == list(LEAVE_CLIPS)

@@ -30,6 +30,7 @@ def test_settings(store, caplog, monkeypatch):
         volume=40,
         rest_after_min=5,
         camera_presence=False,
+        presence_leave_min=2,
         notifications=False,
         mandarin=True,
         pin_minigame="",

@@ -17,7 +17,7 @@ session arming, timers and clip rotation otherwise remain in memory.
 
 After enabling, suppress prompts for 10 seconds. Qualified `/track` hits (existing
 confidence threshold 0.5) feed `note_face`; the existing idle poll calls `tick`
-every 0.5 seconds. Missing face hits for 120 seconds produces exactly one
+every 0.5 seconds. Missing face hits for the configured threshold produces exactly one
 `vo.leave_wait.1` (「我喺度等你呀」). There is no countdown, nag or negative face.
 Further absence is silent. On return, play one clip, rotating through
 `vo.welcome_back.1`–`vo.welcome_back.6`, then `vo.joke.1`–`vo.joke.3`.
@@ -123,3 +123,16 @@ A single-clip pool always returns its clip. Leave tips use `vo.leave_wait.1`.
 Completion already returns a spoken praise line to the agent, so the gateway
 sends no additional local praise after `celebrate`. This avoids duplicate lines.
 No new persona copy is introduced. Break expiry uses `vo.break_end.1`.
+
+## 44f：離席門檻同家長通知
+
+爸爸可以用 `stackchan-parent set presence_leave_min 3` 改行開門檻：
+整數 1–30 分鐘，預設 2；改完即時用新值。無效或缺少設定會用 2 分鐘。
+韌體 44c 已有鏡頭徽章同可選嘅機身人面偵測。
+
+`notifications` 預設 **OFF**。爸爸用 `stackchan-parent set notifications on`
+先會開啟離席通知。有效鏡頭偵測行開達門檻時，每段離席只經現有家長助手
+送一次「【鈴鈴提示】娜娜行開咗 X 分鐘。」；返嚟後先重新計。
+暫停／封鎖偵測時唔送。冇相、對話、信心值或檔案路徑。
+背景發送唔阻住部機；失敗唔重試，同結果記喺本機 recovery journal。
+Ticket 32「只有求助／功課相即時推送」仍然適用，除非爸爸主動開啟通知。

@@ -40,6 +40,10 @@ SCHEMA = {
         "default": False,
         "description_zh": "鏡頭在場偵測",
     },
+    "presence_leave_min": {
+        "type": "integer", "min": 1, "max": 30, "default": 2,
+        "description_zh": "行開幾多分鐘先當行開",
+    },
     "notifications": {
         "type": "boolean",
         "default": False,
@@ -55,7 +59,8 @@ TICKETS = {
     "pin_minigame": "30",
     "rest_after_min": "12/15",
     "camera_presence": "23",
-    "notifications": "19",
+    "presence_leave_min": "23",
+    "notifications": "19/23",
 }
 
 
@@ -72,7 +77,9 @@ APPLIED = {
 GATEWAY = {
     "local_commands_enabled": "pre-session recognised-text hook",
     "session_idle_min": "homework session idle safety timeout",
-    "camera_presence": "Gateway desk presence policy (ticket 23); camera_on protocol stub, firmware icon pending",
+    "camera_presence": "Gateway desk presence policy (ticket 23); firmware 44c camera badge and optional on-device face detection",
+    "presence_leave_min": "Gateway continuous absence threshold (ticket 23)",
+    "notifications": "Opt-in gateway parent away notifications (tickets 19/23)",
     "mandarin": (
         "鈴鈴語言規則：進行中嘅對話即時收到通知，下次對話嘅 prompt 一定用新設定"
     ),
