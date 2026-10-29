@@ -1,0 +1,16 @@
+{
+  "_note": "placeholder — replace when persona finalised",
+  "timer_start": "開始計時 {minutes} 分鐘。",
+  "timer_remaining": "仲有 {seconds} 秒。",
+  "timer_none": "而家冇計時。",
+  "timer_stop": "停咗計時。",
+  "break": "休息一陣。",
+  "game": "開始遊戲。",
+  "locked": "仲有功課：{items}。",
+  "locked_empty": "暫時未解鎖遊戲。",
+  "homework": "仲有：{items}。",
+  "homework_empty": "清單冇未做嘅功課。",
+  "done": "記低做完 {item}。",
+  "hello": "你好。",
+  "bye": "拜拜。"
+}

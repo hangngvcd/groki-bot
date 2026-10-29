@@ -220,6 +220,11 @@ class HomeworkPhoto:
                 sent = True
             except Exception:
                 logger.warning("Homework parent send failed", exc_info=True)
+            from .parent_recovery import RecoveryStore
+            try:
+                RecoveryStore().record(item=self.item["title"], path=path if has_photo else None, notified=sent)
+            except OSError:
+                logger.warning("Could not persist parent recovery event", exc_info=True)
             from .debug_status import get_debug_status
 
             usage = get_debug_status().usage

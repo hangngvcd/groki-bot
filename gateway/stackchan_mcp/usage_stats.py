@@ -115,6 +115,10 @@ class UsageStats:
             self.conversed = True
         self.activity()
 
+    def local_handled(self):
+        self.advance()["local_handled_count"] += 1
+        self.flush()
+
     def photo(self, sent):
         self.advance()[
             "homework_photos_sent" if sent else "homework_photos_failed"

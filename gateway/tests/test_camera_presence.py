@@ -297,3 +297,17 @@ def test_full_packed_pools_and_recent_avoid():
         now[0] += 130
         action = presence.note_face()
         assert action.kind == ("joke" if action.clip in JOKE_CLIPS else "welcome")
+
+
+def test_explicit_status():
+    from stackchan_mcp.camera_presence import CameraPresence
+    now = [0]
+    presence = CameraPresence(clock=lambda: now[0])
+    presence.on_parent_setting(True)
+    now[0] = 20
+    presence.note_device_event({'event':'presence_status','present':True,'confidence':0.9})
+    assert presence._last_face == 20
+    now[0] = 30
+    for present, confidence in [(False,0.9),(True,0.4),(None,0.9),(True,float('nan')),(True,1.1)]:
+        presence.note_device_event({'event':'presence_status','present':present,'confidence':confidence})
+        assert presence._last_face == 20

@@ -13,6 +13,7 @@ import tempfile
 
 logger = logging.getLogger(__name__)
 SCHEMA = {
+    "local_commands_enabled": {"type": "boolean", "default": True},
     "battery_curve_raw": {"type": "array", "default": None},
     "battery_low_threshold_pct": {"type": "integer", "min": 5, "max": 50, "default": 20},
     "session_idle_min": {"type": "integer", "min": 1, "max": 240, "default": 30},
@@ -69,6 +70,7 @@ APPLIED = {
 
 # Settings whose policy is applied by the gateway; device UI may need firmware.
 GATEWAY = {
+    "local_commands_enabled": "pre-session recognised-text hook",
     "session_idle_min": "homework session idle safety timeout",
     "camera_presence": "Gateway desk presence policy (ticket 23); camera_on protocol stub, firmware icon pending",
     "mandarin": (

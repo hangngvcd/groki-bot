@@ -239,9 +239,19 @@ class StuckNotify:
             # A failed attempt must never become an already-notified success.
             entry["notified"] = False
             self._persist()
+            self._recovery_event(False)
             return {"ok": True, "sent": False, "spoken": SPOKEN_FAIL}
 
+        self._recovery_event(True)
         return {"ok": True, "sent": True, "spoken": SPOKEN_OK}
+
+    @staticmethod
+    def _recovery_event(sent):
+        from .parent_recovery import RecoveryStore
+        try:
+            RecoveryStore().help_event(sent)
+        except OSError:
+            logger.warning("Could not persist help recovery event", exc_info=True)
 
 
 _stuck = None

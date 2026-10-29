@@ -105,7 +105,17 @@ class CameraPresence:
     def note_device_event(self, message):
         """Board lifecycle hook; begin/end events are firmware follow-ups."""
         if message.get("event") == "presence_status":
-            if (set(message) <= {"type", "event", "running", "hits_enabled"} and
+            confidence = message.get("confidence")
+            if (set(message) <= {"type", "event", "present", "confidence"}
+                    and type(message.get("present")) is bool
+                    and type(confidence) in (int, float) and math.isfinite(confidence)
+                    and 0.5 <= confidence <= 1.0):
+                # A miss lets the existing absence grace expire; never reset it.
+                if message["present"]:
+                    action = self.note_face()
+                    if action is not None:
+                        self._actions.append(action)
+            elif (set(message) <= {"type", "event", "running", "hits_enabled"} and
                     type(message.get("running")) is bool and type(message.get("hits_enabled")) is bool):
                 self.set_suppress("camera_detector", not (message["running"] and message["hits_enabled"]))
         elif message.get("event") == "presence_hit":

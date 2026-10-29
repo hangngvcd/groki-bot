@@ -305,7 +305,33 @@ def create_parent_app(token, settings=None, debug_status=None, forms=None, usage
         except (OSError, ValueError, TypeError) as exc:
             return web.json_response({"ok": False, "error": str(exc)}, status=400)
 
+    from .parent_recovery import RecoveryStore
+    recovery = RecoveryStore()
+
+    async def photos(request):
+        return web.json_response({"ok": True, "photos": recovery.photos()})
+
+    async def photo(request):
+        try:
+            result = recovery.photo(request.match_info["id"], done=request.method == "POST")
+            return web.json_response({"ok": True, "photo": result})
+        except LookupError:
+            return web.json_response({"ok": False, "error": "photo not found"}, status=404)
+
+    async def events(request):
+        try:
+            after = int(request.query.get("after", "0"))
+            if after < 0:
+                raise ValueError()
+        except ValueError:
+            return web.json_response({"ok": False, "error": "invalid after"}, status=400)
+        return web.json_response({"ok": True, "events": recovery.events(after)})
+
     app = web.Application(middlewares=[guard])
+    app.router.add_get("/parent/v1/photos", photos)
+    app.router.add_get("/parent/v1/photos/{id}/path", photo)
+    app.router.add_post("/parent/v1/photos/{id}/done", photo)
+    app.router.add_get("/parent/v1/events", events)
     app.router.add_post("/parent/v1/battery-cal", battery_cal)
     app.router.add_get("/parent/v1/usage", get_usage)
     app.router.add_get("/parent/v1/status", status)

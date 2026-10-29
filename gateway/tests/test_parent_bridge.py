@@ -36,6 +36,7 @@ def test_settings(store, caplog, monkeypatch):
         battery_curve_raw=None,
         battery_low_threshold_pct=20,
         session_idle_min=30,
+        local_commands_enabled=True,
     )
     events = []
     store.add_listener(lambda settings, keys: events.append((settings, keys)))
@@ -416,12 +417,17 @@ async def test_device_battery_event_updates_parent_status(store, event, expected
 
     debug = DebugStatus(clock=lambda: 123)
     debug.on_device_battery(25)
-    proxy = Mock(stop=AsyncMock(), send_device_json=AsyncMock())
+    proxy = Mock(stop=AsyncMock(), send_device_json=AsyncMock(), start=AsyncMock(return_value=True))
 
     class BatterySocket:
+        # Device xiaoya events are only accepted from the registered (post-hello)
+        # connection (42b guard), so handshake first like real firmware.
         request = None
+        send = AsyncMock()
+        close = AsyncMock()
 
         async def __aiter__(self):
+            yield json.dumps({"type": "hello", "version": 1, "features": {"mcp": False}})
             yield json.dumps({"type": "xiaoya", "event": "battery", **event})
 
     manager = ESP32Manager(debug_status=debug, cloud_proxy_factory=lambda: proxy)

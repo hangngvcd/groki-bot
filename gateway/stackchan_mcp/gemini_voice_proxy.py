@@ -139,6 +139,7 @@ class GeminiVoiceProxy:
     _bridge: GeminiLiveBridge | None = None
     _codec: StackchanOpusCodec | None = None
     _edge_tts: EdgeTTSProvider | None = None
+    _local_commands: Any = None
     _wake_gate: WakeGate | None = None
     _wake_gate_failures: int = 0
     _wake_gate_permanently_failed: bool = False
@@ -699,6 +700,42 @@ class GeminiVoiceProxy:
         gate = self._wake_gate
         if gate is not None and state in {"start", "stop"}:
             gate.set_local_speech(state == "start")
+
+    async def handle_local_text_before_session(self, text):
+        """Future local-ASR entry point. No current firmware event supplies text.
+
+        Caller must invoke BEFORE opening gbot and forward only on None.
+        Cloud transcription callbacks must never call this hook.
+        """
+        if not child_profile.enabled() or self._edge_tts is None:
+            return None
+        if self._local_commands is None:
+            from .local_commands import LocalCommands
+            from .parent_settings import get_parent_settings
+            from .xiaoya_forms import get_xiaoya_forms
+            from .xiaoya_games import get_xiaoya_games
+            from .usage_stats import get_usage_stats
+            self._local_commands = LocalCommands(
+                settings=get_parent_settings(), forms=get_xiaoya_forms(),
+                games=get_xiaoya_games(), usage=get_usage_stats(),
+                speak=self._speak_local_placeholder,
+            )
+        return await self._local_commands.handle_before_session(text)
+
+    async def _speak_local_placeholder(self, text):
+        provider = self._edge_tts
+        factory = self.edge_tts_provider_factory or EdgeTTSProvider
+        speaker = factory(codec=provider.codec, send_to_device=provider.send_to_device,
+                          voice="zh-HK-HiuMaanNeural", send_lock=provider.send_lock,
+                          on_device_state=provider.on_device_state)
+        gate = self._wake_gate
+        if gate is not None:
+            gate.set_local_speech(True)
+        try:
+            return await speaker.speak_text(text)
+        finally:
+            if gate is not None:
+                gate.set_local_speech(False)
 
     def _spawn_intro_tts(self) -> None:
         provider = self._edge_tts
