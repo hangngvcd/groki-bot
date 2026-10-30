@@ -189,6 +189,29 @@ async def test_voice_dispatch(games, tmp_path, monkeypatch):
     )
 
 
+@pytest.mark.asyncio
+async def test_child_allowlist_offers_play_minigame_and_keeps_unlock_rules(games, tmp_path, monkeypatch):
+    """46b: play_minigame was declared for the child profile but filtered out by
+    VOICE_TOOL_NAMES, so gbot never offered it. It must now pass the allowlist
+    while still refusing when no evolution unlock / invite is pending."""
+    import stackchan_mcp.xiaoya_forms as module
+    from stackchan_mcp import child_profile
+    from stackchan_mcp.voice_tools import VoiceToolExecutor
+
+    forms = XiaoyaForms(tmp_path / "forms.json")
+    monkeypatch.setattr(module, "_forms", forms)
+    monkeypatch.setenv("STACKCHAN_CHILD_PROFILE", "1")
+    assert child_profile.voice_tool_allowed("play_minigame")
+    executor = VoiceToolExecutor(instruction_provider=lambda **kwargs: "")
+    try:
+        assert "play_minigame" in {d["name"] for d in executor.declarations()}
+        result = await executor.execute("play_minigame", {})
+        assert result["ok"] is False and result["spoken"]
+        assert not games.has_pending()
+    finally:
+        await executor.close()
+
+
 def test_parent_pin_validation():
     from stackchan_mcp.parent_settings import validate, device_support
 
