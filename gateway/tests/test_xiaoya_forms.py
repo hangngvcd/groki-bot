@@ -449,12 +449,13 @@ async def test_volume_api_cli(tmp_path, monkeypatch, forms, capsys):
         forms.unregister_sender(sender)
 
 
-def test_intro_teaches_name_and_button():
+def test_intro_is_short_persona_line():
     from stackchan_mcp.xiaoya_forms import INTRO_TEXT
 
     assert "鈴鈴" in INTRO_TEXT
-    assert "撳" in INTRO_TEXT
-    assert "叫我「鈴鈴」，或者撳一下我，我就聽你。" in INTRO_TEXT
+    assert "娜娜你好呀" in INTRO_TEXT
+    assert "叫我就得" in INTRO_TEXT
+    assert "撳" not in INTRO_TEXT
 
 
 @pytest.fixture(autouse=True)

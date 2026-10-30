@@ -106,10 +106,7 @@ def _today() -> str:
 # Spoken by the gateway (edge-tts) only when the device has no vo.intro.1
 # clip; keep in sync with tools/lingling_assets/lines.json.
 # Firmware flash is required for the ≤200ms BOOT chime / 350ms double-press window.
-INTRO_TEXT = (
-    "娜娜你好！我係鈴鈴，一隻會慢慢長大嘅白貓仔。"
-    "你做功課嗰陣我會陪住你。叫我「鈴鈴」，或者撳一下我，我就聽你。"
-)
+INTRO_TEXT = "娜娜你好呀，我係鈴鈴。做功課我陪住你，叫我就得。"
 INTRO_VOICE = "zh-HK-HiuMaanNeural"
 
 INTRO_MESSAGE: dict[str, Any] = {"type": "xiaoya", "cmd": "intro", "force": True}
@@ -448,8 +445,8 @@ class XiaoyaForms:
                     messages.append(self.session_message())
         return {**result, "item": dict(item), "already_done": already,
                 "device_messages": messages,
-                "spoken": "你一路努力做，完成晒今日功課喇！" if messages and messages[0]["level"] == "all"
-                else "你肯花心機完成呢一份，辛苦晒！"}
+                "spoken": "搞掂！今日勁呀。" if messages and messages[0]["level"] == "all"
+                else "好嘢，又過一關！"}
 
     async def _send_completion(self, messages):
         for message in messages:

@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 
 PARENT_HELPER_BOT = "05d81ca9-b265-4d98-b754-d3ecd4693095"
 STUCK_THRESHOLD = 3
-EMPATHY_LINE = "呢題真係唔易，卡住好正常。"
-OFFER_LINE = "想小休一陣、先做第二樣，定係我話俾爸爸知你要幫手？"
+EMPATHY_LINE = "唔緊要，慢慢嚟。"
+OFFER_LINE = "想小休定我叫爸爸幫手？"
 SPOKEN_OK = "我話咗俾爸爸知"
 SPOKEN_FAIL = "我記低咗，爸爸睇到就會知"
 # Never spoken to the child; parent-helper only.

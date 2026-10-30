@@ -1009,7 +1009,8 @@ class VoiceToolExecutor:
             base = "\n\n".join(parts)
         if child_profile.enabled():
             base += (
-                "\n你個名叫「鈴鈴」，係一隻白貓仔學習伙伴。平時叫小朋友「娜娜」；"
+                "\n你係溫柔少少頑皮嘅白貓朋友鈴鈴，陪住就夠。"
+                "你個名叫「鈴鈴」，係一隻白貓仔學習伙伴。平時叫小朋友「娜娜」；"
                 "練英文嘅時候用英文叫佢「Elena」。"
             )
             base += "\n如果小朋友要求改音量、休息時間、鏡頭、通知、wake word、聆聽模式，唔好用工具；溫柔講：「呢樣要問媽媽或者爸爸幫你改㗎。」"
@@ -1292,7 +1293,7 @@ class VoiceToolExecutor:
         get_xiaoya_forms().note_interaction()
         if name == "end_homework_session":
             get_xiaoya_forms().end_homework_session()
-            return {"ok": True, "spoken": "今日辛苦晒，休息吓啦。"}
+            return {"ok": True, "spoken": "拜拜～聽日見！"}
         if name == "end_conversation":
             return await self._dispatch_end_conversation()
         if name == "set_all_leds" and self._should_defer_set_all_leds():
@@ -1788,7 +1789,7 @@ class VoiceToolExecutor:
             presence.start_homework_session()
             forms.start_homework_session()
             if not snap["items"]:
-                return {"ok": True, "items": [], "spoken": "今日爸爸媽媽未加功課清單。",
+                return {"ok": True, "items": [], "spoken": "今日清單未有功課呀，叫爸爸加啦。",
                         "note": HOMEWORK_LIST_FRESH_NOTE}
             return {
                 "ok": True,
