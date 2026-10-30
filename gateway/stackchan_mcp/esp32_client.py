@@ -654,6 +654,7 @@ class ESP32Manager:
                         get_battery_calibration().record(data)
                         continue
                     if data.get("event") == "battery":
+                        _log_battery_event(data)
                         percent = data.get("percent")
                         if type(percent) is int:
                             self._debug_status.on_device_battery(max(0, min(100, percent)))
