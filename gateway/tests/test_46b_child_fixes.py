@@ -75,7 +75,7 @@ def test_battery(monkeypatch, percent, age, connected, stale):
     if stale:
         assert (
             result["spoken"]
-            == "我而家讀唔到自己有幾多電，可能係插住電用緊。想知就問吓爸爸媽媽睇吓啦。"
+            == "我而家讀唔到自己有幾多電。想知就問吓爸爸媽媽睇吓啦。"
         )
     else:
         assert result["spoken"].startswith(f"我仲有大約{percent}%電。")
@@ -110,15 +110,17 @@ async def test_bridge_language_updates(monkeypatch):
     await say("你可以說普通話嗎？", "a")
     await say("你而家仲用緊廣東話", "b")
     await say("你而家仲用緊廣東話呀", "b")
-    assert b._send.await_count == 2
-    assert b._send.call_args.args[0]["session"][
-        "instructions"
-    ] == "base" + gbot_dialogue.language_mode_block("cmn")
+    updates = [c.args[0] for c in b._send.await_args_list if c.args[0]["type"] == "session.update"]
+    assert len(updates) == 2
+    assert updates[-1]["session"]["instructions"] == (
+        gbot_dialogue.language_mode_header("cmn") + "base" + gbot_dialogue.language_mode_block("cmn")
+    )
     await say("講返廣東話", "c")
     assert b._language_mode == "yue"
     monkeypatch.setattr(module, "mandarin_enabled", lambda: False)
     await say("請講普通話", "d")
-    assert b._send.await_count == 3
+    updates = [c.args[0] for c in b._send.await_args_list if c.args[0]["type"] == "session.update"]
+    assert len(updates) == 3
     assert b.metrics["language_switches"] == 2
 
 

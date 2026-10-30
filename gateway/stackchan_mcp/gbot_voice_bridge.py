@@ -266,6 +266,11 @@ class GbotVoiceBridge:
         self.running = False
         self._language_mode = "yue"
         self._base_instructions = ""
+        # 46c: pieces for a Mandarin-mode prompt that replaces (not appends to)
+        # the Cantonese language rules, plus the audio config for language_hint.
+        self._instructions_head = ""
+        self._child_rules = False
+        self._audio_config = None
         self._language_requests: set[tuple[str | None, str]] = set()
         self.metrics = {
             "language_switches": 0,
@@ -717,13 +722,15 @@ class GbotVoiceBridge:
             transcription = gbot_dialogue.transcription_config(
                 self.transcribe_language, keyterms
             )
+            instructions_head = session.get(
+                "instructions", "請用香港廣東話簡短自然咁傾偈。"
+            ) + (
+                "\n\n" + self._provider_tool_instructions()
+                if self._executor and self._local_tools_enabled
+                else ""
+            )
             config = {
-                "instructions": session.get("instructions", "請用香港廣東話簡短自然咁傾偈。")
-                + (
-                    "\n\n" + self._provider_tool_instructions()
-                    if self._executor and self._local_tools_enabled
-                    else ""
-                )
+                "instructions": instructions_head
                 + (
                     gbot_dialogue.cantonese_rules(mandarin_enabled())
                     if child_profile.enabled()
@@ -745,8 +752,12 @@ class GbotVoiceBridge:
                 "tools": declarations,
             }
             self._language_mode = "yue"
+            gbot_dialogue.set_active_language_mode("yue")
             self._language_requests.clear()
             self._base_instructions = config["instructions"]
+            self._instructions_head = instructions_head
+            self._child_rules = child_profile.enabled()
+            self._audio_config = config["audio"]
             logger.info(
                 "Grok voice session config language_hint=%s keyterms=%d vad_silence_ms=%d "
                 "prefix_ms=%d barge_min_ms=%d barge_dbfs=%.0f max_sentences=%d transcripts_log=%s",
@@ -1433,20 +1444,64 @@ class GbotVoiceBridge:
             return
         logger.info("Grok voice homework change noted action=%s", action)
 
+    def _mode_instructions(self, mode):
+        if mode != "cmn":
+            return self._base_instructions + gbot_dialogue.language_mode_block(mode)
+        # 46c: rebuild with Mandarin-mode rules instead of the Cantonese ones,
+        # and state the mode first as well as last.
+        body = (
+            self._instructions_head + gbot_dialogue.cantonese_rules(True, "cmn")
+            if self._child_rules and self._instructions_head
+            else self._base_instructions
+        )
+        return (
+            gbot_dialogue.language_mode_header("cmn")
+            + body
+            + gbot_dialogue.language_mode_block("cmn")
+        )
+
+    def _mode_audio(self, mode):
+        """Full audio config with the ASR hint for ``mode`` (46c); None in tests."""
+        audio = self._audio_config
+        if not audio:
+            return None
+        audio = json.loads(json.dumps(audio))
+        transcription = audio.get("input", {}).get("transcription")
+        if transcription is None:
+            return None
+        if mode == "cmn":
+            transcription["language_hint"] = "zh"
+        else:
+            base = gbot_dialogue.transcription_config(self.transcribe_language, None)
+            if "language_hint" in base:
+                transcription["language_hint"] = base["language_hint"]
+            else:
+                transcription.pop("language_hint", None)
+        return audio
+
     async def _send_language_mode(self, mode):
+        gbot_dialogue.set_active_language_mode(mode)
+        session = {"instructions": self._mode_instructions(mode)}
+        audio = self._mode_audio(mode)
+        if audio is not None:
+            session["audio"] = audio
         try:
-            await self._send(
-                {
-                    "type": "session.update",
-                    "session": {
-                        "instructions": self._base_instructions
-                        + gbot_dialogue.language_mode_block(mode)
-                    },
-                }
+            await self._send({"type": "session.update", "session": session})
+            logger.info(
+                "Grok voice language mode -> %s (instructions=%d chars, language_hint=%s)",
+                mode,
+                len(session["instructions"]),
+                (audio or {}).get("input", {}).get("transcription", {}).get("language_hint", "unchanged"),
             )
-            logger.info("Grok voice language mode -> %s", mode)
         except Exception:
             logger.debug("Grok voice language update failed", exc_info=True)
+            return
+        note = (
+            gbot_dialogue.MANDARIN_SWITCH_NOTE
+            if mode == "cmn"
+            else gbot_dialogue.CANTONESE_SWITCH_NOTE
+        )
+        await self._note_context(note, f"language {mode}")
 
     async def _handle_language_request(self, text, item_id):
         try:
@@ -1519,6 +1574,7 @@ class GbotVoiceBridge:
         if self._homework_forms is not None:
             self._homework_forms.remove_change_listener(self._on_homework_changed)
             self._homework_forms = None
+        gbot_dialogue.set_active_language_mode("yue")
         if not self._stopped:
             self._flush_heard()
             self._log_session_stats()

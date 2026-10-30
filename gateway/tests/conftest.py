@@ -85,3 +85,13 @@ def _isolated_kws_miss_tip(monkeypatch, tmp_path):
     kws_miss_tip.reset_kws_miss_tip()
     yield
     kws_miss_tip.reset_kws_miss_tip()
+
+
+@pytest.fixture(autouse=True)
+def _reset_voice_language_mode():
+    """46c: the live language mode is module state; keep tests independent."""
+    from stackchan_mcp import gbot_dialogue
+
+    gbot_dialogue.set_active_language_mode("yue")
+    yield
+    gbot_dialogue.set_active_language_mode("yue")

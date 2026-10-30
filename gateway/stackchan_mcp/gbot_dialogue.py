@@ -236,11 +236,29 @@ DICTATION_RULES = (
 )
 
 
-def cantonese_rules(mandarin: bool = True) -> str:
-    """Child-profile dialogue rules; ``mandarin`` is the parent setting."""
-    language = (
-        LANGUAGE_RULES_MANDARIN_ALLOWED if mandarin else LANGUAGE_RULES_CANTONESE_ONLY
-    )
+# 46c: while the Mandarin mode is active the Cantonese language rules are
+# replaced (not merely followed by an override), so the prompt no longer says
+# "平時用香港廣東話" twice before the Mandarin block.
+LANGUAGE_RULES_MANDARIN_MODE = (
+    "- 而家係普通話模式：每一句都用標準普通話（國語）講，用普通話發音同普通話用詞"
+    "（我們、現在、什麼、的、是、在、沒有），唔好用廣東話發音或者廣東話用詞；字照用繁體字，可以夾少少英文生字。"
+    "娜娜用廣東話問你，你都照用普通話答。工具結果入面嘅 spoken／spoken_zh 句子，用普通話讀出嚟。"
+    "直至娜娜叫你轉返廣東話或者嗰樣功課做完，先轉返香港廣東話。\n"
+)
+
+
+def cantonese_rules(mandarin: bool = True, mode: str = "yue") -> str:
+    """Child-profile dialogue rules; ``mandarin`` is the parent setting.
+
+    ``mode == "cmn"`` (46c) swaps the language section for the Mandarin-mode
+    rules; only valid while the parent setting allows Mandarin.
+    """
+    if mandarin and mode == "cmn":
+        language = LANGUAGE_RULES_MANDARIN_MODE
+    else:
+        language = (
+            LANGUAGE_RULES_MANDARIN_ALLOWED if mandarin else LANGUAGE_RULES_CANTONESE_ONLY
+        )
     return _RULES_HEAD + language + _RULES_TAIL + DICTATION_RULES
 
 
@@ -308,6 +326,40 @@ def detect_language_request(text: str) -> str | None:
     ) or re.search(r"\bMandarin\b", text, re.I):
         return "cmn"
     return None
+
+
+def language_mode_header(mode: str) -> str:
+    """46c: Mandarin mode is stated first as well as last in the prompt."""
+    if mode != "cmn":
+        return ""
+    return (
+        "## LANGUAGE MODE: Mandarin（普通話模式）\n"
+        "Reply ONLY in Standard Mandarin Chinese (Putonghua) with Mandarin pronunciation, "
+        "even when 娜娜 speaks Cantonese and even when text below or a tool result is Cantonese. "
+        "This overrides every Cantonese instruction below until 娜娜 asks for Cantonese again.\n\n"
+    )
+
+
+MANDARIN_SWITCH_NOTE = (
+    "[系統通知，唔使回應] 娜娜要求講普通話。由下一句起，每一句都用標準普通話（普通話發音、普通話用詞）回覆，"
+    "佢用廣東話問都照用普通話答，直至佢叫你轉返廣東話。"
+)
+CANTONESE_SWITCH_NOTE = (
+    "[系統通知，唔使回應] 娜娜要求轉返廣東話。由下一句起用返香港廣東話（廣東話發音）回覆。"
+)
+
+# 46c: the live session's language mode, read by tools that return spoken text.
+# One voice session runs at a time; the bridge resets this on start and stop.
+_active_language_mode = "yue"
+
+
+def set_active_language_mode(mode: str) -> None:
+    global _active_language_mode
+    _active_language_mode = "cmn" if mode == "cmn" else "yue"
+
+
+def active_language_mode() -> str:
+    return _active_language_mode
 
 
 def language_mode_block(mode: str) -> str:

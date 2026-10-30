@@ -919,6 +919,16 @@ def prewarm_glyph_renderer() -> None:
         logger.debug("glyph prewarm failed", exc_info=True)
 
 
+def _language_mode() -> str:
+    """46c: the live voice session's language mode ("yue" or "cmn")."""
+    try:
+        from . import gbot_dialogue
+
+        return gbot_dialogue.active_language_mode()
+    except Exception:
+        return "yue"
+
+
 class VoiceToolExecutor:
     """Shared local execution and result notices; providers adapt only the wire protocol."""
 
@@ -1879,6 +1889,24 @@ class VoiceToolExecutor:
             f"星期{'一二三四五六日'[now.weekday()]}，"
             f"{period}{zh(hour % 12 or 12)}點{minutes}。"
         )
+        if _language_mode() == "cmn":
+            # 46c: Mandarin wording while the session is in Mandarin mode.
+            cmn_period = (
+                "凌晨" if hour < 6 else "上午" if hour < 12 else "中午" if hour == 12
+                else "下午" if hour < 18 else "晚上"
+            )
+            h12 = hour % 12 or 12
+            cmn_hour = "兩" if h12 == 2 else zh(h12)
+            cmn_minutes = (
+                (("零" if now.minute < 10 else "") + zh(now.minute) + "分")
+                if now.minute
+                else "整"
+            )
+            spoken = (
+                f"現在是香港時間{zh(now.month)}月{zh(now.day)}日"
+                f"星期{'一二三四五六日'[now.weekday()]}，"
+                f"{cmn_period}{cmn_hour}點{cmn_minutes}。"
+            )
         weekdays = [
             "Monday",
             "Tuesday",
@@ -1909,14 +1937,29 @@ class VoiceToolExecutor:
             or status.clock() - at > 600
         )
         reason = getattr(status, "device_battery_unknown_reason", None)
+        cmn = _language_mode() == "cmn"
+        # 46d: only claim "plugged in" when the firmware says so (usb_pinned);
+        # with no report the robot just says it cannot read the level.
         if stale and reason == "usb_pinned":
-            spoken = "我而家插住電用緊，所以讀唔到電池有幾多電，唔使擔心呀。"
+            spoken = (
+                "我現在插著電在用，所以讀不到電池有多少電，不用擔心喔。"
+                if cmn
+                else "我而家插住電用緊，所以讀唔到電池有幾多電，唔使擔心呀。"
+            )
         elif stale:
-            spoken = "我而家讀唔到自己有幾多電，可能係插住電用緊。想知就問吓爸爸媽媽睇吓啦。"
+            spoken = (
+                "我現在讀不到自己有多少電。想知道的話，可以問問爸爸媽媽。"
+                if cmn
+                else "我而家讀唔到自己有幾多電。想知就問吓爸爸媽媽睇吓啦。"
+            )
         else:
-            spoken = f"我仲有大約{percent}%電。"
+            spoken = f"我還有大約{percent}%的電。" if cmn else f"我仲有大約{percent}%電。"
             if percent <= 20:
-                spoken += " 有啲少電喇，記得叫爸爸媽媽幫我充電呀。"
+                spoken += (
+                    " 有點沒電了，記得叫爸爸媽媽幫我充電喔。"
+                    if cmn
+                    else " 有啲少電喇，記得叫爸爸媽媽幫我充電呀。"
+                )
         return {"ok": True, "percent": percent, "stale": stale, "reason": reason, "spoken": spoken}
 
     async def _announce_mac_task(self, record: dict[str, Any]) -> None:
