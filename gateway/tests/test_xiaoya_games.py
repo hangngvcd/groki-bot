@@ -4,7 +4,7 @@ import stat
 
 import pytest
 
-from stackchan_mcp.xiaoya_games import XiaoyaGames, minigame_message
+from stackchan_mcp.xiaoya_games import XiaoyaGames, match_voice_exit, minigame_message
 from stackchan_mcp.xiaoya_forms import XiaoyaForms
 
 
@@ -79,12 +79,12 @@ def test_g1_thresholds(games, delay, leaves):
     games.clock.value = games.active["due"]
     assert games.tick()["messages"] == [minigame_message("cue")]
     games.clock.value += delay
-    assert games.on_short_press()["leaves"] == leaves
+    assert games.on_utterance()["leaves"] == leaves
 
 
 def test_g1_early_miss_and_five_rounds(games):
     start(games)
-    assert games.on_short_press()["leaves"] == 0
+    assert games.on_utterance()["leaves"] == 0
     for _ in range(4):
         games.clock.value = games.active["due"]
         games.tick()
@@ -104,7 +104,7 @@ def test_g2_counts(games, difference, leaves):
         sent.extend(games.tick()["messages"])
     assert sum(m["action"] == "cue" for m in sent) == target
     for _ in range(target + difference):
-        games.on_short_press()
+        games.on_utterance()
     games.clock.value = games.active["due"]
     result = games.tick()
     assert result["leaves"] == leaves
@@ -150,6 +150,7 @@ def test_refusal_pin_and_contract(games):
         "action": "enter",
         "game": "G3",
         "form": 2,
+        "teach": True,
     }
     assert minigame_message("leaves", count=3)["count"] == 3
     for action, fields in [
@@ -205,10 +206,12 @@ def test_device_short_event_and_daily_reset(games):
     result = games.note_device_event(
         {"type": "xiaoya", "event": "minigame_press", "kind": "short"}
     )
-    assert result["leaves"] == 0
+    assert result["messages"] == []
+    assert games.active["round"] == 0
     games.today = lambda: "2099-01-01"
     assert games.active is None
     assert games.snapshot()["played_today"] == []
+    assert games.snapshot()["taught_today"] == []
 
 
 def test_corrupt_state_is_safe(tmp_path):
@@ -216,3 +219,59 @@ def test_corrupt_state_is_safe(tmp_path):
     path.write_text("{bad json")
     games = XiaoyaGames(path)
     assert not games.has_pending() and games.active is None
+
+
+@pytest.mark.parametrize("text", ["唔玩啦", "退出", "唔要玩", "唔玩", "不要玩", "不玩了", " 唔 玩 啦！", "「退出」。"])
+def test_voice_exit_hits(text):
+    assert match_voice_exit(text)
+
+
+@pytest.mark.parametrize("text", ["", None, "我唔玩啦", "退出遊戲", "唔玩啦再見", "不要玩嗎", "不玩", "唔玩+啦"])
+def test_voice_exit_misses(text):
+    assert not match_voice_exit(text)
+
+
+@pytest.mark.parametrize("game", ["G1", "G2", "G3"])
+def test_utterance_and_short_events(games, game):
+    start(games, game)
+    if game == "G2":
+        while games.active["phase"] == "beeps":
+            games.clock.value = games.active["due"]
+            games.tick()
+    before = games.active
+    for event in ("boot_press", "minigame_press"):
+        assert games.note_device_event({"event": event, "kind": "short"})["messages"] == []
+        assert games.active == before
+    assert games.on_short_press()["messages"] == []
+    result = games.note_device_event({"event": "minigame_utterance"})
+    if game == "G1":
+        assert result["leaves"] == 0
+    elif game == "G2":
+        assert games.active["presses"] == 1
+    else:
+        assert games.active == before
+
+
+@pytest.mark.parametrize("event", ["minigame_voice_exit", "minigame_press", "boot_press"])
+def test_exit_events_pending_and_active(games, event):
+    games.on_level_up(1, 2)
+    pending = games.peek_pending()
+    games.note_device_event({"event": "boot_press", "kind": "short"})
+    assert games.peek_pending() == pending
+    message = {"event": event, "kind": "double"}
+    assert games.note_device_event(message)["messages"][0]["reason"] == "decline"
+    start(games, "G3")
+    assert games.note_device_event(message)["messages"][0]["reason"] == "quit"
+    assert games.active is None
+
+
+def test_teach_once_per_game_per_day(games):
+    for game in ("G1", "G2", "G3"):
+        assert start(games, game)["messages"][0]["teach"] is True
+        games.on_double_press()
+        assert start(games, game)["messages"][0]["teach"] is False
+        games.on_double_press()
+    again = XiaoyaGames(games.path, clock=games.clock, pin_source=lambda: "G1")
+    assert start(again)["messages"][0]["teach"] is False
+    games.today = lambda: "2099-01-01"
+    assert start(games)["messages"][0]["teach"] is True

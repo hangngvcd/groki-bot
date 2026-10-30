@@ -60,6 +60,12 @@ class LocalCommands:
         self.deadline = None
 
     async def handle_before_session(self, text):
+        result = self.games.maybe_voice_exit(text)
+        if result is not None:
+            self.usage.local_handled()
+            for message in result.get('messages', []):
+                await self.forms.send_device(message)
+            return {'intent': 'game_exit', 'handled': True}
         if not self.settings.get()['local_commands_enabled']:
             return None
         intent = match(text)

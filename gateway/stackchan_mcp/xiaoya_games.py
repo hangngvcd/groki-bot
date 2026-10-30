@@ -19,6 +19,7 @@ from pathlib import Path
 import random
 import tempfile
 import time
+import unicodedata
 from typing import Any, Callable
 
 from .parent_settings import get_parent_settings, private_directory
@@ -52,6 +53,17 @@ def minigame_message(action: str, **fields: Any) -> dict[str, Any]:
     if action == "exit" and fields.get("reason") not in ("done", "quit", "decline"):
         raise ValueError("bad exit reason")
     return {"type": "xiaoya", "cmd": "minigame", "action": action, **fields}
+
+
+def match_voice_exit(text: str) -> bool:
+    """Match a complete local exit phrase, ignoring whitespace and punctuation."""
+    if not isinstance(text, str):
+        return False
+    text = "".join(
+        char for char in unicodedata.normalize("NFKC", text)
+        if not char.isspace() and not unicodedata.category(char).startswith("P")
+    )
+    return text in {"唔玩啦", "退出", "唔要玩", "唔玩", "不要玩", "不玩了"}
 
 
 def invite_spoken(game: str) -> str:
@@ -91,6 +103,8 @@ class XiaoyaGames:
                 or not 0 <= data["next_index"] < 3
                 or not isinstance(data["played_today"], list)
                 or any(g not in GAMES for g in data["played_today"])
+                or not isinstance(data.get("taught_today", []), list)
+                or any(g not in GAMES for g in data.get("taught_today", []))
                 or data.get("pin_game") not in (None, *GAMES)
             ):
                 raise ValueError("bad games state")
@@ -108,6 +122,7 @@ class XiaoyaGames:
             pending=None,
             active=None,
             played_today=[],
+            taught_today=[],
             pin_game=None,
         )
 
@@ -210,7 +225,10 @@ class XiaoyaGames:
         active = dict(game=game, form=pending["to_form"], round=0, presses=0)
         self._state["active"] = active
         self._state["played_today"].append(game)
-        messages = [minigame_message("enter", game=game, form=active["form"])]
+        teach = game not in self._state["taught_today"]
+        if teach:
+            self._state["taught_today"].append(game)
+        messages = [minigame_message("enter", game=game, form=active["form"], teach=teach)]
         if game == "G1":
             self._wait_g1(now)
         elif game == "G2":
@@ -281,14 +299,14 @@ class XiaoyaGames:
         self._save()
         return dict(ok=True, messages=messages)
 
-    def on_short_press(self, now=None):
+    def on_utterance(self, now=None):
         self._refresh()
         now = self.clock() if now is None else now
         a = self._state["active"]
         if not a:
             return dict(ok=False, messages=[])
         if a["game"] == "G1":
-            # A press does not create a cue: only the local timer can do so.
+            # An utterance does not create a cue: only the local timer can do so.
             cue_at = a.get("cue_at", now)
             count = (
                 0
@@ -322,9 +340,25 @@ class XiaoyaGames:
             return self._finish("quit")
         return self.start_pending(accept=False)
 
+    def on_short_press(self, now=None):
+        """Deprecated: BOOT short presses are never game input."""
+        return dict(ok=True, messages=[])
+
+    def maybe_voice_exit(self, text):
+        if not match_voice_exit(text):
+            return None
+        self._refresh()
+        if self._state["active"] or self._state["pending"]:
+            return self.on_double_press()
+        return None
+
     def note_device_event(self, message):
         event = message.get("event")
-        if event == "minigame_press" or (event == "boot_press" and self.active):
+        if event == "minigame_utterance":
+            return self.on_utterance()
+        if event == "minigame_voice_exit":
+            return self.on_double_press()
+        if event in ("minigame_press", "boot_press"):
             if message.get("kind") == "short":
                 return self.on_short_press()
             if message.get("kind") == "double":

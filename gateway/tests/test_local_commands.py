@@ -61,3 +61,30 @@ async def test_local_speech_bridge_hook(monkeypatch):
     proxy._local_commands = Handler()
     assert await proxy.handle_local_text_before_session('你好') == {'handled': True}
     proxy._local_commands.handle_before_session.assert_awaited_once_with('你好')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('pending', [False, True])
+@pytest.mark.parametrize('enabled', [False, True])
+async def test_game_voice_exit_is_local(tmp_path, pending, enabled):
+    settings = ParentSettings(tmp_path/'settings')
+    settings.set('local_commands_enabled', enabled, source='parent')
+    forms = XiaoyaForms(tmp_path/'forms')
+    forms.send_device = AsyncMock()
+    games = XiaoyaGames(tmp_path/'games', pin_source=lambda: 'G3')
+    usage = UsageStats(tmp_path/'usage')
+    speak = AsyncMock()
+    local = LocalCommands(settings=settings, forms=forms, games=games, usage=usage, speak=speak)
+    assert await local.handle_before_session('唔玩啦') is None
+    games.on_level_up(1, 2)
+    if not pending:
+        games.start_pending()
+    assert await local.handle_before_session('我唔玩啦') is None
+    assert await local.handle_before_session(' 唔 玩 啦！') == {'intent': 'game_exit', 'handled': True}
+    forms.send_device.assert_awaited_once_with({
+        'type': 'xiaoya', 'cmd': 'minigame', 'action': 'exit',
+        'reason': 'decline' if pending else 'quit',
+    })
+    assert not games.active and not games.has_pending()
+    assert usage.snapshot()['local_handled_count'] == 1
+    speak.assert_not_awaited()
