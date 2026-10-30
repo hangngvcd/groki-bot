@@ -286,3 +286,42 @@ SEND_TASK_RULES = (
     "真人嘅私人資料，亦唔可以隨便上網睇；遇到呢啲就溫柔講「" + SEND_TASK_REFUSAL + "」\n"
     "- 永遠唔好讀出網址或者連結。一般留言搵爸爸媽媽幫手可以用 send_task；功課卡住約 3 次要通知爸爸就一定用 notify_dad_stuck（要娜娜同意），唔好用 send_task。\n"
 )
+
+
+def still_cantonese_complaint(text: str) -> bool:
+    return bool(re.search(r"仲(?:用緊|係講緊|講緊)\s*廣東話", text))
+
+
+def detect_language_request(text: str) -> str | None:
+    """Recognize language requests without treating school subject mentions as requests."""
+    mandarin = r"(?:普通話|普通话|國語|国语)"
+    if re.search(r"(?:唔好|不要|別|别)\s*(?:講|讲|說|说|用)\s*" + mandarin, text):
+        return "yue"
+    if still_cantonese_complaint(text):
+        return "cmn"
+    if re.search(r"(?:講|讲|說|说|轉|转|用|改)返?\s*廣東話", text) or re.search(
+        r"\bCantonese\b", text, re.I
+    ):
+        return "yue"
+    if re.search(
+        r"(?:講|讲|說|说|用|轉|转)(?:返|成|做|為|为)?\s*" + mandarin, text
+    ) or re.search(r"\bMandarin\b", text, re.I):
+        return "cmn"
+    return None
+
+
+def language_mode_block(mode: str) -> str:
+    if mode == "cmn":
+        return (
+            "\n\n## 而家語言：普通話\n"
+            "LANGUAGE MODE: Mandarin. Speak Standard Mandarin Chinese (Putonghua / 普通話) "
+            "with Mandarin pronunciation for every reply, NOT Cantonese pronunciation. "
+            "Use Mandarin words (我們、現在、什麼、的、是、在). 字照用繁體字. "
+            "Stay in Mandarin until 娜娜 asks to switch back to Cantonese. "
+            "This current language mode overrides earlier language instructions, including tool spoken text."
+        )
+    return (
+        "\n\n## 而家語言：香港廣東話\n"
+        "LANGUAGE MODE: Hong Kong Cantonese (粵語) pronunciation for every reply. "
+        "用香港廣東話口語同繁體字，直到娜娜要求轉普通話。"
+    )

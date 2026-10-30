@@ -174,6 +174,8 @@ async def test_gbot_receives_only_child_catalog(child, monkeypatch, native_end):
             "notify_dad_stuck",
             "show_character",
             "homework_vocab_context",
+            "get_current_datetime",
+            "battery_status",
         }
         assert config["turn_detection"] == {
             "type": "server_vad",
@@ -184,6 +186,8 @@ async def test_gbot_receives_only_child_catalog(child, monkeypatch, native_end):
         assert transcription["language_hint"] == "yue"
         assert {"鈴鈴", "娜娜", "Elena"} <= set(transcription["keyterms"])
         assert len(transcription["keyterms"]) <= 100
+        assert proxy._bridge._base_instructions == config["instructions"]
+        assert proxy._bridge._language_mode == "yue"
         assert "娜娜" in config["instructions"]
         # Parent setting mandarin defaults on: Cantonese unless 娜娜 asks.
         assert "永遠唔好叫佢講普通話" not in config["instructions"]
@@ -218,6 +222,8 @@ def test_gemini_child_catalog_excludes_search_and_other_tools(child):
         "notify_dad_stuck",
         "show_character",
         "homework_vocab_context",
+        "get_current_datetime",
+        "battery_status",
     }
 
 
@@ -241,6 +247,8 @@ async def test_extensions_cannot_broaden_child_catalog(child):
             "notify_dad_stuck",
             "show_character",
             "homework_vocab_context",
+            "get_current_datetime",
+            "battery_status",
         }
         assert (await executor.execute("camera_capture", {}))["ok"] is False
         dispatch.assert_not_awaited()

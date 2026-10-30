@@ -264,7 +264,11 @@ class GbotVoiceBridge:
         self._resampler = Pcm16To24()
         self._stopped = False
         self.running = False
+        self._language_mode = "yue"
+        self._base_instructions = ""
+        self._language_requests: set[tuple[str | None, str]] = set()
         self.metrics = {
+            "language_switches": 0,
             "input_pcm_bytes": 0,
             "output_pcm_bytes": 0,
             "interruptions": 0,
@@ -740,6 +744,9 @@ class GbotVoiceBridge:
                 },
                 "tools": declarations,
             }
+            self._language_mode = "yue"
+            self._language_requests.clear()
+            self._base_instructions = config["instructions"]
             logger.info(
                 "Grok voice session config language_hint=%s keyterms=%d vad_silence_ms=%d "
                 "prefix_ms=%d barge_min_ms=%d barge_dbfs=%.0f max_sentences=%d transcripts_log=%s",
@@ -1064,6 +1071,7 @@ class GbotVoiceBridge:
                 await self._on_transcript(event)
             text = event.get("transcript", "")
             if kind == "conversation.item.input_audio_transcription.completed":
+                await self._handle_language_request(text, event.get("item_id"))
                 # grok-transcribe re-sends "completed" with growing text; keep
                 # the latest per item and write it once.
                 item = event.get("item_id")
@@ -1425,6 +1433,40 @@ class GbotVoiceBridge:
             return
         logger.info("Grok voice homework change noted action=%s", action)
 
+    async def _send_language_mode(self, mode):
+        try:
+            await self._send(
+                {
+                    "type": "session.update",
+                    "session": {
+                        "instructions": self._base_instructions
+                        + gbot_dialogue.language_mode_block(mode)
+                    },
+                }
+            )
+            logger.info("Grok voice language mode -> %s", mode)
+        except Exception:
+            logger.debug("Grok voice language update failed", exc_info=True)
+
+    async def _handle_language_request(self, text, item_id):
+        try:
+            if not child_profile.enabled() or not mandarin_enabled():
+                return
+            mode = gbot_dialogue.detect_language_request(text)
+            if mode is None or (item_id, mode) in self._language_requests:
+                return
+            changed = mode != self._language_mode
+            reinforce = mode == "cmn" and gbot_dialogue.still_cantonese_complaint(text)
+            if not changed and not reinforce:
+                return
+            self._language_requests.add((item_id, mode))
+            self._language_mode = mode
+            if changed:
+                self.metrics["language_switches"] += 1
+            await self._send_language_mode(mode)
+        except Exception:
+            logger.debug("Grok voice language request failed", exc_info=True)
+
     def _watch_settings(self):
         try:
             settings = get_parent_settings()
@@ -1441,6 +1483,12 @@ class GbotVoiceBridge:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
+        if not settings.get("mandarin") and getattr(self, "_language_mode", "yue") == "cmn":
+            self._language_mode = "yue"
+            self.metrics["language_switches"] += 1
+            task = loop.create_task(self._send_language_mode("yue"))
+            self._tools.add(task)
+            task.add_done_callback(self._tools.discard)
         note = self.MANDARIN_ON_NOTE if settings.get("mandarin") else self.MANDARIN_OFF_NOTE
         task = loop.create_task(self._note_context(note, "settings mandarin"))
         self._tools.add(task)

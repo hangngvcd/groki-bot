@@ -8,6 +8,8 @@ import os
 
 VOICE_TOOL_NAMES = frozenset(
     {
+        "get_current_datetime",
+        "battery_status",
         "send_task",
         "search_conversations",
         "end_the_call",

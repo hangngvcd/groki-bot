@@ -96,7 +96,15 @@ def build_parent_status(debug_status_snapshot, settings, env, helper_health):
         "device_support": device_support(),
     }
     battery = device.get("battery_percent")
-    battery_text = "未有資料" if battery is None else f"{battery}%"
+    reason = device.get("battery_unknown_reason")
+    if battery is not None:
+        battery_text = f"{battery}%"
+    elif reason == "usb_pinned":
+        battery_text = "讀唔到（似係插住 USB 電，冇讀到電池）"
+    elif reason:
+        battery_text = "讀唔到（電池讀數異常）"
+    else:
+        battery_text = "未有資料"
     connected = "已連線" if device.get("connected") else "未連線"
     mode = wake.get("listening_mode")
     if mode in {"wake_word", "wake_word_or_button"}:

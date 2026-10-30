@@ -95,6 +95,8 @@ class DebugStatus:
     device_last_disconnect_at: float | None = None
     device_battery_percent: int | None = None
     device_battery_at: float | None = None
+    device_battery_unknown_reason: str | None = None
+    device_battery_unknown_at: float | None = None
     device_disconnect_count: int = 0
 
     # ---- gemini (Live session)----
@@ -160,6 +162,16 @@ class DebugStatus:
             raise ValueError("Battery percent must be an integer 0..100")
         self.device_battery_percent = percent
         self.device_battery_at = self.clock()
+        self.device_battery_unknown_reason = None
+        self.device_battery_unknown_at = None
+
+    def on_device_battery_unknown(self, reason: str | None) -> None:
+        """fw 46a+ reports percent=null with a reason when the ADC reading is unusable."""
+        allowed = {"adc_error", "adc_out_of_range", "usb_pinned"}
+        self.device_battery_unknown_reason = reason if reason in allowed else "unknown"
+        self.device_battery_unknown_at = self.clock()
+        self.device_battery_percent = None
+        self.device_battery_at = None
 
     def on_device_disconnected(self) -> None:
         if self.usage:
@@ -355,6 +367,7 @@ class DebugStatus:
                 "device_id": self.device_id,
                 "battery_percent": self.device_battery_percent,
                 "battery_at": self.device_battery_at,
+                "battery_unknown_reason": self.device_battery_unknown_reason,
                 "connected_since": self.device_connected_since,
                 "last_disconnect_at": self.device_last_disconnect_at,
                 "disconnect_count": self.device_disconnect_count,

@@ -169,6 +169,7 @@ TOOL_METADATA: dict[str, ToolMetadata] = {
     "ask_grokbot": ToolMetadata(False, None, 8.0),
     "ask_claude": ToolMetadata(False, None, 35.0),
     "get_current_datetime": ToolMetadata(False, None, 2.0),
+    "battery_status": ToolMetadata(False, None, 2.0),
     "homework_list": ToolMetadata(False, None, 2.0),
     "play_minigame": ToolMetadata(True, "homework", 3.0),
     "homework_done": ToolMetadata(True, "homework", 3.0),
@@ -381,6 +382,12 @@ def build_function_declarations(*, types=None) -> list[Any]:
         ),
     )
 
+    battery_status = types.FunctionDeclaration(
+        name="battery_status",
+        description="Read the robot battery level. Read spoken aloud; never guess.",
+        parameters=types.Schema(type="OBJECT", properties={}),
+    )
+
     play_minigame = types.FunctionDeclaration(
         name="play_minigame",
         description="Start the immediate evolution-unlocked local game. No child choice; never send_task. Without unlock read spoken only.",
@@ -550,6 +557,8 @@ def build_function_declarations(*, types=None) -> list[Any]:
     )
     if child_profile.enabled():
         return [
+            get_current_datetime,
+            battery_status,
             end_conversation,
             end_homework_session,
             homework_list,
@@ -1013,6 +1022,9 @@ class VoiceToolExecutor:
                 "你個名叫「鈴鈴」，係一隻白貓仔學習伙伴。平時叫小朋友「娜娜」；"
                 "練英文嘅時候用英文叫佢「Elena」。"
             )
+            base += "\n問而家幾點／幾號／星期幾 -> call get_current_datetime，讀 spoken_zh，準到分鐘（香港時間），唔好話攞唔到。"
+            base += "\n問電量／幾多電 -> call battery_status，讀 spoken。"
+            base += "\n問時間、問電量唔係改設定，唔好答「要問媽媽或者爸爸幫你改」。"
             base += "\n如果小朋友要求改音量、休息時間、鏡頭、通知、wake word、聆聽模式，唔好用工具；溫柔講：「呢樣要問媽媽或者爸爸幫你改㗎。」"
             if _mandarin_enabled():
                 base += (
@@ -1309,6 +1321,8 @@ class VoiceToolExecutor:
             return await self._dispatch_ask_grokbot(args)
         if name == "ask_claude":
             return await self._dispatch_ask_claude(args)
+        if name == "battery_status":
+            return self._dispatch_battery_status()
         if name == "get_current_datetime":
             return self._dispatch_get_datetime()
         if name == "homework_vocab_context":
@@ -1837,7 +1851,34 @@ class VoiceToolExecutor:
     def _dispatch_get_datetime() -> dict[str, Any]:
         from datetime import datetime  # noqa: PLC0415
 
-        now = datetime.now()
+        from zoneinfo import ZoneInfo
+
+        now = datetime.now(ZoneInfo("Asia/Hong_Kong"))
+
+        def zh(number):
+            digits = "零一二三四五六七八九"
+            if number < 10:
+                return digits[number]
+            tens, ones = divmod(number, 10)
+            return (digits[tens] if tens > 1 else "") + "十" + (digits[ones] if ones else "")
+
+        hour = now.hour
+        if hour < 6:
+            period = "凌晨"
+        elif hour < 12:
+            period = "朝早"
+        elif hour == 12:
+            period = "中午"
+        elif hour < 18:
+            period = "下晝"
+        else:
+            period = "夜晚"
+        minutes = (("零" if now.minute < 10 else "") + zh(now.minute) + "分") if now.minute else "正"
+        spoken = (
+            f"而家係香港時間{zh(now.month)}月{zh(now.day)}號"
+            f"星期{'一二三四五六日'[now.weekday()]}，"
+            f"{period}{zh(hour % 12 or 12)}點{minutes}。"
+        )
         weekdays = [
             "Monday",
             "Tuesday",
@@ -1850,9 +1891,33 @@ class VoiceToolExecutor:
         return {
             "ok": True,
             "datetime": now.isoformat(timespec="seconds"),
+            "timezone": "Asia/Hong_Kong",
+            "spoken_zh": spoken,
             "weekday": weekdays[now.weekday()],
             "readable": now.strftime("%Y-%m-%d %H:%M") + " " + weekdays[now.weekday()],
         }
+
+    @staticmethod
+    def _dispatch_battery_status() -> dict[str, Any]:
+        status = get_debug_status()
+        percent = status.device_battery_percent
+        at = status.device_battery_at
+        stale = (
+            not status.device_connected_flag
+            or percent is None
+            or at is None
+            or status.clock() - at > 600
+        )
+        reason = getattr(status, "device_battery_unknown_reason", None)
+        if stale and reason == "usb_pinned":
+            spoken = "我而家插住電用緊，所以讀唔到電池有幾多電，唔使擔心呀。"
+        elif stale:
+            spoken = "我而家讀唔到自己有幾多電，可能係插住電用緊。想知就問吓爸爸媽媽睇吓啦。"
+        else:
+            spoken = f"我仲有大約{percent}%電。"
+            if percent <= 20:
+                spoken += " 有啲少電喇，記得叫爸爸媽媽幫我充電呀。"
+        return {"ok": True, "percent": percent, "stale": stale, "reason": reason, "spoken": spoken}
 
     async def _announce_mac_task(self, record: dict[str, Any]) -> None:
         """Push a background-task result into the live session so the robot

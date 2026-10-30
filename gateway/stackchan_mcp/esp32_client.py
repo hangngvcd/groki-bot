@@ -632,6 +632,8 @@ class ESP32Manager:
                         percent = data.get("percent")
                         if type(percent) is int:
                             self._debug_status.on_device_battery(max(0, min(100, percent)))
+                        elif percent is None and "reason" in data:
+                            self._debug_status.on_device_battery_unknown(data.get("reason"))
                         continue
                     # 鈴鈴 device events stay inside the gateway (never sent to the cloud).
                     from .xiaoya_forms import get_xiaoya_forms
