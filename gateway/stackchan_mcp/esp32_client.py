@@ -40,6 +40,31 @@ def _require_cloud_speak() -> bool:
     return os.getenv("STACKCHAN_REQUIRE_CLOUD", "0").lower() in {"1", "true", "yes", "on"}
 
 
+_battery_log_state: dict[str, Any] = {"key": None, "at": 0.0}
+
+
+def _log_battery_event(data: dict[str, Any]) -> None:
+    """46d: log fw battery reports (percent/raw/mv/reason) on change or every 10 min."""
+    try:
+        import time as _time
+
+        key = (data.get("percent"), data.get("reason"))
+        now = _time.monotonic()
+        if key == _battery_log_state["key"] and now - _battery_log_state["at"] < 600:
+            return
+        _battery_log_state.update(key=key, at=now)
+        logger.info(
+            "ESP32 battery percent=%s raw=%s mv=%s reason=%s charging_likely=%s",
+            data.get("percent"),
+            data.get("raw"),
+            data.get("mv"),
+            data.get("reason"),
+            data.get("charging_likely"),
+        )
+    except Exception:
+        logger.debug("battery log failed", exc_info=True)
+
+
 class ESP32Connection:
     """Manages a single ESP32 device connection."""
 
