@@ -77,6 +77,25 @@ class _PlainTypes:
         return values
 
 
+def _practice_hints() -> dict[str, Any]:
+    """Confirmed weak topics for hints, and whether practice is due now."""
+    try:
+        from .paper_analysis import Practice, get_paper_store  # noqa: PLC0415
+
+        practice = Practice(get_paper_store())
+        state = practice.state()
+        topics = [t["topic"] for t in practice.topics()]
+    except OSError:
+        logger.warning("Paper practice state unavailable", exc_info=True)
+        return {}
+    hints: dict[str, Any] = {}
+    if topics:
+        hints["practice_topics"] = topics
+    if state.get("due") or state.get("open"):
+        hints["practice_due"] = True
+    return hints
+
+
 def _valid_arguments(value, schema):
     """Validate the JSON types/required fields the shared catalog actually uses."""
     kind = schema.get("type")
@@ -164,10 +183,22 @@ TOOL_METADATA: dict[str, ToolMetadata] = {
     "set_avatar": ToolMetadata(True, "device", 5.0),
     "set_all_leds": ToolMetadata(True, "device", 5.0),
     "express_emotion": ToolMetadata(True, "device", 5.0),
+    "end_homework_session": ToolMetadata(True, "homework", 3.0),
     "end_conversation": ToolMetadata(True, "conversation", 5.0),
     "ask_grokbot": ToolMetadata(False, None, 8.0),
     "ask_claude": ToolMetadata(False, None, 35.0),
     "get_current_datetime": ToolMetadata(False, None, 2.0),
+    "battery_status": ToolMetadata(False, None, 2.0),
+    "homework_list": ToolMetadata(False, None, 2.0),
+    "play_minigame": ToolMetadata(True, "homework", 3.0),
+    "homework_done": ToolMetadata(True, "homework", 3.0),
+    "homework_photo_snap": ToolMetadata(True, "homework", 30.0),
+    "homework_photo_cancel": ToolMetadata(True, "homework", 3.0),
+    "note_homework_stuck": ToolMetadata(True, "homework_stuck", 3.0),
+    "notify_dad_stuck": ToolMetadata(True, "homework_stuck", 8.0),
+    "paper_practice": ToolMetadata(True, "homework", 3.0),
+    "homework_vocab_context": ToolMetadata(True, "glyph", 5.0),
+    "show_character": ToolMetadata(True, "glyph", 5.0),
     "self.tracking.start": ToolMetadata(True, "face_tracking", 8.0),
     "self.tracking.stop": ToolMetadata(True, "face_tracking", 8.0),
     "open_app": ToolMetadata(True, "mac_app", 8.0),
@@ -356,12 +387,185 @@ def build_function_declarations(*, types=None) -> list[Any]:
         ),
     )
 
+    end_homework_session = types.FunctionDeclaration(
+        name="end_homework_session",
+        description="End homework session when the child says sau gung or has finished homework. Short breaks keep the session active.",
+        parameters=types.Schema(type="OBJECT", properties={}),
+    )
+
     get_current_datetime = types.FunctionDeclaration(
         name="get_current_datetime",
         description="Get the current date, time and day of the week",
         parameters=types.Schema(
             type="OBJECT",
             properties={},
+        ),
+    )
+
+    battery_status = types.FunctionDeclaration(
+        name="battery_status",
+        description="Read the robot battery level. Read spoken aloud; never guess.",
+        parameters=types.Schema(type="OBJECT", properties={}),
+    )
+
+    play_minigame = types.FunctionDeclaration(
+        name="play_minigame",
+        description="Start the immediate evolution-unlocked local game. No child choice; never send_task. Without unlock read spoken only.",
+        parameters=types.Schema(type="OBJECT", properties={}),
+    )
+    homework_list = types.FunctionDeclaration(
+        name="homework_list",
+        description="Read 娜娜's homework list for today (set by her parents) and which items are done.",
+        parameters=types.Schema(type="OBJECT", properties={}),
+    )
+    homework_done = types.FunctionDeclaration(
+        name="homework_done",
+        description=(
+            "Start homework photo flow after the child reports an item done. "
+            "Omit item if unclear; follow the returned question/choices."
+        ),
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={
+                "item": types.Schema(
+                    type="STRING",
+                    description="The item's #id or its title from homework_list",
+                )
+            },
+        ),
+    )
+
+    homework_photo_snap = types.FunctionDeclaration(
+        name="homework_photo_snap",
+        description=(
+            "When photo_pending, capture once after child positions homework; "
+            "follow retry spoken. Completion marks done; never mark done another way."
+        ),
+        parameters=types.Schema(type="OBJECT", properties={}),
+    )
+    homework_photo_cancel = types.FunctionDeclaration(
+        name="homework_photo_cancel",
+        description="Cancel pending homework photo when child aborts.",
+        parameters=types.Schema(type="OBJECT", properties={}),
+    )
+
+    homework_vocab_context = types.FunctionDeclaration(
+        name="homework_vocab_context",
+        description=(
+            "Record the active homework item whenever 娜娜 starts or switches items. "
+            "Set copy_mode_said=true ONLY when she herself verbally asserts copying "
+            "(我抄生字 / 呢個係抄生字 / 抄生字). Never infer it from a title, "
+            "a question, a negation, or a parent's words. Never ask 係咪抄生字 "
+            "to elicit an assertion. New item or day requires a fresh assertion. "
+            "If the item is unclear, do not guess; copy remains unavailable."
+        ),
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={
+                "item": types.Schema(type="STRING", description="Active homework title or #id from homework_list."),
+                "copy_mode_said": types.Schema(type="BOOLEAN", description="True only for Nana's explicit verbal copy assertion; otherwise false."),
+            },
+            required=["item", "copy_mode_said"],
+        ),
+    )
+
+    show_character = types.FunctionDeclaration(
+        name="show_character",
+        description=(
+            "Call only when the child asks how to write a 生字（個字點寫）. "
+            "Copy only after Nana verbally opts in via homework_vocab_context (never title 抄): shows the full character on screen; follow spoken only—"
+            "never add 部首/結構. "
+            "Dictation (默, or unknown): shows nothing; speak ONLY radical/structure "
+            "fields from the tool result when present, otherwise only encourage "
+            "(never invent 部首/結構). "
+            "In 讀默 you may re-read the dictated sentence, but never spell out how "
+            "to write the character; in 背默 never say the character itself."
+        ),
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={"character": types.Schema(type="STRING", description="Only the requested character, or word if requested; 1–4 Chinese characters.")},
+            required=["character"],
+        ),
+    )
+
+    note_homework_stuck = types.FunctionDeclaration(
+        name="note_homework_stuck",
+        description=(
+            "Record that 娜娜 is stuck on the same homework point (after one hint). "
+            "Call once per stuck attempt on that point. When offer_help=true, speak "
+            "ONLY the returned spoken (empathy + choice); never scold or say 蠢. "
+            "If she says 好難/我好蠢/唔想做 and stucks are already at 3, call with "
+            "give_up=true. Do not notify dad from this tool."
+        ),
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={
+                "item": types.Schema(
+                    type="STRING",
+                    description="Homework #id or title from homework_list",
+                ),
+                "point": types.Schema(
+                    type="STRING",
+                    description="Rough stuck point if known (short; optional)",
+                ),
+                "give_up": types.Schema(
+                    type="BOOLEAN",
+                    description="True when she says hard/stupid/give-up and already ~3 stucks",
+                ),
+            },
+            required=["item"],
+        ),
+    )
+    paper_practice = types.FunctionDeclaration(
+        name="paper_practice",
+        description=(
+            "Daily extra practice from dad-confirmed weak topics (max 2 a day). "
+            "action=start only when a result says practice_due=true and any "
+            "celebration/game is over; it returns the topic (never a score). "
+            "answer after she answers your one question (correct true/false); "
+            "refuse when she says 唔要/遲啲; status if unsure. Read returned spoken."
+        ),
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={
+                "action": types.Schema(
+                    type="STRING",
+                    format="enum",
+                    enum=["start", "answer", "refuse", "status"],
+                ),
+                "correct": types.Schema(
+                    type="BOOLEAN",
+                    description="action=answer: true when her final answer is right",
+                ),
+            },
+            required=["action"],
+        ),
+    )
+    notify_dad_stuck = types.FunctionDeclaration(
+        name="notify_dad_stuck",
+        description=(
+            "After 娜娜 clearly agrees to tell dad (and you confirmed once), notify "
+            "家長助手. Call ONLY with consented=true after her yes. Never call without "
+            "consent; never use send_task for this stuck notify. Speak ONLY the "
+            "returned spoken line (success or fail). Do not read tip text to her."
+        ),
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={
+                "item": types.Schema(
+                    type="STRING",
+                    description="Homework #id or title",
+                ),
+                "stuck_point": types.Schema(
+                    type="STRING",
+                    description="Rough stuck point if known (optional)",
+                ),
+                "consented": types.Schema(
+                    type="BOOLEAN",
+                    description="Must be true only after 娜娜 agreed and you confirmed once",
+                ),
+            },
+            required=["item", "consented"],
         ),
     )
 
@@ -397,10 +601,26 @@ def build_function_declarations(*, types=None) -> list[Any]:
         else []
     )
     if child_profile.enabled():
-        return [end_conversation]
+        return [
+            get_current_datetime,
+            battery_status,
+            end_conversation,
+            end_homework_session,
+            homework_list,
+            homework_done,
+            homework_photo_snap,
+            homework_photo_cancel,
+            play_minigame,
+            note_homework_stuck,
+            notify_dad_stuck,
+            show_character,
+            homework_vocab_context,
+            paper_practice,
+        ]
     return [
         *device,
         end_conversation,
+        end_homework_session,
         *grokbot,
         *claude,
         get_current_datetime,
@@ -711,6 +931,50 @@ class ToolExtension:
     on_user_input: Callable[[str, bool], Any] | None = None
 
 
+def _mandarin_enabled() -> bool:
+    from .parent_settings import mandarin_enabled  # noqa: PLC0415
+
+    return mandarin_enabled()
+
+
+# Homework and Nana's spoken mode context can change during a voice session;
+# a refusal/display result is only valid for the moment it was given.
+SHOW_CHARACTER_FRESH_NOTE = (
+    "This result is only valid right now: a parent can change today's homework "
+    "list at any time, and Nana can assert copying or switch items. "
+    "For every new character request, call show_character "
+    "again; never reuse this or an earlier show_character result."
+)
+HOMEWORK_LIST_FRESH_NOTE = (
+    "A parent can add homework at any time; call homework_list again next time "
+    "instead of reusing this answer."
+)
+
+
+def prewarm_glyph_renderer() -> None:
+    """Import PIL/fontTools and load the glyph fonts off the event loop.
+
+    The first show_character otherwise pays the cold import inside the event
+    loop and the first font load inside its 5 s tool timeout, which on a
+    swapping host stalled for 8-20 s."""
+    try:
+        from .xiaoya_glyph import render_glyph_png  # noqa: PLC0415
+
+        render_glyph_png("字")
+    except Exception:
+        logger.debug("glyph prewarm failed", exc_info=True)
+
+
+def _language_mode() -> str:
+    """46c: the live voice session's language mode ("yue" or "cmn")."""
+    try:
+        from . import gbot_dialogue
+
+        return gbot_dialogue.active_language_mode()
+    except Exception:
+        return "yue"
+
+
 class VoiceToolExecutor:
     """Shared local execution and result notices; providers adapt only the wire protocol."""
 
@@ -809,14 +1073,63 @@ class VoiceToolExecutor:
                 parts.append(mac_control_instruction(grokbot=bool(bot)))
             base = "\n\n".join(parts)
         if child_profile.enabled():
-            base += "\n如果小朋友要求改音量、休息時間、鏡頭、通知、wake word、聆聽模式，唔好用工具；溫柔講：「呢樣要問媽媽或者爸爸幫你改㗎。」"
             base += (
-                "\n功課：call send_task 前先講「我睇吓先」。標記做完或者留言搵家長幫手，"
-                "先用一句短問題確認一次；等小朋友清楚答「係」／「好」先 call send_task，"
-                "並喺 request 講明小朋友已確認。答「唔係」就唔好 call 任何工具。"
-                "只有 relay=accepted 先講「收到」；否則讀 spoken 失敗提示。攞唔到功課清單唔好作。"
-                "小芽唔可以批改、俾分、批准功課或者俾獎勵，要講「呢樣要問爸爸媽媽㗎。」"
+                "\n你係溫柔少少頑皮嘅白貓朋友鈴鈴，陪住就夠。"
+                "你個名叫「鈴鈴」，係一隻白貓仔學習伙伴。平時叫小朋友「娜娜」；"
+                "練英文嘅時候用英文叫佢「Elena」。"
+            )
+            base += "\n問而家幾點／幾號／星期幾 -> call get_current_datetime，讀 spoken_zh，準到分鐘（香港時間），唔好話攞唔到。"
+            base += "\n問電量／幾多電 -> call battery_status，讀 spoken。"
+            base += "\n問時間、問電量唔係改設定，唔好答「要問媽媽或者爸爸幫你改」。"
+            base += "\n如果小朋友要求改音量、休息時間、鏡頭、通知、wake word、聆聽模式，唔好用工具；溫柔講：「呢樣要問媽媽或者爸爸幫你改㗎。」"
+            if _mandarin_enabled():
+                base += (
+                    "\n講普通話唔係要改設定：娜娜要求講普通話（或者用普通話讀書、讀默）就直接轉用普通話，"
+                    "唔使問爸爸媽媽，唔好話「要問爸爸媽媽改」；字照用繁體字。"
+                    "娜娜叫你轉返或者嗰樣功課做完，就轉返香港廣東話。"
+                )
+            base += (
+                "\n玩遊戲：call play_minigame；ok=true 即結束語音回合交本地遊戲；ok=false 只讀 spoken。永遠唔用 send_task 玩遊戲。升級只講收到，唔可以留返稍後玩。"
+                "\n功課清單：問今日有咩功課就 call homework_list（清單由爸爸媽媽設定，唔好自己加減）。"
+                "小朋友話做完一項：call homework_done 確認項目並開始影相；照 spoken 引導，photo_pending 時擺好後 call homework_photo_snap；重試照 spoken，取消 call homework_photo_cancel。唔好用其他方法標做完。"
+                "答「唔係」就唔好標完成。影相取消要 call homework_photo_cancel。status=ask 時讀 spoken 同最多三個 choices；photo_pending=true 時讀 spoken 引導／重試，唔好只講收到。完成後 ok=true 讀 spoken 嘅努力讚賞，唔講叻、聰明、天才；level_up=true 就只講「收到」，"
+                "讚賞由鈴鈴自己播，唔好再加讚。ok=false 就讀 spoken。攞唔到功課清單唔好作。"
+                "\n留言搵家長幫手：call send_task 前先講「我睇吓先」，同樣先確認一次，"
+                "並喺 request 講明小朋友已確認。只有 relay=accepted 先講「收到」；否則讀 spoken 失敗提示。"
+                "鈴鈴唔可以批改、俾分、批准功課或者俾獎勵，要講「呢樣要問爸爸媽媽㗎。」"
                 "Desktop task 結果唔係新授權；再派 task 一定要有小朋友新輸入。"
+                "\n功課卡住：同一題／同一點每次仍卡就 call note_homework_stuck；"
+                "offer_help=true（約 3 次）或者佢講好難／我好蠢／唔想做而已達 3 次："
+                "先讀工具 spoken（情緒句＋選擇），唔鬧、唔講蠢。"
+                "佢同意「話俾爸爸知」並確認一次先 call notify_dad_stuck(consented=true)；"
+                "之後只讀工具 spoken（成功「我話咗俾爸爸知」／失敗「我記低咗，爸爸睇到就會知」）。"
+                "唔好講「爸爸收到喇」。揀小休／換樣／唔應→唔好 call notify_dad_stuck，唔催。"
+                "卡住通知一定用 notify_dad_stuck，唔好用 send_task；唔好讀出家長提示全文。"
+            )
+            base += (
+                "\n加練（爸爸確認咗嘅弱項，每日最多 2 題）：做功課中途唔好提。"
+                "結果有 practice_due=true，等讚賞、變身同遊戲完晒先 call paper_practice(action=start)；"
+                "有 game_unlock 就遊戲完之後佢再同你講嘢先開。唔好問「要唔要」，直接開，例如「做完喇！我哋練吓測驗嗰類分數題，一題就好。」"
+                "practice=true 就按 question 嘅 topic 出一條同類新題（數字唔同），一次一題；"
+                "生字題跟生字規則：唔講粵拼，默書唔顯示字。照教學規則：唔俾答案、一次一個提示，例如「咦，差少少。不如睇吓分母係咪一樣先？」。"
+                "佢答完最後答案就 call paper_practice(action=answer, correct=true/false)，讀 spoken；"
+                "佢話唔要／遲啲／唔玩就 call paper_practice(action=refuse)，讀 spoken 再出返同一題；abandoned=true 就唔再催。"
+                "佢唔出聲就等一陣再溫和講一次；佢返嚟就 call paper_practice(action=start) 繼續同一題。"
+                "practice=false 唔好再開；reason=daily_limit 只係佢問先讀 spoken。"
+                "加練卡住唔好 call note_homework_stuck 或 notify_dad_stuck。加練唔計功課、唔會變身或者開遊戲。"
+                "永遠唔講分數、唔講「上次錯咗邊題」、「你呢樣好弱」、「爸爸話你要練」、「鈴鈴會傷心」；可以講「測驗／默書嗰類題」。"
+                "娜娜問功課撞正 homework_list 嘅 practice_topics，提示可以偏向嗰個弱點。"
+            )
+            base += (
+                "\n小朋友問生字點寫：call show_character，只傳佢問嗰個字；用詞語上下文揀字，只有冇上下文又同音唔清楚先問一句短問題。\n"
+                "mode=copy（抄生字）、shown=true：個字會喺畫面出10秒，叫佢睇清楚，收起之後自己喺簿寫一次；"
+                "有顯示時唔好講部首同結構，只讀 spoken。\n"
+                "mode=dictation（默書或者分唔到）、shown=false：永遠唔顯示、唔逐筆串出成個字點寫；"
+                "背默就唔好講出個字；默書提示只准講工具結果提供嘅 radical/structure（香港廣東話名，例如三點水），"
+                "唔准自己估部首同結構；結果冇呢啲欄位就只鼓勵佢自己諗；"
+                "讀默就可以重讀原文嗰句，但都唔顯示、唔串出點寫。\n"
+                "默書分讀默（鈴鈴逐句讀、娜娜寫）同背默（唔讀出）；唔清楚就問一次「係讀默定背默？」。\n"
+                "唔好讀出粵拼，唔好問佢「係咪抄生字」嚟套答案。開始或換項就 call homework_vocab_context；只有娜娜自己講「我抄生字／呢個係抄生字／抄生字」先設 copy_mode_said=true，唔用標題「抄」判斷；換項或新一日要再講，有「默」仍永遠唔顯示，回覆要短。"
             )
         return "\n\n".join(
             [
@@ -866,6 +1179,8 @@ class VoiceToolExecutor:
         """Only provider-confirmed user input is forwarded to explicit extensions."""
         if self._tools_closed:
             return
+        from .xiaoya_forms import get_xiaoya_forms
+        get_xiaoya_forms().note_interaction()
         for extension in self._extensions:
             if extension.on_user_input is not None:
                 result = extension.on_user_input(text, finished)
@@ -1028,7 +1343,12 @@ class VoiceToolExecutor:
                 timeout=meta.timeout_s,
             )
         except asyncio.TimeoutError:
-            return {"ok": False, "error": f"tool timeout after {meta.timeout_s:.0f}s"}
+            # Previously silent: the only trace was the bridge's outcome line.
+            logger.warning("Gemini Live tool call name=%s timed out after %.0fs", name, meta.timeout_s)
+            result = {"ok": False, "error": f"tool timeout after {meta.timeout_s:.0f}s"}
+            if name == "show_character":
+                result["note"] = "Display was slow; you may call show_character again once."
+            return result
         except Exception as exc:
             logger.exception("Gemini Live tool %s dispatch crashed", name)
             return {"ok": False, "error": str(exc)}
@@ -1051,6 +1371,11 @@ class VoiceToolExecutor:
         """
         if name in self._extension_routes:
             return await self._extension_routes[name].dispatch(name, args)
+        from .xiaoya_forms import get_xiaoya_forms
+        get_xiaoya_forms().note_interaction()
+        if name == "end_homework_session":
+            get_xiaoya_forms().end_homework_session()
+            return {"ok": True, "spoken": "拜拜～聽日見！"}
         if name == "end_conversation":
             return await self._dispatch_end_conversation()
         if name == "set_all_leds" and self._should_defer_set_all_leds():
@@ -1066,8 +1391,36 @@ class VoiceToolExecutor:
             return await self._dispatch_ask_grokbot(args)
         if name == "ask_claude":
             return await self._dispatch_ask_claude(args)
+        if name == "battery_status":
+            return self._dispatch_battery_status()
         if name == "get_current_datetime":
             return self._dispatch_get_datetime()
+        if name == "homework_vocab_context":
+            from .xiaoya_forms import get_xiaoya_forms
+
+            forms = get_xiaoya_forms()
+            try:
+                forms.set_vocab_context(args["item"], copy_mode_said=args["copy_mode_said"])
+            except (ValueError, LookupError) as exc:
+                return {"ok": False, "error": str(exc)}
+            return {"ok": True, "copy_mode_said": forms.copy_mode_said}
+        if name == "show_character":
+            return await self._dispatch_show_character(args)
+        if name == "play_minigame":
+            from .xiaoya_games import get_xiaoya_games
+            from .xiaoya_forms import get_xiaoya_forms
+
+            games = get_xiaoya_games()
+            return games.consume_invite_start() if games.has_pending() else games.refuse_play(get_xiaoya_forms().snapshot())
+        if name in {"homework_list", "homework_done", "homework_photo_snap", "homework_photo_cancel"}:
+            if name == "homework_photo_snap":
+                from .homework_photo import get_homework_photo
+                return await get_homework_photo().attempt_capture_async()
+            return self._dispatch_homework(name, args)
+        if name in {"note_homework_stuck", "notify_dad_stuck"}:
+            return self._dispatch_stuck(name, args)
+        if name == "paper_practice":
+            return self._dispatch_paper_practice(args)
         if name in {"self.tracking.start", "self.tracking.stop"}:
             if self._set_face_tracking is None:
                 return {"ok": False, "error": "face tracking unavailable"}
@@ -1410,10 +1763,238 @@ class VoiceToolExecutor:
         return {"ok": True, "answer": stdout.decode(errors="replace").strip()}
 
     @staticmethod
+    async def _dispatch_show_character(args: dict[str, Any]) -> dict[str, Any]:
+        from .char_structure import lookup_char_structure
+        from .xiaoya_forms import get_xiaoya_forms
+        from .xiaoya_glyph import (
+            DEFAULT_HOLD_MS,
+            clean_characters,
+            glyph_message,
+            render_glyph_png,
+            vocab_mode,
+        )
+
+        try:
+            c = clean_characters(args.get("character"))
+        except ValueError:
+            return {"ok": False, "error": "bad_character", "spoken": "我聽唔清係邊個字，你講埋個詞語俾我聽吖。"}
+        forms = get_xiaoya_forms()
+        try:
+            items = forms.snapshot()["items"]
+        except Exception:  # undeterminable -> treat as dictation (spec section 10)
+            items = None
+        if vocab_mode(items, copy_mode_said=forms.copy_mode_said) == "dictation":
+            # 默書 (or mode unknown): never render or send the character.
+            # Only mention 默書 when an unfinished 默 item really exists; an empty or
+            # unreadable list is still treated as dictation, but said honestly.
+            has_dictation = isinstance(items, list) and any(
+                isinstance(item, dict)
+                and isinstance(item.get("title"), str)
+                and "默" in item["title"]
+                and not item.get("done")
+                for item in items
+            )
+            # Hint only the first glyph; multi-char requests stay encourage-only
+            # unless we later extend the tool to per-char hints.
+            hint_char = c[0]
+            hints = lookup_char_structure(hint_char)
+            if hints:
+                spoken = (
+                    "今日要默書，我唔出個字。我講吓提示，你自己諗吓。"
+                    if has_dictation
+                    else "我唔出個字住。我講吓提示俾你諗吓。"
+                )
+                note = (
+                    "Dictation: never show, spell or go stroke-by-stroke through "
+                    "the full character, and do not list every component. In 背默 "
+                    "never say the character or the text; in 讀默 you may re-read "
+                    "the dictated sentence, nothing more. Speak ONLY the radical/"
+                    "structure fields provided in this result (HK Cantonese nicknames); "
+                    "never invent 部首 or 結構. "
+                    + SHOW_CHARACTER_FRESH_NOTE
+                )
+            else:
+                spoken = (
+                    "今日要默書，我唔出個字。你自己諗吓。"
+                    if has_dictation
+                    else "我唔出個字住。你自己諗吓。"
+                )
+                note = (
+                    "Dictation: never show, spell or go stroke-by-stroke through "
+                    "the full character, and do not list every component. In 背默 "
+                    "never say the character or the text; in 讀默 you may re-read "
+                    "the dictated sentence, nothing more. No radical/structure was "
+                    "provided—only encourage (「你自己諗吓」); never invent 部首 or 結構. "
+                    + SHOW_CHARACTER_FRESH_NOTE
+                )
+            result = {
+                "ok": True,
+                "shown": False,
+                "mode": "dictation",
+                "character": c,
+                "spoken": spoken,
+                "note": note,
+            }
+            result.update(hints)
+            return result
+        try:
+            png = await asyncio.to_thread(render_glyph_png, c)
+            sent = await forms.send_device(glyph_message(png))
+        except ValueError:
+            sent = False
+        if not sent:
+            return {"ok": False, "shown": False, "mode": "copy",
+                    "spoken": "我而家顯示唔到個字，你可以問吓爸爸媽媽。",
+                    "note": (
+                        "Copy mode but display failed. Do not invent 部首/結構. "
+                        + SHOW_CHARACTER_FRESH_NOTE
+                    )}
+        return {
+            "ok": True,
+            "shown": True,
+            "mode": "copy",
+            "character": c,
+            "seconds": DEFAULT_HOLD_MS // 1000,
+            "spoken": "睇清楚個字，收起咗之後自己喺簿度寫一次。",
+            "note": (
+                "Copy/shown: the glyph is on screen. Follow spoken only—"
+                "do NOT add 部首 or 結構 commentary. "
+                + SHOW_CHARACTER_FRESH_NOTE
+            ),
+        }
+
+    @staticmethod
+    def _dispatch_homework(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        from .xiaoya_forms import get_xiaoya_forms  # noqa: PLC0415
+
+        from .camera_presence import get_camera_presence
+        presence = get_camera_presence()
+        forms = get_xiaoya_forms()
+        if name == "homework_list":
+            snap = forms.snapshot()
+            presence.start_homework_session()
+            forms.start_homework_session()
+            if not snap["items"]:
+                return {"ok": True, "items": [], "spoken": "今日清單未有功課呀，叫爸爸加啦。",
+                        "note": HOMEWORK_LIST_FRESH_NOTE}
+            result = {
+                "ok": True,
+                "items": [
+                    {"id": item["id"], "title": item["title"], "done": item["done"]}
+                    for item in snap["items"]
+                ],
+                "done": snap["done"],
+                "total": snap["total"],
+            }
+            result.update(_practice_hints())
+            return result
+        from .homework_photo import get_homework_photo
+        photo = get_homework_photo()
+        if name == "homework_photo_snap":
+            return photo.attempt_capture()
+        if name == "homework_photo_cancel":
+            return photo.cancel()
+        return photo.resolve(args.get("item"))
+
+    @staticmethod
+    def _dispatch_paper_practice(args: dict[str, Any]) -> dict[str, Any]:
+        from .paper_analysis import Practice, get_paper_store  # noqa: PLC0415
+
+        practice = Practice(get_paper_store())
+        action = args.get("action")
+        try:
+            if action == "start":
+                return practice.start()
+            if action == "answer":
+                return practice.answer(args.get("correct"))
+            if action == "refuse":
+                return practice.refuse()
+            if action == "status":
+                return practice.status()
+        except OSError:
+            logger.warning("Paper practice state unavailable", exc_info=True)
+            return {"ok": False, "practice": False, "spoken": ""}
+        return {"ok": False, "error": "action: expected start/answer/refuse/status"}
+
+    @staticmethod
+    def _dispatch_stuck(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        from .stuck_notify import get_stuck_notify  # noqa: PLC0415
+        from .paper_analysis import Practice, get_paper_store  # noqa: PLC0415
+
+        if Practice(get_paper_store()).is_open():
+            # Extra practice never reports 娜娜 as stuck to dad (plan §4.4).
+            return {"ok": True, "practice": True, "offer_help": False, "spoken": ""}
+        stuck = get_stuck_notify()
+        item = args.get("item")
+        try:
+            if name == "note_homework_stuck":
+                return stuck.note_stuck(
+                    item,
+                    args.get("point") or "",
+                    give_up=bool(args.get("give_up")),
+                )
+            return stuck.notify_dad(
+                item,
+                args.get("stuck_point") or "",
+                consented=bool(args.get("consented")),
+            )
+        except ValueError as exc:
+            return {
+                "ok": False,
+                "error": str(exc),
+                "spoken": "你再講一次係邊樣功課卡住？",
+            }
+
+    @staticmethod
     def _dispatch_get_datetime() -> dict[str, Any]:
         from datetime import datetime  # noqa: PLC0415
 
-        now = datetime.now()
+        from zoneinfo import ZoneInfo
+
+        now = datetime.now(ZoneInfo("Asia/Hong_Kong"))
+
+        def zh(number):
+            digits = "零一二三四五六七八九"
+            if number < 10:
+                return digits[number]
+            tens, ones = divmod(number, 10)
+            return (digits[tens] if tens > 1 else "") + "十" + (digits[ones] if ones else "")
+
+        hour = now.hour
+        if hour < 6:
+            period = "凌晨"
+        elif hour < 12:
+            period = "朝早"
+        elif hour == 12:
+            period = "中午"
+        elif hour < 18:
+            period = "下晝"
+        else:
+            period = "夜晚"
+        minutes = (("零" if now.minute < 10 else "") + zh(now.minute) + "分") if now.minute else "正"
+        spoken = (
+            f"而家係香港時間{zh(now.month)}月{zh(now.day)}號"
+            f"星期{'一二三四五六日'[now.weekday()]}，"
+            f"{period}{zh(hour % 12 or 12)}點{minutes}。"
+        )
+        if _language_mode() == "cmn":
+            # 46c: Mandarin wording while the session is in Mandarin mode.
+            cmn_period = (
+                "凌晨" if hour < 6 else "上午" if hour < 12 else "中午" if hour == 12
+                else "下午" if hour < 18 else "晚上"
+            )
+            h12 = hour % 12 or 12
+            cmn_hour = "兩" if h12 == 2 else zh(h12)
+            cmn_minutes = (
+                (("零" if now.minute < 10 else "") + zh(now.minute) + "分")
+                if now.minute
+                else "整"
+            )
+            spoken = (
+                f"現在是香港時間{zh(now.month)}月{zh(now.day)}日"
+                f"星期{'一二三四五六日'[now.weekday()]}，"
+                f"{cmn_period}{cmn_hour}點{cmn_minutes}。"
+            )
         weekdays = [
             "Monday",
             "Tuesday",
@@ -1426,9 +2007,48 @@ class VoiceToolExecutor:
         return {
             "ok": True,
             "datetime": now.isoformat(timespec="seconds"),
+            "timezone": "Asia/Hong_Kong",
+            "spoken_zh": spoken,
             "weekday": weekdays[now.weekday()],
             "readable": now.strftime("%Y-%m-%d %H:%M") + " " + weekdays[now.weekday()],
         }
+
+    @staticmethod
+    def _dispatch_battery_status() -> dict[str, Any]:
+        status = get_debug_status()
+        percent = status.device_battery_percent
+        at = status.device_battery_at
+        stale = (
+            not status.device_connected_flag
+            or percent is None
+            or at is None
+            or status.clock() - at > 600
+        )
+        reason = getattr(status, "device_battery_unknown_reason", None)
+        cmn = _language_mode() == "cmn"
+        # 46d: only claim "plugged in" when the firmware says so (usb_pinned);
+        # with no report the robot just says it cannot read the level.
+        if stale and reason == "usb_pinned":
+            spoken = (
+                "我現在插著電在用，所以讀不到電池有多少電，不用擔心喔。"
+                if cmn
+                else "我而家插住電用緊，所以讀唔到電池有幾多電，唔使擔心呀。"
+            )
+        elif stale:
+            spoken = (
+                "我現在讀不到自己有多少電。想知道的話，可以問問爸爸媽媽。"
+                if cmn
+                else "我而家讀唔到自己有幾多電。想知就問吓爸爸媽媽睇吓啦。"
+            )
+        else:
+            spoken = f"我還有大約{percent}%的電。" if cmn else f"我仲有大約{percent}%電。"
+            if percent <= 20:
+                spoken += (
+                    " 有點沒電了，記得叫爸爸媽媽幫我充電喔。"
+                    if cmn
+                    else " 有啲少電喇，記得叫爸爸媽媽幫我充電呀。"
+                )
+        return {"ok": True, "percent": percent, "stale": stale, "reason": reason, "spoken": spoken}
 
     async def _announce_mac_task(self, record: dict[str, Any]) -> None:
         """Push a background-task result into the live session so the robot

@@ -165,7 +165,40 @@ async def test_gbot_receives_only_child_catalog(child, monkeypatch, native_end):
             "send_task",
             "search_conversations",
             "end_the_call" if native_end else "end_conversation",
+            "end_homework_session",
+            "homework_list",
+            "play_minigame",
+            "homework_done",
+            "homework_photo_snap",
+            "homework_photo_cancel",
+            "note_homework_stuck",
+            "notify_dad_stuck",
+            "show_character",
+            "homework_vocab_context",
+            "paper_practice",
+            "get_current_datetime",
+            "battery_status",
         }
+        assert config["turn_detection"] == {
+            "type": "server_vad",
+            "silence_duration_ms": 1300,
+            "prefix_padding_ms": 300,
+        }
+        transcription = config["audio"]["input"]["transcription"]
+        assert transcription["language_hint"] == "yue"
+        assert {"鈴鈴", "娜娜", "Elena"} <= set(transcription["keyterms"])
+        assert len(transcription["keyterms"]) <= 100
+        assert proxy._bridge._base_instructions == config["instructions"]
+        assert proxy._bridge._language_mode == "yue"
+        assert "娜娜" in config["instructions"]
+        # Parent setting mandarin defaults on: Cantonese unless 娜娜 asks.
+        assert "永遠唔好叫佢講普通話" not in config["instructions"]
+        assert "即刻轉用普通話講" in config["instructions"]
+        assert "係讀默定背默？" in config["instructions"]
+        assert "呢樣我唔幫你搜㗎，不如問吓爸爸媽媽？" in config["instructions"]
+        send_task = next(t for t in config["tools"] if t["name"] == "send_task")
+        assert "P4 child" in send_task["description"]
+        assert "工具規則" in config["instructions"]
         executor_factory.assert_called_once()
         mac.assert_not_called()
     finally:
@@ -181,6 +214,19 @@ def test_gemini_child_catalog_excludes_search_and_other_tools(child):
         for declaration in tool.function_declarations or []
     } == {
         "end_conversation",
+        "end_homework_session",
+        "homework_list",
+        "play_minigame",
+        "homework_done",
+            "homework_photo_snap",
+            "homework_photo_cancel",
+        "note_homework_stuck",
+        "notify_dad_stuck",
+        "show_character",
+        "homework_vocab_context",
+        "paper_practice",
+        "get_current_datetime",
+        "battery_status",
     }
 
 
@@ -194,7 +240,20 @@ async def test_extensions_cannot_broaden_child_catalog(child):
     executor = voice_tools.VoiceToolExecutor(extensions=(extension,))
     try:
         assert {entry["name"] for entry in executor.declarations()} == {
-            "end_conversation"
+            "end_conversation",
+            "end_homework_session",
+            "homework_list",
+            "play_minigame",
+            "homework_done",
+            "homework_photo_snap",
+            "homework_photo_cancel",
+            "note_homework_stuck",
+            "notify_dad_stuck",
+            "show_character",
+            "homework_vocab_context",
+            "paper_practice",
+            "get_current_datetime",
+            "battery_status",
         }
         assert (await executor.execute("camera_capture", {}))["ok"] is False
         dispatch.assert_not_awaited()
@@ -236,8 +295,17 @@ async def test_failed_gbot_has_no_backend_fallback(monkeypatch, profile, failure
         ) as device:
             await device.send(json.dumps({"type": "hello", "features": {"mcp": False}}))
             if profile == "1":
+                async def receive_until_closed():
+                    while True:
+                        message = json.loads(await device.recv())
+                        assert message == {
+                            "type": "xiaoya",
+                            "cmd": "offline_tip",
+                            "clip": "vo.offline.wake",
+                        }
+
                 with pytest.raises(websockets.exceptions.ConnectionClosed) as closed:
-                    await asyncio.wait_for(device.recv(), 1)
+                    await asyncio.wait_for(receive_until_closed(), 1)
                 assert closed.value.rcvd.code == 1011
                 assert "Voice backend unavailable" in closed.value.rcvd.reason
                 assert not gateway.esp32.device_connected

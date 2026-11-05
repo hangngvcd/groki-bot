@@ -29,6 +29,7 @@ from .gbot_voice_proxy import GbotVoiceProxy
 from .idle_behavior import IdleBehavior
 from .idle_gate import IdleGate
 from .mac_control import resolve_claude_bin
+from .mdns_announce import GatewayMdnsAnnouncer
 from .touch_bridge import TouchEventBridge
 from .tracking_bridge import TrackingBridge
 from .tts import synthesize_and_send
@@ -97,6 +98,7 @@ class Gateway:
             for message in child_profile.diagnostics():
                 logger.warning("Child profile: %s", message)
         self.voice_input_bridge = VoiceInputBridge()
+        self.mdns_announcer = GatewayMdnsAnnouncer()
         # USB Serial/JTAG transport for low-latency control traffic.
         # Initialised before esp32 so the voice backend factory can hand it
         # to GeminiVoiceProxy without a forward reference. With the cable in,
@@ -124,10 +126,16 @@ class Gateway:
             self.esp32,
             usb_transport=self.usb_transport,
         )
+        from .camera_presence import get_camera_presence
+        self.camera_presence = get_camera_presence()
+        self._presence_actions = []
         self.idle_gate = IdleGate(
             self.esp32,
             usb_transport=self.usb_transport,
         )
+        self.idle_gate.on_poll = self._poll_camera_presence
+        self.idle_gate.on_device_state = lambda state: self.camera_presence.set_suppress(
+            "device_speaking", state == "speaking")
         self.touch_bridge = TouchEventBridge(
             self.esp32,
             poll_interval_s=float(os.getenv("STACKCHAN_TOUCH_POLL_INTERVAL_S", "0.1")),
@@ -165,7 +173,35 @@ class Gateway:
     def _notify_face_detected(self) -> None:
         self._last_face_at = time.time()
         self.idle_gate.notify_face_detected()
+        self._sync_presence_suppression()
+        action = self.camera_presence.note_face()
+        if action is not None:
+            self._presence_actions.append(action)
         self.face_tracker.notify_face_reported()
+
+    def _sync_presence_suppression(self):
+        from .xiaoya_games import get_xiaoya_games
+        self.camera_presence.set_suppress("speaking", get_debug_status().tts_active)
+        self.camera_presence.set_suppress("minigame", bool(get_xiaoya_games().active))
+
+    async def _poll_camera_presence(self):
+        from .xiaoya_forms import get_xiaoya_forms
+        self._sync_presence_suppression()
+        action = self.camera_presence.tick()
+        actions, self._presence_actions = self._presence_actions, []
+        actions.extend(self.camera_presence.drain_actions())
+        if action is not None:
+            actions.append(action)
+        forms = get_xiaoya_forms()
+        forms.check_session_timeout()
+        for message in self.camera_presence.drain_messages():
+            await forms.send_device(message)
+        for action in actions:
+            if not self.camera_presence.is_feature_on() or self.camera_presence.is_suppressed():
+                continue
+            await forms.send_device({"type": "xiaoya", "cmd": "presence_line",
+                                     "kind": action.kind, "clip": action.clip,
+                                     "spoken": action.spoken})
 
     def face_tracking_status(self) -> dict:
         """The "face_tracking" section of /debug/status."""
@@ -347,7 +383,12 @@ class Gateway:
     async def start(self) -> None:
         """Start the ESP32 WebSocket server and HTTP capture server."""
         from .parent_api import start_parent_api
+        from .usage_stats import get_usage_stats
 
+        usage = get_usage_stats()
+        get_debug_status().usage = usage
+        usage.flush()
+        self._usage_task = asyncio.create_task(usage.run())
         self._parent_runner = await start_parent_api()
         host = os.getenv("HOST", "0.0.0.0")
         ws_port = int(os.getenv("WS_PORT", os.getenv("PORT", "8765")))
@@ -361,6 +402,7 @@ class Gateway:
             vision_url=self.vision_url,
             vision_token=self.vision_token,
         )
+        self.mdns_announcer.start(host=host, port=ws_port)
         await self.touch_bridge.start()
         await self.idle_behavior.start()
 
@@ -564,6 +606,7 @@ class Gateway:
     async def stop(self) -> None:
         """Stop the gateway."""
         self._running = False
+        self.mdns_announcer.stop()
         if getattr(self, "_parent_runner", None) is not None:
             await self._parent_runner.cleanup()
             self._parent_runner = None
@@ -579,6 +622,11 @@ class Gateway:
         if self.usb_transport is not None:
             await self.usb_transport.stop()
         await self.esp32.stop()
+        if getattr(self, "_usage_task", None):
+            self._usage_task.cancel()
+            await asyncio.gather(self._usage_task, return_exceptions=True)
+            get_debug_status().usage.flush()
+            get_debug_status().usage = None
         logger.info("Gateway stopped")
 
 

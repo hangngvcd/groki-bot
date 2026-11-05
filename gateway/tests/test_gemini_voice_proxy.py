@@ -543,6 +543,63 @@ async def test_wake_sends_chime_tts_envelope_and_opus_frames(monkeypatch, info):
 
 
 @pytest.mark.asyncio
+async def test_wake_skips_gateway_chime_when_device_plays_local_chime(monkeypatch, info):
+    """15f firmware advertises features.local_wake_chime: one chime, from the device.
+
+    The cyan listening LED (the device's wake cue) must still be sent.
+    """
+    esp32 = FakeVoiceOnlyESP32()
+    proxy, _, sent = _make_proxy(monkeypatch=monkeypatch, esp32=esp32)
+    gate = WakeGate(
+        kws=ScriptedKeywordSpotter([True]),
+        activity_rms_threshold=0.0,
+    )
+    proxy.wake_gate_factory = lambda: gate
+
+    async def send(msg):
+        sent.append(msg)
+
+    hello = {"type": "hello", "features": {"mcp": False, "local_wake_chime": True}}
+    await proxy.start(info, hello, send)
+    sent.clear()
+    assert await proxy.send_device_binary(b"wake") is True
+    if proxy._tts_tasks:
+        await asyncio.gather(*list(proxy._tts_tasks), return_exceptions=True)
+
+    assert _tts_states(sent) == []
+    assert not any(isinstance(message, (bytes, bytearray)) for message in sent)
+    assert esp32.leds[0] == LISTENING_LED_RGB
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "features",
+    [None, {"mcp": False}, {"local_wake_chime": False}, {"local_wake_chime": "yes"}, "bogus"],
+)
+async def test_wake_keeps_gateway_chime_without_local_chime_feature(monkeypatch, info, features):
+    proxy, _esp32, sent = _make_proxy(monkeypatch=monkeypatch)
+    gate = WakeGate(
+        kws=ScriptedKeywordSpotter([True]),
+        activity_rms_threshold=0.0,
+    )
+    proxy.wake_gate_factory = lambda: gate
+
+    async def send(msg):
+        sent.append(msg)
+
+    hello = {"type": "hello"}
+    if features is not None:
+        hello["features"] = features
+    await proxy.start(info, hello, send)
+    sent.clear()
+    assert await proxy.send_device_binary(b"wake") is True
+    if proxy._tts_tasks:
+        await asyncio.gather(*list(proxy._tts_tasks), return_exceptions=True)
+
+    assert _tts_states(sent) == ["start", "sentence_start", "stop"]
+
+
+@pytest.mark.asyncio
 async def test_wake_gate_idle_close_stops_forwarding_and_extinguishes_led(
     monkeypatch,
     info,

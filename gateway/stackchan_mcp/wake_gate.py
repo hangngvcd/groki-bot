@@ -52,6 +52,10 @@ HEY_GROKI_WAKE_KEYWORD_VARIANTS = (
     "HH EY1 G R AH1 K IY0 @hey_groki_ah",
 )
 XIAOBAI_WAKE_KEYWORD = "x iǎo b ái :1 #0.02 @小白|S UW1 B AA1 S UW1 B AA1 :10 #0.02 @小白小白"
+# 鈴鈴: Mandarin líng líng plus a Cantonese-leaning lìng lìng line (ling4 ling4).
+# C2 (dad 2026-10-27): boost Cantonese line to :3 (synth HK 69%→76%, more false triggers).
+# Synthetic eval (kws_eval): see tools/kws_eval/README.md C1 vs C2.
+LINGLING_WAKE_KEYWORD = "l íng l íng :1 #0.05 @鈴鈴|l ìng l ìng :3 #0.05 @鈴鈴"
 KWS_MODEL_NAME = "sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20"
 DEFAULT_SAMPLE_RATE = 16_000
 DEFAULT_PREROLL_S = 2.0
@@ -61,6 +65,8 @@ DEFAULT_ACTIVITY_RMS = 500.0
 DEFAULT_KWS_RESET_INTERVAL_S = 60.0
 DEFAULT_KWS_RESET_DEFER_MAX_S = 15.0
 DEFAULT_TTS_STUCK_MAX_S = 300.0
+DEFAULT_SELF_MUTE_TAIL_S = 0.5
+DEFAULT_LOCAL_SPEECH_MAX_S = 60.0
 LISTENING_LED_RGB = (0, 180, 180)
 
 
@@ -90,6 +96,7 @@ class WakeGateResult:
     woke: bool = False
     closed: bool = False
     bypassed: bool = False
+    muted: bool = False
 
 
 class WakeWordUnavailable(RuntimeError):
@@ -305,6 +312,8 @@ class WakeGate:
     kws_reset_interval_s: float = DEFAULT_KWS_RESET_INTERVAL_S
     kws_reset_defer_max_s: float = DEFAULT_KWS_RESET_DEFER_MAX_S
     tts_stuck_max_s: float = DEFAULT_TTS_STUCK_MAX_S
+    self_mute_tail_s: float = DEFAULT_SELF_MUTE_TAIL_S
+    local_speech_max_s: float = DEFAULT_LOCAL_SPEECH_MAX_S
     is_tts_active: Callable[[], bool] = field(default=lambda: False)
     clock: Callable[[], float] = time.monotonic
     state: WakeGateState = WakeGateState.DORMANT
@@ -317,6 +326,17 @@ class WakeGate:
     _listening_window_anchor: float | None = field(default=None, init=False)
     _kws_reset_due_since: float | None = field(default=None, init=False)
     _tts_stuck_latched: bool = field(default=False, init=False)
+    # Self-trigger muting: the wake word is ignored while 鈴鈴 itself speaks
+    # (gateway TTS or a device-local clip such as vo.intro.1) and for
+    # self_mute_tail_s after it.  The tail starts at the first device frame
+    # that arrives after speech ended: the firmware is half-duplex (mic off
+    # while the speaker plays), so that frame is the first one recorded after
+    # the speaker drained, even if the device played buffered audio for a
+    # while after the gateway sent its last frame.
+    _local_speech_since: float | None = field(default=None, init=False)
+    _self_speech_seen: bool = field(default=False, init=False)
+    _self_mute_tail_pending: bool = field(default=False, init=False)
+    _self_mute_until: float | None = field(default=None, init=False)
 
     @property
     def available(self) -> bool:
@@ -358,6 +378,7 @@ class WakeGate:
 
         now = self.clock()
         self._track_tts_activity(now)
+        muted = self._self_muted(now)
         closed = False
         if self.is_listening and (
             self._is_idle(now) or self._is_past_max_listening_window(now)
@@ -368,6 +389,9 @@ class WakeGate:
         if self.state == WakeGateState.DORMANT:
             if not self.keyword_available:
                 return WakeGateResult(closed=closed)
+            if muted:
+                # Do not feed our own voice to the spotter or the pre-roll.
+                return WakeGateResult(closed=closed, muted=True)
             self._append_preroll(pcm_16khz)
             self._maybe_reset_kws_in_dormant(pcm_16khz, now)
             if not self.kws.detect(pcm_16khz):
@@ -399,6 +423,60 @@ class WakeGate:
 
     def reset(self) -> None:
         self.close()
+
+    def set_local_speech(self, active: bool) -> None:
+        """Device reports that it plays a local clip (e.g. vo.intro.1) itself."""
+        if active:
+            if self._local_speech_since is None:
+                self._local_speech_since = self.clock()
+        else:
+            self._local_speech_since = None
+
+    @property
+    def self_muted(self) -> bool:
+        """True while wake detection ignores audio because 鈴鈴 is speaking."""
+        return self._self_muted(self.clock(), consume=False)
+
+    def _local_speech_active(self, now: float) -> bool:
+        since = self._local_speech_since
+        if since is None:
+            return False
+        if self.local_speech_max_s > 0 and now - since >= self.local_speech_max_s:
+            logger.warning("local speech flag stuck for %.0fs; clearing", now - since)
+            self._local_speech_since = None
+            return False
+        return True
+
+    def _self_muted(self, now: float, *, consume: bool = True) -> bool:
+        if self.self_mute_tail_s < 0:
+            return False
+        speaking = self._is_tts_active(now) or self._local_speech_active(now)
+        if speaking:
+            if consume:
+                self._self_speech_seen = True
+                self._self_mute_tail_pending = False
+                self._self_mute_until = None
+            return True
+        if self._self_speech_seen:
+            if not consume:
+                return True
+            self._self_speech_seen = False
+            self._self_mute_tail_pending = True
+        if self._self_mute_tail_pending:
+            if not consume:
+                return True
+            self._self_mute_tail_pending = False
+            self._self_mute_until = now + self.self_mute_tail_s
+        if self._self_mute_until is not None:
+            if now < self._self_mute_until:
+                return True
+            if consume:
+                self._self_mute_until = None
+                # Drop whatever partial hypothesis was decoded before muting.
+                if self.kws is not None:
+                    self.kws.reset()
+                    self._last_kws_reset_at = now
+        return False
 
     def _is_tts_active(self, now: float) -> bool:
         try:
@@ -577,6 +655,10 @@ def create_wake_gate_from_env(
             "STACKCHAN_KWS_RESET_INTERVAL_S",
             DEFAULT_KWS_RESET_INTERVAL_S,
         ),
+        self_mute_tail_s=_float_env(
+            "STACKCHAN_WAKE_SELF_MUTE_TAIL_S",
+            DEFAULT_SELF_MUTE_TAIL_S,
+        ),
         clock=clock,
     )
 
@@ -672,6 +754,8 @@ def _keyword_from_env() -> str:
         return HEY_GROKI_WAKE_KEYWORD
     if phrase == "小白":
         return XIAOBAI_WAKE_KEYWORD
+    if phrase in {"鈴鈴", "铃铃"}:
+        return LINGLING_WAKE_KEYWORD
     return WAKE_KEYWORD
 
 

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Kenta IDA <fuga@fugafuga.org>
 // SPDX-License-Identifier: BSL-1.0
 
+#include "conversation/xiaoya_control.hpp"
 #include "conversation/xiaozhi_client.hpp"
 
 #include <atomic>
@@ -36,6 +37,15 @@
 namespace stackchan::conversation {
 
 namespace {
+
+// Ticket 15f/15f2: the round companion plays a local wake chime and drives its
+// status ring from the gateway's `led` frames, so those frames must reach the
+// app even though the board has no LED strip (led_control=false).
+#if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM && CONFIG_STACKCHAN_COMPANION_FACE
+constexpr bool kLedStatusCue = true;
+#else
+constexpr bool kLedStatusCue = false;
+#endif
 
 constexpr const char* kTag = "xiaozhi";
 
@@ -178,6 +188,7 @@ public:
             return tl::unexpected{ConversationError::OutOfMemory};
         }
         sender_should_exit_.store(false, std::memory_order_relaxed);
+        sender_exited_.store(false, std::memory_order_relaxed);
         if (xTaskCreatePinnedToCoreWithCaps(&Impl::sender_trampoline, "xiaozhi_tx",
                                             kSenderTaskStack, this, kSenderTaskPrio,
                                             &sender_task_, kSenderTaskCore,
@@ -233,6 +244,18 @@ public:
         return {};
     }
 
+    bool send_json(std::string_view json) {
+        auto* root=cJSON_ParseWithLength(json.data(),json.size());
+        if (!root) return false;
+        std::lock_guard lock{send_mutex_};
+        if (const char* event=json_str(root,"event"); event && !std::strcmp(event,"local_speech")) {
+            const char* phase=json_str(root,"state");
+            local_speech_.store(phase && !std::strcmp(phase,"start"));
+        }
+        const bool ok=send_json_locked(root);
+        cJSON_Delete(root); return ok;
+    }
+
     tl::expected<void, ConversationError> commit_audio()
     {
         // Server-side VAD (listen mode=auto) detects turn boundaries.
@@ -246,7 +269,7 @@ public:
         return {};
     }
 
-    // BOOT button (SpotPear 小芽): same envelope as a wake-word detection, so
+    // BOOT button (SpotPear 鈴鈴 build): same envelope as a wake-word detection, so
     // the gateway's button-only privacy mode opens its listening window.
     tl::expected<void, ConversationError> request_listen()
     {
@@ -267,7 +290,7 @@ public:
     tl::expected<void, ConversationError> cancel_response()
     {
 #if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
-        // 小芽 BOOT abort: drop the aborted turn's late audio / TTS events until
+        // 鈴鈴 BOOT abort: drop the aborted turn's late audio / TTS events until
         // the next `tts start`, so the next reply never mixes with the old one.
         // Other boards keep the previous behaviour.
         std::lock_guard inbound_lock{inbound_mutex_};
@@ -323,9 +346,20 @@ private:
             sender_should_exit_.store(true, std::memory_order_release);
             AudioChunk* sentinel = nullptr;
             xQueueSend(audio_tx_queue_, &sentinel, 0);
-            for (int i = 0; i < 200; ++i) {
-                if (eTaskGetState(sender_task_) == eDeleted) break;
+            // Wait for the sender to leave its loop. It parks itself (suspended)
+            // instead of self-deleting, so we delete it from here: no freed-TCB
+            // polling, and no cleanup-task allocation inside vTaskDeleteWithCaps
+            // (which abort()s if internal RAM is short). The wait covers one
+            // blocked send (kSendTimeout) plus margin.
+            bool exited = false;
+            for (int i = 0; i < 500; ++i) {
+                if (sender_exited_.load(std::memory_order_acquire)) { exited = true; break; }
                 vTaskDelay(pdMS_TO_TICKS(10));
+            }
+            if (exited) {
+                vTaskDeleteWithCaps(sender_task_);
+            } else {
+                ESP_LOGE(kTag, "sender task did not exit within 5 s; leaking it");
             }
             sender_task_ = nullptr;
         }
@@ -582,6 +616,12 @@ private:
         cJSON_AddStringToObject(root, "transport", "websocket");
         cJSON* features = cJSON_AddObjectToObject(root, "features");
         cJSON_AddBoolToObject(features, "mcp", false);
+        if (kLedStatusCue) {
+        // Ticket 15f: this firmware plays its own wake chime (half-duplex, mic
+        // off) when the gateway's cyan status light arrives; a gateway that
+        // honours this flag skips its TTS wake beep so there is one chime.
+        cJSON_AddBoolToObject(features, "local_wake_chime", true);
+        }
         cJSON* ap = cJSON_AddObjectToObject(root, "audio_params");
         cJSON_AddStringToObject(ap, "format", "opus");
         cJSON_AddNumberToObject(ap, "sample_rate", kUplinkSampleRate);
@@ -669,7 +709,15 @@ private:
                     emit(ev);
                 }
 #endif
-                if (std::strcmp(type, "hello") == 0) {
+                if (std::strcmp(type, "xiaoya") == 0) {
+                    auto cmd=parse_xiaoya(root);
+                    if (cmd) {
+                        ConversationEvent ev{};
+                        ev.type=ConversationEventType::XiaoyaCommand;
+                        ev.xiaoya=*cmd;
+                        emit(ev);
+                    } else ESP_LOGW(kTag,"invalid xiaoya command ignored");
+                } else if (std::strcmp(type, "hello") == 0) {
                     handle_server_hello(root);
                 } else if (std::strcmp(type, "stt") == 0) {
                     emit_text(ConversationEventType::UserTranscript, json_str(root, "text"));
@@ -687,7 +735,7 @@ private:
             [](const char* error) { ESP_LOGW(kTag, "%s", error); }
 #if CONFIG_STACKCHAN_COMPANION_FACE
             ,
-            {config_.head_control, config_.led_control}
+            {config_.head_control, config_.led_control, kLedStatusCue}
 #endif
         );
     }
@@ -732,6 +780,9 @@ private:
         send_listen_start();
         // Session is live — the conversation task starts listening.
         set_state(ConversationState::Listening);
+        ConversationEvent ready{};
+        ready.type=ConversationEventType::SessionReady;
+        emit(ready);
     }
 
     void handle_tts(const cJSON* root)
@@ -824,18 +875,25 @@ private:
 
     static void sender_trampoline(void* arg)
     {
-        static_cast<Impl*>(arg)->sender_loop();
-        vTaskDeleteWithCaps(nullptr);
+        auto* self = static_cast<Impl*>(arg);
+        self->sender_loop();
+        self->sender_exited_.store(true, std::memory_order_release);
+        // teardown() deletes us with vTaskDeleteWithCaps(handle).
+        for (;;) vTaskSuspend(nullptr);
     }
 
     void sender_loop()
     {
         AudioChunk* chunk = nullptr;
         while (!sender_should_exit_.load(std::memory_order_acquire)) {
+            if (local_speech_.load()) enc_accum_.clear();
             if (xQueueReceive(audio_tx_queue_, &chunk, pdMS_TO_TICKS(100)) != pdTRUE) {
                 continue;
             }
             if (chunk == nullptr) break; // teardown sentinel
+            if (local_speech_.load()) {
+                heap_caps_free(chunk); chunk=nullptr; enc_accum_.clear(); continue;
+            }
             // Append to the 60 ms accumulator and flush whole Opus frames.
             enc_accum_.insert(enc_accum_.end(), chunk->data, chunk->data + chunk->len_samples);
             heap_caps_free(chunk);
@@ -882,6 +940,7 @@ private:
         int rc;
         {
             std::lock_guard lock{send_mutex_};
+            if (local_speech_.load()) return false;
             rc = esp_websocket_client_send_bin(
                 client_, reinterpret_cast<const char*>(enc_out_buf_.data()),
                 static_cast<int>(out.encoded_bytes), kSendTimeout);
@@ -918,6 +977,7 @@ private:
     std::mutex inbound_mutex_; // Lock before send_mutex_ when both are needed.
     std::atomic<bool> drop_aborted_turn_{false}; // Cleared only by the next TTS start.
     std::mutex send_mutex_;
+    std::atomic<bool> local_speech_{false};
 
     bool hello_received_{false};
     std::uint32_t audio_seq_{0};
@@ -947,6 +1007,7 @@ private:
     std::uint32_t last_evict_log_ms_{0}; // note_tx_eviction rate limiter; 0 = never logged
     TaskHandle_t sender_task_{nullptr};
     std::atomic<bool> sender_should_exit_{false};
+    std::atomic<bool> sender_exited_{false};
 };
 
 // ---- public class plumbing ------------------------------------------------
@@ -1000,6 +1061,8 @@ tl::expected<void, ConversationError> XiaoZhiClient::cancel_response()
 {
     return impl_->cancel_response();
 }
+
+bool XiaoZhiClient::send_json(std::string_view json) { return impl_->send_json(json); }
 
 ConversationState XiaoZhiClient::state() const { return impl_->state(); }
 

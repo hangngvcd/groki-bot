@@ -1,12 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Kenta IDA <fuga@fugafuga.org>
 // SPDX-License-Identifier: BSL-1.0
 
+#include <cstring>
+#include "lingling/assets.hpp"
+#include <set>
 #include "avatar_vm/design_scale.hpp"
 #include "render_task.hpp"
+#include "glyph_overlay.hpp"
 
 #include <cstdio>
 #include <string>
 
+#include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <esp_psram.h>
 #include <esp_timer.h>
@@ -104,6 +109,62 @@ void render_task_entry(void* arg) {
     RichCanvas& canvas = *cv;
 
     avatar::Avatar avatar;
+    M5Canvas face_cache;
+    int cached_slot = -1;
+    bool cache_ok = false;
+    std::set<int> failed_slots;
+    // Ticket 15f: PNG faces have no drawn mouth, so while speaking the whole
+    // face bobs up by `png_bob` px (from mouth_open) and the vacated rows are
+    // cleared to the background colour.
+    int png_bob = 0;
+    const auto& pack = lingling::assets();
+    if (args.round_face_layout && cv == &buffered && canvas_w == 240 && canvas_h == 240) {
+        avatar.set_face_painter([&](RichCanvas&, const avatar::DrawContext& ctx) {
+            static constexpr const char* names[] = {"neutral", "happy", "sad", "angry", "doubt", "sleepy",
+                "listening", "thinking", "excited", "curious", "confused", "surprised", "dizzy", "affection", "bored"};
+            const auto expr = static_cast<unsigned>(ctx.expression);
+            if (expr >= 15) return false;
+            const int slot = ctx.form * 16 + expr;
+            if (failed_slots.count(slot)) return false;
+            if (slot != cached_slot) {
+                // Ticket 15c guard: PNG decode (zlib window + line buffers) needs
+                // ~50 KB; under memory pressure use the drawn face this frame and
+                // retry later instead of risking an allocation failure mid-decode.
+                if (heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT) < 64 * 1024 ||
+                    heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < 16 * 1024) {
+                    cached_slot = -1;
+                    cache_ok = false;
+                    return false;
+                }
+                cached_slot = slot;
+                cache_ok = false;
+                auto e = lingling::find_face(pack, ctx.form, names[expr]);
+                if (e && e->kind == 1 && pack.verify(*e)) {
+                    // Only native 240x240 PNGs; reject a corrupt/oversize IHDR before decoding.
+                    const auto d = e->data;
+                    static constexpr std::uint8_t signature[] = {137,80,78,71,13,10,26,10};
+                    if (d.size() >= 33 && std::memcmp(d.data(), signature, 8) == 0 &&
+                        std::memcmp(d.data()+12, "IHDR", 4) == 0 &&
+                        d[16]==0 && d[17]==0 && d[18]==0 && d[19]==240 &&
+                        d[20]==0 && d[21]==0 && d[22]==0 && d[23]==240) {
+                        face_cache.setColorDepth(16);
+                        face_cache.setPsram(true);
+                        if (face_cache.getBuffer() || face_cache.createSprite(240, 240)) {
+                            face_cache.fillScreen(ctx.palette.background);
+                            cache_ok = face_cache.drawPng(d.data(), d.size(), 0, 0);
+                        }
+                    }
+                }
+                if (!cache_ok) failed_slots.insert(slot);
+            }
+            if (!cache_ok) return false;
+            face_cache.pushSprite(&buffered.sprite(), 0, -png_bob);
+            if (png_bob > 0) {
+                buffered.sprite().fillRect(0, 240 - png_bob, 240, png_bob, ctx.palette.background);
+            }
+            return true;
+        });
+    }
 #if CONFIG_STACKCHAN_COMPANION_FACE
     avatar::CompanionPolicy companion{CONFIG_STACKCHAN_COMPANION_SLEEP_AFTER_MS};
     auto& face = companion;
@@ -291,13 +352,77 @@ void render_task_entry(void* arg) {
                 aora::fit_to_canvas(ring_buf, avatar_vm::round_face_layout_scale(*cv),
                                     cv->width() * 0.5f, cv->height() * 0.5f);
             }
+#if CONFIG_STACKCHAN_COMPANION_FACE
+            if (args.round_face_layout) {
+                // Ticket 15f listening face: widen both eyes around their own
+                // centroid (x1.08 wide, x1.25 tall), eased in/out over ~150 ms.
+                static float listen_k = 0.0f;
+                const float target = voice == static_cast<std::int32_t>(avatar::VoiceState::Listening) ? 1.0f : 0.0f;
+                listen_k += (target - listen_k) * 0.35f;
+                if (listen_k > 0.01f) {
+                    const float kx = 1.0f + 0.08f * listen_k;
+                    const float ky = 1.0f + 0.25f * listen_k;
+                    constexpr int kPts = aora::kOutFloats / 4;  // points per eye
+                    for (int side = 0; side < 2; ++side) {
+                        float* e = ring_buf + side * (aora::kOutFloats / 2);
+                        float mx = 0.0f, my = 0.0f;
+                        for (int i = 0; i < kPts; ++i) { mx += e[i * 2]; my += e[i * 2 + 1]; }
+                        mx /= kPts;
+                        my /= kPts;
+                        for (int i = 0; i < kPts; ++i) {
+                            e[i * 2] = mx + (e[i * 2] - mx) * kx;
+                            e[i * 2 + 1] = my + (e[i * 2 + 1] - my) * ky;
+                        }
+                    }
+                }
+            }
+#endif
+            {
+                const bool talking = voice == static_cast<std::int32_t>(avatar::VoiceState::Speaking) ||
+                                     state->servo.masked.load(std::memory_order_relaxed);
+                const float m = mouth_open < 0.0f ? 0.0f : (mouth_open > 1.0f ? 1.0f : mouth_open);
+                png_bob = talking ? static_cast<int>(m * 5.0f + 0.5f) : 0;
+            }
             avatar.set_sprout_visible(args.round_face_layout);
             avatar.set_layout_scale(args.round_face_layout ? avatar_vm::round_face_layout_scale(*cv) : 0.0f);
             avatar.set_eye_ring_buffer(ring_buf);
             // avatar.tick() opens the frame (begin_frame) and draws the face;
             // overlays compose into the same frame; end_frame() presents.
+            avatar.set_form(state->face.form.load(std::memory_order_relaxed));
             avatar.tick(now_ms, canvas);
+            if (args.round_face_layout && cv == &buffered && canvas_w == 240 && canvas_h == 240) {
+                // The status ring is drawn after the glyph so it stays visible.
+                glyph_overlay::compose(buffered.sprite(), now_ms);
+                if (glyph_overlay::take_ended()) avatar.request_full_repaint();
+            }
         }
+
+#if CONFIG_STACKCHAN_COMPANION_FACE
+        // Ticket 15f status ring on the round panel: cyan = listening (gentle
+        // breathing), dim cyan = thinking, blue = speaking, nothing when idle
+        // or asleep. Drawn into the PSRAM frame after the face, before present.
+        if (args.round_face_layout && cv == &buffered && canvas_w == 240 && canvas_h == 240) {
+            const bool talking = voice == static_cast<std::int32_t>(avatar::VoiceState::Speaking) ||
+                                 state->servo.masked.load(std::memory_order_relaxed);
+            std::uint32_t rgb = 0;
+            if (talking) {
+                rgb = 0x0060FFu;
+            } else if (voice == static_cast<std::int32_t>(avatar::VoiceState::Listening)) {
+                // 1.2 s triangle breathing between 70% and 100%.
+                const int ph = static_cast<int>(now_ms % 1200u);
+                const int tri = ph < 600 ? ph : 1200 - ph;  // 0..600
+                const int lvl = 179 + tri * 76 / 600;      // 179..255
+                rgb = (0u << 16) | (static_cast<std::uint32_t>(lvl * 220 / 255) << 8) |
+                      static_cast<std::uint32_t>(lvl * 235 / 255);
+            } else if (voice == static_cast<std::int32_t>(avatar::VoiceState::Thinking)) {
+                rgb = 0x005A64u;
+            }
+            if (rgb != 0) {
+                buffered.sprite().fillArc(119, 119, 118, 111, 0, 360, lgfx::color888(
+                    (rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF));
+            }
+        }
+#endif
 
         // The battery gauge is not drawn on the face: the value is still
         // available in SharedState and on the settings page. The badge layout keeps its place.

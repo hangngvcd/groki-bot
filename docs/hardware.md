@@ -60,14 +60,55 @@ The board is detected at boot and reported through `set_board_kind()` to the UI 
 
 ## SpotPear ESP32-S3 1.28-CAM pin map
 
-- [ ] Parent confirmation: pending (compare against the board in hand; nothing here has been tested on hardware)
+- [ ] Parent confirmation: pending. Only the LCD pins, init and orientation have been tested on hardware (via `lcd_test`, see "SpotPear display backend" below); everything else is untested.
 
 Confidence: **verified** = read from the SpotPear schematic and, where noted, matching the factory image or the Xiaozhi sibling board; **assembly option** = the schematic shows 0R/NC alternatives, the populated one is unknown; **guessed** = not verifiable without hardware.
 
 Sources:
 - [S] SpotPear schematic ESP32S3-1.28inch-AI-CAM.pdf (rev A1, 2026-05-23), https://cdn.static.spotpear.cn/uploads/picture/learn/ESP32/ESP32S3-1.28-CAM/ESP32S3-1.28inch-AI-CAM.pdf (linked from the product wiki https://spotpear.cn/wiki/ESP32-S3-1.28-inch-Camera-LCD-Display-Deepseek.html)
 - [F] SpotPear factory firmware esp32-s3-1.28-cam-ov5640-CN.bin (16 MiB merged image): strings show xiaozhi board dir main/boards/sp-esp32-s3-1.28-cam, class Spotpear_ESP32_S3_1_28_CAM, BoxAudioCodec (ES8311 + ES7210), esp_lcd_gc9a01, SD card; bootloader header = 16 MB flash, DIO 80 MHz; partition table: ota_0 0x20000 size 0x3f0000, ota_1 0x410000 size 0x3f0000, assets 0x800000 0x600000, wallpaper 0xe00000 0x200000. The board source itself is NOT in upstream 78/xiaozhi-esp32 (only sp-esp32-s3-1.28-box, a sibling board without camera); SpotPear distributes it via a Baidu pan zip only.
+- [F2] factory flash dump disassembly (ota_0 at 0x20000; Spotpear_ESP32_S3_1_28_CAM::InitializeSpi/InitializeGc9a01Display at 0x42033919/0x42032f34): SPI3, MOSI 2, MISO -1, SCLK 4, max transfer 240*240*2, DMA auto; CS 5, DC 47, mode 0, 40 MHz, queue depth 10, 8-bit commands/parameters; reset GPIO -1 (SWRESET 0x01), BGR, 16 bpp, invert on, mirror X, display on, MADCTL 0x48 (mirror X is wrong for our unit; see below). Registers 0x62/0x63 match M5GFX's GC9A01 init list. PwmBacklight(GPIO42, invert=true, 25 kHz).
 - [X] upstream 78/xiaozhi-esp32 main/boards/spotpear/sp-esp32-s3-1.28-box/config.h (commit aab98ab) — sibling board, same audio + display pins except LCD reset.
+
+## SpotPear audio (ticket 14)
+
+Status: implemented on `xiaoya/14-audio`, not yet confirmed on hardware.
+
+Root cause of the earlier silence: the SpotPear branch of `Board::begin()` skips
+`M5.begin()`, so M5Unified's `_begin_audio` never ran. `M5.Mic` / `M5.Speaker`
+kept their default config (`pin_data_in`/`pin_data_out` = -1, so
+`Mic.begin()` fails and nothing is captured or uploaded), no I2C bus was started,
+the ES8311/ES7210 were never programmed and the NS4150B PA was never enabled.
+
+Design: `components/board/spotpear_audio.cpp` configures `M5.Speaker` / `M5.Mic`
+with the SpotPear pins and registers enable callbacks, so the app's existing
+half-duplex `M5.Mic.record` / `M5.Speaker.playRaw` path (shared by every board)
+is reused. `esp_codec_dev` was not used: it would bypass M5.Speaker/M5.Mic and
+need a second audio path through conversation, speech, settings and BLE audio.
+
+| Item | Value | Source |
+|---|---|---|
+| I2C | `I2C_NUM_1`, SDA 15, SCL 14, 400 kHz | [S]; [F] |
+| ES8311 | 0x18 (factory arg 0x30 8-bit), chip id regs 0xFD/0xFE = 83 11 | [S]; [F] ota0 call at 0x42032afa |
+| ES7210 | 0x40 (factory arg 0x80 8-bit), chip id regs 0x3D/0x3E = 72 10 | [S]; [F] same call |
+| I2S | port 1, MCLK 16, BCLK 9, WS 45, DOUT 8, DIN 10, std I2S 16-bit, half duplex | [S]; [F] same call |
+| PA | NS4150B CTRL GPIO46, high = on, toggled with speaker enable | [S]; factory passes -1 (NC) |
+| Speaker | M5 mixer 48 kHz (TTS 24 kHz resampled), ES8311 MCLK = BCLK x8, DAC vol 0xFF, magnification 1 | M5Unified Atomic ECHO BASE (same ES8311 + NS4150B) |
+| Volume | `speaker_base_volume` 180 (~70 %) x settings percent | [F] xiaozhi default output volume 70 |
+| Mic | ES7210 MIC1/MIC2 on SDOUT1 (L/R), 30 dB PGA (0x1A), MIC3/4 off; magnification 2 | [F] input gain 30.0 at 0x4200e8d9; registers from M5Unified CoreS3 |
+
+Factory differences: the factory runs a 24 kHz duplex TDM stream with MIC3 as
+AEC reference; here the mic runs at the conversation rate (16 kHz) without the
+reference channel.
+
+Wake feedback: BOOT sends `listen detect`; the face is otherwise driven only by
+gateway messages (`listen`, `stt`, `tts`), and the gateway's own wake feedback
+uses MCP tools that fail with `features.mcp=false`. The firmware now shows the
+listening face locally when the listen request is sent and falls back to idle
+after 15 s if the gateway sends no face event. For 3 s after each wake it logs
+`wake mic level: rms=… (… dBFS) peak=…`.
+
+## SpotPear pin table
 
 | Function | GPIO | Confidence | Source/notes |
 |---|---|---|---|
@@ -78,8 +119,8 @@ Sources:
 | LCD CS | 5 | verified | [S]; [X] |
 | LCD DC | 47 | verified | [S]; [X] |
 | LCD RST | none (RC power-on reset, 10k + 100nF) | verified from schematic | [S]; box variant uses GPIO38, but on CAM GPIO38 is camera D6 |
-| LCD backlight | 42 (PWM) | pin verified, polarity guessed | [S] LCD_BL=GP42 drives PMOS APM2307 either directly (R78, active-low) or via NPN (R79, active-high); assembly option. [X] box uses invert=true. Guess: inverted (active low). |
-| Panel geometry | 240x240, offset 0,0, round; xiaozhi box mirrors X | size verified, orientation guessed | [X]; skeleton uses rotation 0 without mirroring, check orientation on hardware (ticket 14) |
+| LCD backlight | 42 (PWM, 25 kHz) | pin and active-low polarity verified | [S] LCD_BL=GP42; R78/R79 assembly options; [F2] factory PwmBacklight(GPIO42, invert=true, 25 kHz) verifies active-low |
+| Panel geometry | 240x240, offset 0,0, round | size and orientation verified on hardware | Native orientation, **no mirror** (MADCTL 0x08, BGR only), verified with the esp_lcd lcd_test orientation frame. The factory setting [F2] (mirror X, MADCTL 0x48) shows horizontally mirrored text on this unit. Ours: rotation 0, invert on, BGR, SWRESET, SPI3 40 MHz mode 0 |
 | Touch | connector has TP_*; TP_SDA/TP_SCL only via 0R/NC options to the shared I2C, TP_INT/TP_RST not routed to MCU | treat as no touch | [S] |
 | I2C (codecs + camera SCCB) SDA | 15 | verified | [S] SDA=GP15 (10k pull-up); [X] |
 | I2C SCL | 14 | verified | [S]; [X] |
@@ -93,6 +134,7 @@ Sources:
 | Speaker amp NS4150B enable (PA_CTRL) | 46, active high | verified pin, polarity from amp datasheet | [S] via R35 0R; [X] same. The skeleton does not call `M5.begin()` (which would drive GPIO46 high as a Capsule power-hold); PA control is ticket 14 |
 | BOOT button | 0, active low, 10k pull-up | verified | [S]; [X] |
 | Power key K1 | SAM8108 latch, not on a GPIO | verified | [S] |
+| Power hold | none | verified | [S] K1 -> SAM8108 ON/OFF latch -> Power_EN gates VCC_IN; no ESP GPIO. Factory firmware also drives GPIO3 high via RTC IO and low+hold on shutdown, but GPIO3 is camera D0 on the schematic and in the factory DVP config, so we do not drive it. |
 | Battery voltage ADC | 1 (ADC1_CH0) via divider | pin verified, divider ratio/curve unverified | [S] VBAT_ADC=GP1; [X] box uses ADC1_CH0 + raw ADC table 1980..2480 |
 | Charging status | not routed to MCU on CAM (MP2636 CHG only) | likely | [S]; box uses GPIO41 — GPIO41 on CAM goes to the TF-card area, unclear |
 | WS2812 LED | 48 via R63 0R/NC option (shared with camera D7 option) | assembly-dependent; treat as absent | [S] |
@@ -103,6 +145,23 @@ Sources:
 | Camera XCLK / PWDN | 12 (both drawn on GP12 via R82/R80) | assembly-dependent | [S] |
 | Camera HREF / VSYNC / PCLK | 46 / 43 / 44 via 0R/NC options, alternatives route to SD pins | assembly-dependent, unverified | [S] — camera is OFF in this firmware anyway |
 | Camera SCCB | shares I2C 15/14 | verified | [S] |
+
+### SpotPear display backend
+
+- Hardware-verified on the owner's unit (5MP-camera version) with the standalone esp_lcd test app `lcd_test.bin` (sha256 4733f0a6...). Solid red, green, blue, white and black showed correctly with no static.
+- Orientation: native, **no mirror** (MADCTL 0x08). With the factory mirror X (MADCTL 0x48), the test glyph "F" appeared horizontally mirrored.
+- **Commit 3d846bd ("mirror X") is wrong for this unit and must not be used.**
+- Static root cause: not pinned down.
+  - The M5GFX path (631a166) uses `lgfx::Bus_SPI` and `Panel_GC9A01`: SPI3, 40 MHz, mode 0, CS 5, DC 47, SWRESET, invert, BGR.
+  - With that path the panel showed power-on static, even after a full power cycle, and the boot log looked correct. So no command took effect, not even the init clear.
+  - The pins, SPI settings, init values and 0x62/0x63 values match the working esp_lcd path. Wiring and panel are therefore fine.
+  - The remaining suspect is M5GFX 0.2.34's register-level `Bus_SPI` on SPI3 with ESP32-S3 and IDF 5.5. This is unproven.
+- The firmware therefore drives the panel the same way as `lcd_test` and the factory firmware: `esp_lcd` plus `espressif/esp_lcd_gc9a01`.
+  - The code is in `components/board/spotpear_lcd.cpp` and is compiled only for spotpear128cam.
+  - `M5.Display` keeps the M5GFX drawing API on top of a `Panel_FrameBufferBase` panel, using a 240x240 RGB565 frame buffer in PSRAM.
+  - The dirty rectangle is pushed with `esp_lcd_panel_draw_bitmap` in 24-line bands from an internal DMA buffer on every outermost `endWrite()`.
+  - Backlight: GPIO42, LEDC at 25 kHz, active-low.
+  - Boot log: `SpotPear LCD: ... backend=esp_lcd ... mirror=0 madctl=0x08`.
 
 ### SpotPear round face layout
 
@@ -124,7 +183,7 @@ Hardware visual sign-off remains for tickets 14/15 on-board.
 
 ### SpotPear BOOT button
 
-For 小芽 on `BoardKind::SpotPear128Cam` (`CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM`),
+For 鈴鈴 (the 小芽 study-buddy build) on `BoardKind::SpotPear128Cam` (`CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM`),
 BOOT is the only interaction button; there is no touch. The firmware reads GPIO0
 (active low, external 10k pull-up) directly through the ESP-IDF GPIO driver;
 `M5.begin()` and `M5.BtnA` are not used. The Atom button overlay does not handle BOOT.
@@ -149,14 +208,14 @@ and otherwise drop, never abort a newly started reply.
 
 Every armed, debounced press-down except provisioning requests a click; this
 will mask the single-press delay. Click sound and break completion audio await
-ticket 16: the SpotPear skeleton has no ES8311/PA audio output initialised yet.
+ticket 16 (the ES8311/PA output is now initialised, see "SpotPear audio" below; the click itself is still a stub).
 The click must sound within about 50 ms of press-down. Natural break expiry
 plays one chime and 「小休完喇，準備好就撳一下我。」 once, then returns to the
 companion face with no nagging. Early end has no completion announcement.
 Breaks default to five minutes; the real duration is a pending parent setting
 via Grok Bot / parent API. Break state stays local (spec 4.4 / ticket 27), with
 no new gateway messages or face expressions. Conversation takes precedence
-so 小芽 can still talk during a break.
+so 鈴鈴 can still talk during a break.
 
 Listening sends XiaoZhi `{"session_id":...,"type":"listen","state":"detect","source":"button"}`
 without a `text` field, equivalent to wake-word detection. Thinking also aborts,

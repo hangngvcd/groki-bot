@@ -21,9 +21,34 @@ ffmpeg -f avfoundation -i ':0' -t 3 -ar 16000 -ac 1 kws-recordings-local/pos/hk_
 ```
 
 Names use `hk__` for Cantonese or `cn__` for Mandarin, then speaker, sentence,
-take and condition separated by `__`. Sentence IDs: `t1` = 小白, `t2` = 小白小白,
-`t3` = 小白，我想做功課. Record 10–20 minutes of TV or household speech without
-小白 into `neg/tv.wav`, also 16 kHz mono signed 16-bit WAV.
+take and condition separated by `__`. Sentence IDs for 鈴鈴 (default): `t1` = 鈴鈴,
+`t2` = 喂，鈴鈴！, `t3` = 鈴鈴，我想做功課 (legacy 小白: 小白 / 小白小白 /
+小白，我想做功課). Record 10–20 minutes of TV or household speech without
+the wake word into `neg/tv.wav`, also 16 kHz mono signed 16-bit WAV.
+
+## 鈴鈴 quick check (current default)
+
+```bash
+export STACKCHAN_WAKE_PHRASE=鈴鈴
+uv run --extra wakeword python tools/kws_eval/eval_kws.py \
+  --pos kws-recordings-local/pos --neg kws-recordings-local/neg \
+  --out kws-recordings-local/results.json --thresholds 0.05 --scores 1 \
+  --variants C1_l2s1_l4s1 C2_l2s1_l4s3 L1_ling2_ling2 L2_ling4_ling4
+```
+
+`C1_l2s1_l4s1` is the built-in preset. Synthetic results (Oct 2026, 972 positive
+clips, 57 min of negatives that deliberately include 電鈴 / 鈴聲 / 美玲 / 零):
+
+| Variant | Overall | HK | CN | TW | False triggers (57 min) |
+|---|---|---|---|---|---|
+| C1 `líng líng :1` + `lìng lìng :1` (default) | 85% | 69% | 93% | 96% | 10 |
+| C2 `líng líng :1` + `lìng lìng :3` | 89% | 76% | 96% | 97% | 18 |
+| L1 `líng líng :1` | 81% | 56% | 93% | 96% | 10 |
+| L2 `lìng lìng :1` | 20% | 59% | 0% | 0% | 5 |
+
+Homophones (玲玲, 零零, 007…) wake C1 on 32 of 49 synthetic sentences.
+
+## Legacy 小白
 
 ```bash
 export STACKCHAN_WAKE_PHRASE=小白

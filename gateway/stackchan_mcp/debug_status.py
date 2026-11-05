@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from . import child_profile
+from .kws_miss_tip import KwsMissTip, get_kws_miss_tip
 
 RECENT_LIMIT = 10
 
@@ -83,6 +84,10 @@ class DebugStatus:
 
     clock: Callable[[], float] = time.time
 
+    kws_miss_tip: KwsMissTip = field(default_factory=get_kws_miss_tip, repr=False)
+
+    usage: Any = field(default=None, repr=False)
+
     # ---- device (ESP32 WebSocket connection)----
     device_connected_flag: bool = False
     device_id: str | None = None
@@ -90,6 +95,8 @@ class DebugStatus:
     device_last_disconnect_at: float | None = None
     device_battery_percent: int | None = None
     device_battery_at: float | None = None
+    device_battery_unknown_reason: str | None = None
+    device_battery_unknown_at: float | None = None
     device_disconnect_count: int = 0
 
     # ---- gemini (Live session)----
@@ -144,6 +151,8 @@ class DebugStatus:
     # ---- device events ----
 
     def on_device_connected(self, device_id: str | None = None) -> None:
+        if self.usage:
+            self.usage.device(True)
         self.device_connected_flag = True
         self.device_id = device_id
         self.device_connected_since = self.clock()
@@ -153,8 +162,20 @@ class DebugStatus:
             raise ValueError("Battery percent must be an integer 0..100")
         self.device_battery_percent = percent
         self.device_battery_at = self.clock()
+        self.device_battery_unknown_reason = None
+        self.device_battery_unknown_at = None
+
+    def on_device_battery_unknown(self, reason: str | None) -> None:
+        """fw 46a+ reports percent=null with a reason when the ADC reading is unusable."""
+        allowed = {"adc_error", "adc_out_of_range", "usb_pinned"}
+        self.device_battery_unknown_reason = reason if reason in allowed else "unknown"
+        self.device_battery_unknown_at = self.clock()
+        self.device_battery_percent = None
+        self.device_battery_at = None
 
     def on_device_disconnected(self) -> None:
+        if self.usage:
+            self.usage.device(False)
         self.device_connected_flag = False
         self.device_connected_since = None
         self.device_last_disconnect_at = self.clock()
@@ -184,6 +205,8 @@ class DebugStatus:
     ) -> None:
         if not self._is_current_generation(generation):
             return
+        if self.usage:
+            self.usage.voice_session(True)
         self.gemini_connected_flag = True
         self.gemini_session_count = session_count
         self.gemini_connected_since = self.clock()
@@ -219,6 +242,8 @@ class DebugStatus:
             if code == 1008:
                 self.gemini_reconnect_1008_count += 1
             return False
+        if self.usage:
+            self.usage.voice_session(False)
         self.gemini_connected_flag = False
         self.gemini_connected_since = None
         if error:
@@ -235,6 +260,8 @@ class DebugStatus:
         if not self._is_current_generation(generation):
             return
         self.gemini_running = False
+        if self.usage:
+            self.usage.voice_session(False)
         self.gemini_connected_flag = False
         self.gemini_connected_since = None
 
@@ -279,8 +306,20 @@ class DebugStatus:
         self.wake_last_wake_at = self.clock()
         self.wake_count += 1
 
+    def on_wake_word_hit(self) -> None:
+        if self.usage:
+            self.usage.wake()
+        self.kws_miss_tip.note_wake_word_hit()
+
+    def on_boot_listen(self) -> None:
+        if self.usage:
+            self.usage.wake(button=True)
+        self.kws_miss_tip.note_boot_listen()
+
     def on_wake_closed(self) -> None:
         self.wake_state = "DORMANT"
+        if self.usage:
+            self.usage.window = False
         self.wake_close_count += 1
 
     def on_wake_gate_unavailable(self) -> None:
@@ -294,6 +333,8 @@ class DebugStatus:
 
     def on_tts_state(self, active: bool, *, source: str = "gemini") -> None:
         """Merge independent speakers so one backend cannot clear another's TTS."""
+        if active and self.usage:
+            self.usage.activity()
         if active:
             self._tts_sources.add(source)
         else:
@@ -318,6 +359,7 @@ class DebugStatus:
     def snapshot(self) -> dict[str, Any]:
         """Build the JSON for ``GET /debug/status``. recent lists newest first."""
         redacted = child_profile.enabled()
+        daily_wake = self.kws_miss_tip.counts()
         return {
             "generated_at": self.clock(),
             "device": {
@@ -325,6 +367,7 @@ class DebugStatus:
                 "device_id": self.device_id,
                 "battery_percent": self.device_battery_percent,
                 "battery_at": self.device_battery_at,
+                "battery_unknown_reason": self.device_battery_unknown_reason,
                 "connected_since": self.device_connected_since,
                 "last_disconnect_at": self.device_last_disconnect_at,
                 "disconnect_count": self.device_disconnect_count,
@@ -359,6 +402,8 @@ class DebugStatus:
                 "available": self.wake_available,
                 "last_wake_at": self.wake_last_wake_at,
                 "wake_count": self.wake_count,
+                "wake_word_count": daily_wake["wake_word_count"],
+                "boot_listen_count": daily_wake["boot_listen_count"],
                 "close_count": self.wake_close_count,
             },
             "audio": {

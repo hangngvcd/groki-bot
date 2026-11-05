@@ -1,0 +1,16 @@
+{
+  "_note": "45d 小八 tone — soft spoken placeholders",
+  "timer_start": "計時開始啦～ {minutes} 分鐘。",
+  "timer_remaining": "仲有 {seconds} 秒呀。",
+  "timer_none": "而家冇計時呀。",
+  "timer_stop": "停咗計時啦。",
+  "break": "小休一陣啦。",
+  "game": "嚟玩啦！",
+  "locked": "仲有呢啲先得玩呀：{items}。",
+  "locked_empty": "遊戲未開到呀，再做吓先～",
+  "homework": "仲有啦：{items}。",
+  "homework_empty": "清單暫時冇未做嘅功課呀。",
+  "done": "記低做完 {item} 喇。",
+  "hello": "嗨，我喺度呀。",
+  "bye": "拜拜～"
+}

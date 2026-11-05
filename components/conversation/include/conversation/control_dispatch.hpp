@@ -54,6 +54,11 @@ inline std::optional<HeadCommand> parse_head_command(const cJSON* root)
 struct ControlCapabilities {
     bool head = true;
     bool led = true;
+    // Ticket 15f2: `led` messages are also the gateway's listening/speaking
+    // status signal. With status_cue set they are delivered even when there
+    // is no LED strip (SpotPear round companion), so the wake cue still sees
+    // them; the receiver must not drive absent LED hardware.
+    bool status_cue = false;
 };
 
 // Entry point for XiaoZhi control messages (JSON text frames). `head` is
@@ -72,7 +77,7 @@ void parse_control(const char* json, std::size_t len, HeadSink&& head_sink, Othe
     const char* type = cJSON_IsString(type_item) ? type_item->valuestring : nullptr;
     if (type != nullptr) {
         if ((!capabilities.head && std::strcmp(type, "head") == 0) ||
-            (!capabilities.led && std::strcmp(type, "led") == 0)) {
+            (!capabilities.led && !capabilities.status_cue && std::strcmp(type, "led") == 0)) {
             // No action, error, or face activity for absent hardware.
         } else if (std::strcmp(type, "head") == 0) {
             if (auto head = parse_head_command(root)) {

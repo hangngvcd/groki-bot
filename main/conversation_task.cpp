@@ -1,7 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Kenta IDA <fuga@fugafuga.org>
 // SPDX-License-Identifier: BSL-1.0
 
+#include "lingling/assets.hpp"
+#include "diag.hpp"
+#include "flash_worker.hpp"
+#include "panic_breadcrumb.hpp"
 #include "conversation_task.hpp"
+#include "glyph_overlay.hpp"
 #if CONFIG_STACKCHAN_COMPANION_FACE
 #include "avatar/companion_policy.hpp"
 #endif
@@ -19,6 +24,7 @@
 #include <cJSON.h>
 #include <esp_heap_caps.h>
 #include <esp_log.h>
+#include <esp_system.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/idf_additions.h>
@@ -30,6 +36,7 @@
 #include "board/si12t_touch.hpp"
 #include "conversation/gemini_live_client.hpp"
 #include "conversation/head_command.hpp"
+#include "conversation/listen_cue.hpp"
 #include "conversation/metrics.hpp"
 #include "conversation/openai_realtime_client.hpp"
 #include "conversation/xiaozhi_client.hpp"
@@ -49,6 +56,8 @@ namespace {
 namespace conv = stackchan::conversation;
 
 constexpr const char* kTag = "conv-task";
+// PSRAM stack (see start_conversation_task). Ticket 15h logs its HWM per session.
+constexpr std::uint32_t kConversationTaskStack = 8192;
 
 // Audio rates depend on the selected provider:
 //   OpenAI Realtime: µ-law @ 8 kHz both directions (encoded inside the
@@ -358,14 +367,301 @@ public:
             // never fires later.
             if (state_.listen_request.exchange(false) && state_.conv.active.load() &&
                 local_ != Local::Speaking) {
-                (void)client_->request_listen();
+                if (client_->request_listen()) {
+                    turn_open_=true;
+                    // Local wake feedback, independent of the gateway / MCP:
+                    // show the listening face right away. Gateway milestones
+                    // (stt -> Thinking, tts start/stop) take over from here.
+                    state_.note_face_activity();
+                    state_.set_voice_state(avatar::VoiceState::Listening);
+                    wake_face_since_ms_ = now_ms();
+                    if (wake_face_since_ms_ == 0) wake_face_since_ms_ = 1;
+                    // One-shot mic level report for the first 3 s after wake.
+                    wake_rms_until_ms_ = wake_face_since_ms_ + kWakeRmsWindowMs;
+                    wake_rms_sum_sq_ = 0.0;
+                    wake_rms_samples_ = 0;
+                    wake_rms_peak_ = 0;
+                    ESP_LOGI(kTag, "wake (BOOT): listen detect sent, face=listening, measuring mic for %u ms",
+                             static_cast<unsigned>(kWakeRmsWindowMs));
+                    // A local wake: mark the gate open so the gateway's cyan
+                    // status light that may follow doesn't chime a second time.
+                    wake_cue_.open = true;
+                    play_wake_chime("BOOT");
+                } else {
+                    ESP_LOGW(kTag, "wake (BOOT): listen detect send failed");
+                }
+            }
+            // No gateway face event within the window: drop back to idle so
+            // the listening face can't stick when nothing was heard.
+            if (wake_face_since_ms_ != 0 && now_ms() - wake_face_since_ms_ > kWakeFaceTimeoutMs) {
+                wake_face_since_ms_ = 0;
+                wake_cue_.reset();
+                if (static_cast<avatar::VoiceState>(state_.conv.voice_state.load()) ==
+                    avatar::VoiceState::Listening) {
+                    turn_open_=false;
+                    ESP_LOGI(kTag, "wake: no gateway reply in %u ms, face back to idle",
+                             static_cast<unsigned>(kWakeFaceTimeoutMs));
+                    state_.set_voice_state(avatar::VoiceState::Idle);
+                }
             }
 #endif
+#if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
+            if (pending_chime_ms_ != 0) {
+                const auto age = now_ms() - pending_chime_ms_;
+                if (age > kChimeDeferMs || !wake_cue_.open) {
+                    ESP_LOGI(kTag, "wake chime (deferred): dropped, %s",
+                             wake_cue_.open ? "listening did not resume in time" : "gate closed");
+                    pending_chime_ms_ = 0;
+                } else if (local_ == Local::Listening) {
+                    pending_chime_ms_ = 0;
+                    play_wake_chime("deferred");
+                }
+            }
+#endif
+            service_lingling();
             service_state();
         }
     }
 
 private:
+    std::optional<conv::XiaoyaCommand> pending_form_;
+    std::vector<lingling::EvolutionStep> evolution_;
+    std::size_t evolution_next_{0};
+    std::uint32_t evolution_due_{0};
+    std::uint8_t evolution_target_{1};
+    bool pending_intro_{false};
+    bool turn_open_{false};
+    bool intro_checked_{false};
+
+    // Ticket 15d: this task's stack is in PSRAM, so it must never touch NVS /
+    // flash itself (cache_utils.c:127 esp_task_stack_is_sane_cache_disabled
+    // panic ~1.5 s after session ready = the intro_done write; reboot loop on
+    // b48d892 / 01ad5b6). flash_worker runs the op on an internal-RAM stack.
+    void persist_lingling(const char* key, std::uint8_t value) {
+        if (!flash_worker::nvs_write_u8("lingling",key,value))
+            ESP_LOGW(kTag,"lingling NVS write failed: %s",key);
+    }
+    void apply_form(std::uint8_t form) {
+        if (form<1 || form>4) { ESP_LOGW(kTag,"lingling: bad form %u ignored",unsigned(form)); return; }
+        const auto old=state_.face.form.exchange(form);
+        if (old!=form) persist_lingling("form",form);  // no NVS write on a same-form resend
+    }
+    static const char* reset_reason_name(esp_reset_reason_t r) {
+        switch (r) {
+        case ESP_RST_POWERON: return "poweron";
+        case ESP_RST_EXT: return "ext";
+        case ESP_RST_SW: return "sw";
+        case ESP_RST_PANIC: return "panic";
+        case ESP_RST_INT_WDT: return "int_wdt";
+        case ESP_RST_TASK_WDT: return "task_wdt";
+        case ESP_RST_WDT: return "wdt";
+        case ESP_RST_DEEPSLEEP: return "deepsleep";
+        case ESP_RST_BROWNOUT: return "brownout";
+        case ESP_RST_SDIO: return "sdio";
+        case ESP_RST_USB: return "usb";
+        case ESP_RST_JTAG: return "jtag";
+        default: return "unknown";
+        }
+    }
+    bool play_local_clip(std::string_view name, const char* balloon = nullptr) {
+        const auto& pack=lingling::assets();
+        auto clip=pack.find(name);
+        if (!clip || clip->kind!=2 || !pack.verify(*clip)) return false;
+        // This task owns mic reads and uplink submission. Blocking here suspends both.
+        const auto samples=clip->data.size()/2;
+        if (!clip->sample_rate || !samples) return false;
+        ESP_LOGI(kTag,"lingling clip %.*s start (%u ms, heap %u, psram %u)",int(name.size()),name.data(),
+                 unsigned(samples*1000/clip->sample_rate),unsigned(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                 unsigned(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
+        M5.Mic.end();
+        vTaskDelay(kI2sSettle);
+        client_->send_json(R"({"type":"xiaoya","event":"local_speech","state":"start"})");
+        const auto overlay=state_.request_face_overlay(avatar::Expression::Happy,0);
+        if (balloon) state_.set_balloon_text(balloon,0);
+        std::size_t pos=0,next=0;
+        const auto started=now_ms();
+        // Hard cap so a stuck speaker can never pin this task: clip length + 2 s.
+        const auto deadline=started+std::uint32_t(samples*1000/clip->sample_rate)+2000;
+        auto overdue=[&] { return static_cast<std::int32_t>(now_ms()-deadline)>=0; };
+        auto mouth=[&] {
+            const auto at=std::size_t(now_ms()-started)*clip->sample_rate/1000;
+            const auto end=std::min<std::size_t>(samples,at+clip->sample_rate/50);
+            int peak=0;
+            for (auto i=at;i<end;++i) {
+                const auto lo=clip->data[i*2], hi=clip->data[i*2+1];
+                const auto value=static_cast<std::int16_t>(std::uint16_t(lo)|(std::uint16_t(hi)<<8));
+                peak=std::max(peak,std::abs(int(value)));
+            }
+            state_.face.mouth_open.store(float(peak)/32768.0f);
+        };
+        while (pos<samples) {
+            if (M5.Speaker.isPlaying(kSpeakerChannel)<kSegmentBuffers-1) {
+                const auto n=std::min(kSegmentSamples,samples-pos);
+                std::memcpy(seg_buf_[next],clip->data.data()+pos*2,n*2);
+                if (!M5.Speaker.playRaw(seg_buf_[next],n,clip->sample_rate,false,1,kSpeakerChannel,false)) {
+                    ESP_LOGW(kTag,"local clip speaker failed");
+                    break;
+                }
+                pos+=n; next=(next+1)%kSegmentBuffers;
+            }
+            mouth(); vTaskDelay(pdMS_TO_TICKS(10));
+            if (overdue()) { ESP_LOGW(kTag,"local clip overdue; stopping"); break; }
+        }
+        while (M5.Speaker.isPlaying(kSpeakerChannel)>0 && !overdue()) {
+            mouth(); vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        M5.Speaker.stop(kSpeakerChannel);
+        M5.Speaker.end();
+        ESP_LOGI(kTag,"lingling clip %.*s end (%s)",int(name.size()),name.data(),pos==samples ? "complete" : "cut");
+        vTaskDelay(kI2sSettle);
+        client_->send_json(R"({"type":"xiaoya","event":"local_speech","state":"stop"})");
+        state_.face.mouth_open.store(0);
+        state_.clear_face_overlay_if(overlay);
+        enter_listening();
+        return pos==samples;
+    }
+    // Ticket 15f: local wake chime, a soft two-tone "叮" synthesised in code
+    // (conversation/listen_cue.hpp), straight into the internal-RAM segment
+    // ring: no allocation, no flash. Half-duplex exactly like play_local_clip:
+    // the mic is stopped before the first sample and re-primed by
+    // enter_listening() only after the speaker has been ended, so the chime
+    // is never in the uplink and cannot be transcribed as speech. It does not
+    // send xiaoya local_speech either: there is no mic audio to self-mute.
+    // Played at the user's speaker volume (M5.Speaker master volume); skipped
+    // while muted so a muted device doesn't drop ~260 ms of mic for nothing.
+    void play_wake_chime(const char* why) {
+#if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
+        if (local_!=Local::Listening) {
+            if (local_==Local::Yielded) {
+                ESP_LOGI(kTag,"wake chime (%s): skipped, audio yielded",why);
+                return;
+            }
+            // e.g. the session's first cyan racing "listen start", or a wake
+            // while the previous reply is still draining: play it as soon as
+            // the mic is back (within kChimeDeferMs) instead of dropping it.
+            pending_chime_ms_=now_ms() | 1u;
+            ESP_LOGI(kTag,"wake chime (%s): deferred, local state %d is not Listening yet",why,
+                     static_cast<int>(local_));
+            return;
+        }
+        if (state_.speaker.muted.load(std::memory_order_relaxed)) {
+            ESP_LOGI(kTag,"wake chime (%s): skipped, speaker muted",why);
+            return;
+        }
+        ESP_LOGI(kTag,"wake chime (%s): start (volume %u)",why,unsigned(M5.Speaker.getVolume()));
+        constexpr std::uint32_t kRate=24000;
+        const auto total=conv::wake_chime_samples(kRate);
+        M5.Mic.end();
+        vTaskDelay(kI2sSettle);
+        const auto started=now_ms();
+        const auto deadline=started+conv::kChimeMs+1000;
+        auto overdue=[&] { return static_cast<std::int32_t>(now_ms()-deadline)>=0; };
+        std::size_t pos=0,next=0;
+        bool failed=false;
+        while (pos<total && !overdue()) {
+            if (M5.Speaker.isPlaying(kSpeakerChannel)<kSegmentBuffers-1) {
+                const auto n=std::min(kSegmentSamples,total-pos);
+                conv::render_wake_chime(seg_buf_[next],pos,n,kRate);
+                if (!M5.Speaker.playRaw(seg_buf_[next],n,kRate,false,1,kSpeakerChannel,false)) {
+                    ESP_LOGW(kTag,"wake chime (%s): speaker playRaw failed at sample %u",why,unsigned(pos));
+                    failed=true;
+                    break;
+                }
+                pos+=n; next=(next+1)%kSegmentBuffers;
+            }
+            vTaskDelay(pdMS_TO_TICKS(5));
+        }
+        while (M5.Speaker.isPlaying(kSpeakerChannel)>0 && !overdue()) vTaskDelay(pdMS_TO_TICKS(5));
+        M5.Speaker.stop(kSpeakerChannel);
+        const bool keep_turn=turn_open_;
+        enter_listening();  // Speaker.end + settle + mic re-prime
+        turn_open_=keep_turn;
+        ESP_LOGI(kTag,"wake chime (%s): %s, %u/%u samples, mic off %u ms",why,
+                 failed ? "FAILED" : (pos==total ? "played" : "cut (overdue)"),unsigned(pos),unsigned(total),
+                 unsigned(now_ms()-started+20));
+#else
+        (void)why;
+#endif
+    }
+
+    // Ticket 15f: the gateway's status-LED messages are the wake signal on
+    // the LED-less round companion (see listen_cue.hpp). Cyan after "off" =
+    // fresh wake: listening face + ring, then the chime. Cyan after a reply =
+    // back to listening (no chime). Off / red = gate closed: drop the
+    // listening face so the idle -> sleepy decay can run again.
+    void on_status_led(std::uint8_t r, std::uint8_t g, std::uint8_t b) {
+#if CONFIG_STACKCHAN_COMPANION_FACE
+        const auto cls=conv::classify_status_led(r,g,b);
+        const bool was_open=wake_cue_.open;
+        const auto step=wake_cue_.on_led(cls);
+        const auto voice=static_cast<avatar::VoiceState>(state_.conv.voice_state.load());
+        static constexpr const char* kCls[]={"off","listening","speaking","error","other"};
+        ESP_LOGI(kTag,"status cue rgb=(%u,%u,%u) -> %s, gate %s->%s%s",unsigned(r),unsigned(g),unsigned(b),
+                 kCls[static_cast<int>(cls)],was_open ? "open" : "closed",wake_cue_.open ? "open" : "closed",
+                 step.fresh_wake ? ", fresh wake: chime" :
+                 (step.listening ? ", already open: no chime" : ""));
+        if (step.listening && local_!=Local::Speaking && voice!=avatar::VoiceState::Speaking &&
+            voice!=avatar::VoiceState::Thinking) {
+            state_.note_face_activity();
+            state_.set_voice_state(avatar::VoiceState::Listening);
+        }
+        if (step.closed && voice==avatar::VoiceState::Listening) {
+            state_.set_voice_state(avatar::VoiceState::Idle);
+        }
+        if (step.fresh_wake) {
+            ESP_LOGI(kTag,"wake (gateway LED): face=listening");
+            play_wake_chime("gateway");
+        }
+#else
+        (void)r; (void)g; (void)b;
+#endif
+    }
+
+    void service_lingling() {
+        if (local_!=Local::Listening || turn_open_ || wake_cue_.open) return;
+        if (pending_form_) {
+            const auto cmd=*pending_form_; pending_form_.reset();
+            const auto from=cmd.from ? cmd.from : state_.face.form.load();
+            evolution_=lingling::plan_evolution(from,cmd.form);
+            evolution_next_=0; evolution_due_=now_ms(); evolution_target_=cmd.form;
+            if (evolution_.empty()) apply_form(cmd.form);
+        }
+        if (evolution_next_<evolution_.size()) {
+            if (static_cast<std::int32_t>(now_ms()-evolution_due_)<0) return;
+            apply_form(evolution_[evolution_next_++].form);
+            state_.request_face_overlay(avatar::Expression::Excited,700);
+            const auto gap=evolution_next_<evolution_.size() ?
+                evolution_[evolution_next_].at_ms-evolution_[evolution_next_-1].at_ms : 500u;
+            evolution_due_=now_ms()+gap;
+            return; // Let the render task show the final Excited pose before praise.
+        }
+        if (!evolution_.empty()) {
+            if (static_cast<std::int32_t>(now_ms()-evolution_due_)<0) return;
+            evolution_.clear();
+            static constexpr const char* praise[]={"", "",
+                "你專心做完一樣，我長出翼仔喇！", "你一直堅持，我嘅翼都大咗喇！",
+                "今日全部做晒，你好有耐性！記得俾爸爸睇吓。"};
+            if (!play_local_clip("vo.evolve.f"+std::to_string(evolution_target_)))
+                state_.set_balloon_text(praise[evolution_target_],0);
+        }
+        if (pending_intro_ && local_==Local::Listening && !turn_open_) {
+            pending_intro_=false;
+            static constexpr const char* kIntroText =
+                "娜娜你好！我係鈴鈴，一隻會慢慢長大嘅白貓仔。你做功課嗰陣我會陪住你，有嘢想問就叫我個名，或者撳一下個掣。";
+            // Ticket 15c: mark the intro done BEFORE playing. The old order (flag
+            // only after a complete playback) replayed the clip on every boot when
+            // the board reset mid-clip — the loud reboot loop on b48d892.
+            persist_lingling("intro_done",1);
+            (void)kIntroText;
+            if (!play_local_clip("vo.intro.1")) {
+                // No clip in the pack: the gateway speaks the line once with
+                // edge-tts (or skips it). Never repeated, no text balloon.
+                ESP_LOGI(kTag,"lingling intro: no clip; asking gateway TTS");
+                client_->send_json(R"({"type":"xiaoya","event":"intro_tts"})");
+            }
+        }
+    }
+
     // ---- event bridge: WS task -> this task --------------------------------
 
     void enqueue_event(const conv::ConversationEvent& ev)
@@ -624,6 +920,10 @@ private:
     void set_local(Local s)
     {
         local_ = s;
+        if (s == Local::Init || s == Local::Yielded) {
+            wake_cue_.reset();
+            pending_chime_ms_ = 0;
+        }
         state_.conv.idle.store(s == Local::Listening, std::memory_order_relaxed);
         using avatar::VoiceState;
         VoiceState vs = VoiceState::Idle;
@@ -813,6 +1113,9 @@ private:
     {
         if (M5.Mic.isRecording() < 2) {
             const auto& buf = mic_buf_[mic_read_];
+#if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
+            note_wake_mic_level(buf.data(), buf.size());
+#endif
             (void)client_->push_audio(std::span<const std::int16_t>{buf.data(), buf.size()});
             M5.Mic.record(mic_buf_[mic_read_].data(), mic_buf_[mic_read_].size(), mic_sample_rate_, /*stereo=*/false);
             mic_read_ ^= 1;
@@ -821,8 +1124,34 @@ private:
         }
     }
 
+#if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
+    void note_wake_mic_level(const std::int16_t* pcm, std::size_t n)
+    {
+        if (wake_rms_until_ms_ == 0) return;
+        for (std::size_t i = 0; i < n; ++i) {
+            const int v = pcm[i];
+            wake_rms_sum_sq_ += static_cast<double>(v) * v;
+            const int a = v < 0 ? -v : v;
+            if (a > wake_rms_peak_) wake_rms_peak_ = a;
+        }
+        wake_rms_samples_ += n;
+        if (static_cast<std::int32_t>(now_ms() - wake_rms_until_ms_) >= 0) {
+            const double rms = wake_rms_samples_ > 0
+                                   ? std::sqrt(wake_rms_sum_sq_ / static_cast<double>(wake_rms_samples_))
+                                   : 0.0;
+            const double dbfs = rms > 0.0 ? 20.0 * std::log10(rms / 32768.0) : -120.0;
+            ESP_LOGI(kTag, "wake mic level: rms=%.0f (%.1f dBFS) peak=%d samples=%u @%u Hz%s",
+                     rms, dbfs, wake_rms_peak_, static_cast<unsigned>(wake_rms_samples_),
+                     static_cast<unsigned>(mic_sample_rate_),
+                     wake_rms_samples_ == 0 ? " (NO MIC DATA)" : (wake_rms_peak_ == 0 ? " (ALL ZERO)" : ""));
+            wake_rms_until_ms_ = 0;
+        }
+    }
+#endif
+
     void enter_listening()
     {
+        turn_open_=false;
         M5.Speaker.end();
         vTaskDelay(kI2sSettle);
         state_.face.mouth_open.store(0.0f, std::memory_order_relaxed);
@@ -845,6 +1174,14 @@ private:
         M5.Mic.record(mic_buf_[1].data(), mic_buf_[1].size(), mic_sample_rate_, /*stereo=*/false);
         mic_read_ = 0;
         set_local(Local::Listening);
+#if CONFIG_STACKCHAN_COMPANION_FACE
+        // Ticket 15f: the gateway's post-reply cyan can arrive while buffered
+        // audio is still draining; show the listening face once it has.
+        if (wake_cue_.open && static_cast<avatar::VoiceState>(state_.conv.voice_state.load()) ==
+                                  avatar::VoiceState::Idle) {
+            state_.set_voice_state(avatar::VoiceState::Listening);
+        }
+#endif
     }
 
     // Switch the I2S bus to the speaker and begin streaming playback. Called
@@ -972,9 +1309,54 @@ private:
     void handle_event(const conv::ConversationEvent& ev)
     {
         switch (ev.type) {
+        case conv::ConversationEventType::SessionReady:
+            // form_state doubles as the boot telemetry: reset reason (brownout /
+            // panic / wdt ... — visible on the gateway without a serial cable)
+            // and the current speaker volume.
+            client_->send_json("{\"type\":\"xiaoya\",\"event\":\"form_state\",\"form\":"+
+                                   std::to_string(state_.face.form.load())+
+                                   ",\"volume\":"+std::to_string(state_.speaker.volume_pct.load())+
+                                   ",\"reset_reason\":\""+reset_reason_name(esp_reset_reason())+"\""+
+                                   (panic_breadcrumb_text()[0] != '\0'
+                                        ? ",\"panic\":\"" + std::string(panic_breadcrumb_text()) + "\""
+                                        : std::string())+
+                                   ",\"uptime_ms\":"+std::to_string(now_ms())+"}");
+            // Ticket 15h: stack headroom of this (PSRAM-stack) task after each
+            // (re)connect — the recover path runs deep inside handle_event.
+            ESP_LOGI(kTag, "conversation stack hwm after session ready: %u B of %u B (reconnects=%u)",
+                     static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)),
+                     static_cast<unsigned>(kConversationTaskStack),
+                     static_cast<unsigned>(state_.conv.reconnects.load(std::memory_order_relaxed)));
+            diag_stack_hwm();
+            break;
+        case conv::ConversationEventType::XiaoyaCommand:
+            if (ev.xiaoya) {
+                if (ev.xiaoya->kind==conv::XiaoyaCommand::Kind::Intro) pending_intro_=true;
+                else if (ev.xiaoya->kind==conv::XiaoyaCommand::Kind::Volume) {
+                    // demo_loop sees the change, applies M5.Speaker volume and persists it.
+                    ESP_LOGI(kTag,"lingling: volume %u %% (gateway)",unsigned(ev.xiaoya->volume));
+                    state_.speaker.volume_pct.store(ev.xiaoya->volume);
+                } else if (ev.xiaoya->kind==conv::XiaoyaCommand::Kind::Glyph) {
+                    ESP_LOGI(kTag, "glyph command: clear=%d, hold=%u ms", ev.xiaoya->clear, unsigned(ev.xiaoya->hold_ms));
+                    if (ev.xiaoya->clear) glyph_overlay::clear();
+                    else glyph_overlay::show(ev.xiaoya->png, ev.xiaoya->hold_ms);
+                } else {
+                    evolution_.clear(); evolution_next_=0;
+                    const auto cmd=*ev.xiaoya;
+                    const auto from=cmd.from ? cmd.from : state_.face.form.load();
+                    if (!cmd.animate || cmd.form<=from) {
+                        pending_form_.reset(); apply_form(cmd.form);
+                    } else pending_form_=cmd;
+                }
+            }
+            break;
         case conv::ConversationEventType::FaceVoiceState:
+            turn_open_=ev.face_voice_state!=avatar::VoiceState::Idle;
 #if CONFIG_STACKCHAN_COMPANION_FACE
             state_.set_voice_state(ev.face_voice_state);
+#endif
+#if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
+            wake_face_since_ms_ = 0;
 #endif
             break;
         case conv::ConversationEventType::StateChanged:
@@ -983,6 +1365,14 @@ private:
             // local state machine owns mic/speaker timing.
             if (local_ == Local::Init && ev.state == conv::ConversationState::Listening) {
                 ESP_LOGI(kTag, "session ready");
+                turn_open_=false;
+                if (!intro_checked_) {
+                    intro_checked_=true;
+                    std::uint8_t done=0;
+                    // NVS reads also disable the flash cache: off this PSRAM stack too.
+                    (void)flash_worker::nvs_read_u8("lingling","intro_done",done);
+                    if (!done) pending_intro_=true;
+                }
 #if CONFIG_STACKCHAN_COMPANION_FACE
                 state_.set_voice_state(avatar::VoiceState::Idle);
                 state_.face.expression.store(static_cast<int>(avatar::Expression::Neutral), std::memory_order_relaxed);
@@ -1014,6 +1404,7 @@ private:
             break;
 
         case conv::ConversationEventType::SpeechStarted:
+            turn_open_=true;
             ESP_LOGI(kTag, "user speech started");
             state_.note_face_activity();
             // The user is actually talking to us — this is the listening
@@ -1138,16 +1529,22 @@ private:
         }
 
         case conv::ConversationEventType::LedColor: {
-            const auto solid = led_runtime::from_rgb(ev.led_r, ev.led_g, ev.led_b);
-            state_.led.color.store(solid.color, std::memory_order_relaxed);
-            // A XiaoZhi LED message is a temporary status light, not a user setting: only runtime state is
-            // written here; the next led_task tick drives the real Board::LedStrip. Nothing goes to NVS.
-            state_.led.mode.store(solid.mode, std::memory_order_relaxed);
-            state_.led.brightness.store(solid.brightness, std::memory_order_relaxed);
+            // Boards without a strip (SpotPear) still get these frames as the
+            // wake/speaking status cue (ControlCapabilities::status_cue); only
+            // touch LED runtime state when there is a strip to drive.
+            if (config_.led_control) {
+                const auto solid = led_runtime::from_rgb(ev.led_r, ev.led_g, ev.led_b);
+                state_.led.color.store(solid.color, std::memory_order_relaxed);
+                // A XiaoZhi LED message is a temporary status light, not a user setting: only runtime state is
+                // written here; the next led_task tick drives the real Board::LedStrip. Nothing goes to NVS.
+                state_.led.mode.store(solid.mode, std::memory_order_relaxed);
+                state_.led.brightness.store(solid.brightness, std::memory_order_relaxed);
+            }
             ESP_LOGI(kTag, "LED status light: r=%u g=%u b=%u",
                      static_cast<unsigned>(ev.led_r),
                      static_cast<unsigned>(ev.led_g),
                      static_cast<unsigned>(ev.led_b));
+            on_status_led(ev.led_r, ev.led_g, ev.led_b);
             break;
         }
         }
@@ -1266,6 +1663,8 @@ private:
         M5.Mic.end();
         vTaskDelay(kI2sSettle);
 
+        client_->send_json(R"({"type":"xiaoya","event":"local_speech","state":"start"})");
+
         // Pre-compute peak envelope so the avatar mouth opens in sync with the
         // utterance even though we're not running the normal service_playback.
         const std::size_t env_window = kKatakotoRate * kEnvelopeStepMs / 1000u;
@@ -1311,6 +1710,7 @@ private:
         M5.Speaker.end();
         vTaskDelay(kI2sSettle);
         state_.face.mouth_open.store(0.0f, std::memory_order_relaxed);
+        client_->send_json(R"({"type":"xiaoya","event":"local_speech","state":"stop"})");
         return R"({"ok":true})";
 #else
         return R"({"ok":false,"error":"Japanese TTS disabled"})";
@@ -1372,6 +1772,18 @@ private:
 
     Local local_{Local::Init};
     std::uint32_t thinking_since_ms_{0};
+    conv::WakeCue wake_cue_;  // ticket 15f: gateway wake-gate state from status-LED messages
+    std::uint32_t pending_chime_ms_{0};  // ticket 15f2: deferred wake chime (0 = none)
+    static constexpr std::uint32_t kChimeDeferMs = 3000;
+#if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
+    static constexpr std::uint32_t kWakeRmsWindowMs = 3000;
+    static constexpr std::uint32_t kWakeFaceTimeoutMs = 15000;
+    std::uint32_t wake_face_since_ms_{0};
+    std::uint32_t wake_rms_until_ms_{0};
+    double wake_rms_sum_sq_{0.0};
+    std::size_t wake_rms_samples_{0};
+    int wake_rms_peak_{0};
+#endif
     // The thinking face may already be back to idle (kThinkingFaceMs limit); reset on entering Thinking.
     bool thinking_face_released_{false};
     bool tool_pending_{false};
@@ -1438,10 +1850,12 @@ void conversation_task_entry(void* arg)
 
 void start_conversation_task(ConversationTaskArgs& args)
 {
-    // Stack in PSRAM to save internal RAM: this task is a TLS/WS read-write loop with no flash
-    // writes (same as the say_worker / asr PSRAM stacks), so 8 KiB go back to internal RAM.
+    // Stack in PSRAM to save internal RAM: this task is a TLS/WS read-write loop. It must NOT
+    // call nvs_* / esp_partition_* / esp_flash_* directly (flash ops assert an internal stack);
+    // every NVS access goes through flash_worker (ticket 15d). Start the worker first.
+    (void)flash_worker::start();
     constexpr UBaseType_t kCaps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
-    xTaskCreatePinnedToCoreWithCaps(conversation_task_entry, "conversation", 8192, &args, 5, nullptr,
+    xTaskCreatePinnedToCoreWithCaps(conversation_task_entry, "conversation", kConversationTaskStack, &args, 5, nullptr,
                                     0, kCaps);
 }
 

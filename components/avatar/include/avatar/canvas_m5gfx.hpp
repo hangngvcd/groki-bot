@@ -24,6 +24,7 @@ public:
         : panel_{panel}, circular_{circular}
     {}
 
+    M5Canvas& sprite() noexcept { return sprite_; }
     bool is_circular() const noexcept override { return circular_; }
 
     // Allocate the full-screen sprite. Standalone (no display parent) + explicit

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import os
+
 from .gbot_voice_bridge import GbotVoiceBridge
 from .gemini_voice_proxy import GeminiVoiceProxy
 
@@ -27,11 +29,23 @@ class GbotVoiceProxy(GeminiVoiceProxy):
     def _voice_tts_mode(self):
         return "native"
 
+    def _session_reopen_enabled(self):
+        # The Grok server ends idle sessions (900 s inactivity timeout); open a
+        # fresh one lazily on the next wake instead of keeping one alive.
+        raw = os.getenv("STACKCHAN_GBOT_SESSION_REOPEN", "1").strip().lower()
+        return raw not in {"0", "false", "no", "off"}
+
     def _make_bridge(self, esp32, **kwargs):
-        return (self.bridge_factory or GbotVoiceBridge)(
+        bridge = (self.bridge_factory or GbotVoiceBridge)(
             esp32=esp32,
             tool_executor=self.voice_tool_executor,
             tool_executor_factory=self.voice_tool_executor_factory,
             tool_extensions=self.voice_tool_extensions,
             **kwargs,
         )
+        # Half-duplex: once `tts start` went out, server VAD must not barge in.
+        try:
+            bridge.playback_active = lambda: self._tts_active
+        except Exception:
+            pass
+        return bridge

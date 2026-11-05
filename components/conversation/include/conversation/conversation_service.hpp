@@ -15,6 +15,7 @@
 
 #include "conversation/conversation_error.hpp"
 #include "avatar/expression.hpp"
+#include "conversation/xiaoya_command.hpp"
 
 namespace stackchan::conversation {
 
@@ -101,6 +102,8 @@ enum class ConversationEventType : std::uint8_t {
     GoingAway,
     // Opt-in companion face milestone, independent of audio playback timing.
     FaceVoiceState,
+    XiaoyaCommand,
+    SessionReady,
 };
 
 struct ToolCall {
@@ -115,6 +118,7 @@ struct ToolCall {
 // the refcount is copied, not the samples.
 struct ConversationEvent {
     ConversationEventType type;
+    std::optional<XiaoyaCommand> xiaoya;
     avatar::VoiceState face_voice_state{avatar::VoiceState::Idle};
     ConversationState state{ConversationState::Idle};        // for StateChanged
     std::string text;                                        // transcripts / text deltas
@@ -175,6 +179,7 @@ public:
     virtual tl::expected<void, ConversationError> cancel_response() = 0;
 
     virtual ConversationState state() const = 0;
+    virtual bool send_json(std::string_view /*json*/) { return false; }
 
     // Number of mic-uplink chunks evicted (oldest-dropped) from the client's
     // audio TX queue because the WebSocket sender could not keep up,

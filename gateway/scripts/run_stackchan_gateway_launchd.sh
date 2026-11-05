@@ -38,6 +38,23 @@ trap cleanup EXIT INT TERM
 
 cd "${GATEWAY_DIR}"
 
+# Advisory only; uv loads .env later, so distinguish unset shell variables.
+if command -v node >/dev/null 2>&1; then
+    node --version || true
+    node -e 'const [a,b]=process.versions.node.split(".").map(Number); process.exit(a>22 || (a===22 && b>=19) ? 0 : 1)' ||
+        echo '提示：請更新 Node 至 22.19 或以上。' >&2
+else
+    echo '提示：未搵到 Node，請安裝 22.19 或以上。' >&2
+fi
+if command -v gbot >/dev/null 2>&1; then
+    gbot --version || echo '提示：gbot 版本檢查失敗，請檢查安裝。' >&2
+else
+    echo '提示：PATH 未搵到 gbot，請檢查安裝同服務 PATH。' >&2
+fi
+if [[ -z "${STACKCHAN_PARENT_BOT_ID:-}" ]]; then
+    echo '提示：服務環境未有 STACKCHAN_PARENT_BOT_ID；請確認 gateway .env 已設定家長助手。' >&2
+fi
+
 RUNTIME_DIR="$(mktemp -d "${TMPDIR:-/tmp}/stackchan-gateway.XXXXXX")"
 STDIN_FIFO="${RUNTIME_DIR}/stdin"
 mkfifo "${STDIN_FIFO}"

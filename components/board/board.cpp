@@ -4,7 +4,8 @@
 #include "board/board.hpp"
 #if CONFIG_STACKCHAN_BOARD_SPOTPEAR_128CAM
 #include "board/spotpear_128cam_pins.hpp"
-#include <lgfx/v1/panel/Panel_GC9A01.hpp>
+#include "spotpear_audio.hpp"
+#include "spotpear_lcd.hpp"
 #endif
 
 #include <memory>
@@ -81,42 +82,57 @@ tl::expected<Board, Error> Board::begin()
         // implementation on M5.Display, bypassing autodetect entirely. Do NOT call
         // M5.begin(): it probes unrelated GPIOs and configures M5 power/I2C chips
         // (and raises GPIO46, harmless PA enable here). Static objects outlive Display.
-        // Risks: panel orientation/backlight polarity need hardware confirmation.
-        // TODO(ticket 14): initialize ES8311 + ES7210 registers and shared I2S,
-        // PA enable and BOOT-to-listen. M5.BtnA/Speaker/Mic remain default inert
-        // objects (audio data pins remain disabled), with no M5 pin map or I2C bus installed.
+        //
+        // Display backend: esp_lcd + espressif/esp_lcd_gc9a01 (see spotpear_lcd.hpp).
+        // The M5GFX Bus_SPI/Panel_GC9A01 path (631a166) left the panel showing
+        // power-on static on hardware; the esp_lcd lcd_test app is verified good.
+        // M5.Display keeps the M5GFX drawing API over a frame-buffer panel that
+        // pushes dirty rects through esp_lcd. Orientation verified on hardware:
+        // NO mirror (MADCTL 0x08). The factory mirror X shows mirrored text.
+        // Audio: because M5.begin() is skipped, M5.Speaker/M5.Mic/In_I2C are
+        // configured by spotpear_audio_begin() below (ES8311 + PA, ES7210).
         namespace pins = spotpear_128cam;
-        static lgfx::Bus_SPI bus;
-        static lgfx::Panel_GC9A01 panel;
+        static Panel_SpotPearEspLcd panel;
         static lgfx::Light_PWM light;
-        auto bus_cfg = bus.config();
-        bus_cfg.spi_host = SPI2_HOST;
-        bus_cfg.pin_sclk = pins::lcd_sclk;
-        bus_cfg.pin_mosi = pins::lcd_mosi;
-        bus_cfg.pin_miso = pins::lcd_miso;
-        bus_cfg.pin_dc = pins::lcd_dc;
-        bus.config(bus_cfg);
-        panel.setBus(&bus);
         auto panel_cfg = panel.config();
-        panel_cfg.pin_cs = pins::lcd_cs;
-        panel_cfg.pin_rst = pins::lcd_rst;
+        panel_cfg.pin_cs = -1;  // CS (GPIO5) is owned by esp_lcd panel IO.
+        panel_cfg.pin_rst = -1; // No RST GPIO; esp_lcd sends SWRESET.
+        panel_cfg.pin_busy = -1;
         panel_cfg.panel_width = panel_cfg.memory_width = pins::lcd_width;
         panel_cfg.panel_height = panel_cfg.memory_height = pins::lcd_height;
         panel_cfg.offset_x = panel_cfg.offset_y = 0;
-        // Keep Panel_GC9A01's default inversion.
+        panel_cfg.offset_rotation = 0;
+        panel_cfg.readable = true; // Reads come from the frame buffer.
+        panel_cfg.invert = false;  // Native hardware invert (on) is set by the backend.
+        panel_cfg.rgb_order = false;
         panel.config(panel_cfg);
         auto light_cfg = light.config();
         light_cfg.pin_bl = pins::lcd_backlight;
-        light_cfg.invert = true; // Guessed polarity: R78/R79 assembly option; verify in ticket 14.
+        light_cfg.invert = true; // Factory PwmBacklight(GPIO42, invert=true): active-low.
+        light_cfg.freq = 25000; // Factory 25 kHz (LEDC).
         light.config(light_cfg);
         panel.setLight(&light);
-        if (!M5.Display.init(&panel)) return tl::unexpected{Error::DisplayInit};
+        if (!M5.Display.init(&panel) || !panel.esp_lcd_ready()) {
+            ESP_LOGE(kTag, "SpotPear LCD init failed (backend=esp_lcd)");
+            return tl::unexpected{Error::DisplayInit};
+        }
         M5.Display.setRotation(0);
         M5.Display.setBrightness(128);
+        ESP_LOGI(kTag, "SpotPear LCD: GC9A01A %dx%d backend=esp_lcd SPI3 sclk=%d mosi=%d miso=%d cs=%d dc=%d rst=%d(swreset) bl=%d(active-low,25kHz) pclk=%lu Hz spi_mode=0 invert=1 rgb_order=BGR mirror=0 madctl=0x%02X rotation=%d band=%d",
+                 static_cast<int>(pins::lcd_width), static_cast<int>(pins::lcd_height),
+                 static_cast<int>(pins::lcd_sclk), static_cast<int>(pins::lcd_mosi),
+                 static_cast<int>(pins::lcd_miso), static_cast<int>(pins::lcd_cs),
+                 static_cast<int>(pins::lcd_dc), static_cast<int>(pins::lcd_rst),
+                 static_cast<int>(pins::lcd_backlight),
+                 static_cast<unsigned long>(pins::lcd_spi_freq_hz),
+                 static_cast<int>(Panel_SpotPearEspLcd::kMadctl),
+                 static_cast<int>(M5.Display.getRotation()),
+                 Panel_SpotPearEspLcd::kBandLines);
+        spotpear_audio_begin();
         Board board;
         board.impl_ = std::make_shared<Impl>(BoardKind::SpotPear128Cam,
                                            std::optional<Py32Expander>{}, std::optional<Si12tTouch>{});
-        ESP_LOGI(kTag, "board initialized: kind=SpotPear128Cam (240x240 GC9A01A, skeleton; audio/input TODO ticket 14)");
+        ESP_LOGI(kTag, "board initialized: kind=SpotPear128Cam (240x240 GC9A01A, ES8311/ES7210 audio)");
         return board;
     }
 #endif
@@ -303,6 +319,7 @@ BoardProfile profile_for(BoardKind kind) noexcept
         p.circular_display = true;
         p.round_face_layout = true;
         p.button_overlay_ui = true; // No touch; BOOT gestures: main/boot_button_task.cpp.
+        p.speaker_base_volume = 255; // full digital scale; DAC +12 dB sets the ceiling.
         break;
     case BoardKind::StopWatch:
         p.speaker_magnification = 16; // ES8311 → AW8737A input attenuator

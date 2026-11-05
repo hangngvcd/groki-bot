@@ -33,6 +33,8 @@ public:
         load_default();
     }
 
+    std::function<bool(RichCanvas&, const DrawContext&)> face_painter_;
+
     void tick(std::uint32_t now_ms, RichCanvas& canvas) {
         animator_.tick(now_ms, context_);
         expression_ctrl_.set_target(expression_ctrl_.resolve(now_ms));
@@ -48,7 +50,7 @@ public:
         }
         canvas.begin_frame(context_.palette.background);
 
-        if (bytecode_ok_) {
+        if (!(face_painter_ && face_painter_(canvas, context_)) && bytecode_ok_) {
             auto r = vm_.run(bytecode_, canvas, context_, tuning_);
             if (!r) {
                 ESP_LOGW(TAG, "vm.run failed: %s", avatar_vm::to_string(r.error()));
@@ -261,3 +263,16 @@ void Avatar::tick(std::uint32_t now_ms, RichCanvas& canvas) {
 }
 
 } // namespace stackchan::avatar
+
+namespace stackchan::avatar {
+void Avatar::set_form(std::uint8_t form) noexcept {
+    form = form < 1 ? 1 : (form > 4 ? 4 : form);
+    if (impl_->context().form == form) return;
+    impl_->context().form = form;
+    impl_->request_full_repaint();
+}
+void Avatar::set_face_painter(std::function<bool(RichCanvas&, const DrawContext&)> painter) {
+    impl_->face_painter_ = std::move(painter);
+    impl_->request_full_repaint();
+}
+}

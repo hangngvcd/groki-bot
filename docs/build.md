@@ -117,7 +117,7 @@ SpotPear ESP32-S3 1.28-CAM skeleton: `make build BOARD=spotpear128cam`. This sel
 
 ## Releases, web flasher and OTA for spotpear128cam
 
-A tag release builds this required board and attaches `firmware-<tag>-spotpear128cam.zip`. In the web flasher choose **SpotPear ESP32-S3 1.28-CAM (小芽)**: images must match the board because PSRAM mode is fixed at link time. Device OTA lists only releases containing its own board image and downloads `firmware/<tag>/spotpear128cam/stackchan_idf.bin`.
+A tag release builds this required board and attaches `firmware-<tag>-spotpear128cam.zip`. In the web flasher choose **SpotPear ESP32-S3 1.28-CAM (鈴鈴)**: images must match the board because PSRAM mode is fixed at link time. Device OTA lists only releases containing its own board image and downloads `firmware/<tag>/spotpear128cam/stackchan_idf.bin`.
 
 `partitions_16mb.csv` provides two 4 MiB OTA slots; CI requires at least 10% free space for this board. Boot rollback (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`) is already enabled in `sdkconfig.defaults`; neither the ESP32-S3 nor SpotPear overlay overrides it. `main/app_main.cpp` calls `esp_ota_mark_app_valid_cancel_rollback()` after core initialization and a two-second delay for pending images. Real hardware verification is still needed: Wi-Fi OTA from an old image to a new image, and rollback of a deliberately broken image.
 

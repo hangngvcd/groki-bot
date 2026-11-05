@@ -115,9 +115,11 @@ enum class Var : std::uint8_t {
     // from DrawContext::aora_ring; a null pointer reads 0.
     RingBase = 0x25,
     Sprout = 0xE5, // First ID after the 192 ring coordinates.
+    Form = 0xE6,
 };
 
 inline constexpr std::uint8_t kRingVarCount = 192;
+static_assert(static_cast<unsigned>(Var::Form) == static_cast<unsigned>(Var::Sprout) + 1);
 static_assert(static_cast<unsigned>(Var::RingBase) + kRingVarCount == static_cast<unsigned>(Var::Sprout));
 
 // Const table tag bytes.

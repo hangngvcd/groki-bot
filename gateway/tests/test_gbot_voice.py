@@ -71,6 +71,7 @@ def test_streaming_resampling_matches_single_chunk():
 @pytest.mark.asyncio
 async def test_interrupt_discards_late_old_audio_and_accepts_next_turn():
     b = bridge()
+    b.barge_min_ms = 0  # immediate barge-in; sustained-speech gate tested below
     b._send = AsyncMock()
     await b._handle_event({"type": "response.created", "response": {"id": "old"}})
     delta = {
@@ -96,6 +97,7 @@ async def test_interrupt_discards_late_old_audio_and_accepts_next_turn():
 @pytest.mark.asyncio
 async def test_speech_started_cancels_drain_without_blocking_receiver():
     b = bridge()
+    b.barge_min_ms = 0
     b._send = AsyncMock()
     started = asyncio.Event()
 

@@ -40,6 +40,31 @@ def _require_cloud_speak() -> bool:
     return os.getenv("STACKCHAN_REQUIRE_CLOUD", "0").lower() in {"1", "true", "yes", "on"}
 
 
+_battery_log_state: dict[str, Any] = {"key": None, "at": 0.0}
+
+
+def _log_battery_event(data: dict[str, Any]) -> None:
+    """46d: log fw battery reports (percent/raw/mv/reason) on change or every 10 min."""
+    try:
+        import time as _time
+
+        key = (data.get("percent"), data.get("reason"))
+        now = _time.monotonic()
+        if key == _battery_log_state["key"] and now - _battery_log_state["at"] < 600:
+            return
+        _battery_log_state.update(key=key, at=now)
+        logger.info(
+            "ESP32 battery percent=%s raw=%s mv=%s reason=%s charging_likely=%s",
+            data.get("percent"),
+            data.get("raw"),
+            data.get("mv"),
+            data.get("reason"),
+            data.get("charging_likely"),
+        )
+    except Exception:
+        logger.debug("battery log failed", exc_info=True)
+
+
 class ESP32Connection:
     """Manages a single ESP32 device connection."""
 
@@ -185,6 +210,12 @@ class ESP32Connection:
         }
         await self._ws_send(json.dumps(message, ensure_ascii=False))
         return {"ok": True, "emotion": emotion}
+
+    async def send_xiaoya(self, message: dict[str, Any]) -> None:
+        """Send a 鈴鈴 ``{"type": "xiaoya", ...}`` control message to the device."""
+        if not self._connected:
+            raise ConnectionError("ESP32 not connected")
+        await self._ws_send(json.dumps({"session_id": self.session_id, **message}, ensure_ascii=False))
 
     async def send_led(self, r: int, g: int, b: int) -> dict[str, Any]:
         """Send a XiaoZhi ``led`` message over the live WebSocket."""
@@ -569,6 +600,20 @@ class ESP32Manager:
                         push_task.add_done_callback(
                             lambda t: self._init_tasks.remove(t) if t in self._init_tasks else None
                         )
+                        from .xiaoya_forms import get_xiaoya_forms
+
+                        from .camera_presence import get_camera_presence
+                        get_camera_presence().set_suppress("camera_detector", True)
+                        from .photo_capture import get_photo_capture
+                        get_photo_capture().bind(get_xiaoya_forms().send_device, asyncio.get_running_loop())
+                        form_task = get_xiaoya_forms().register_sender(
+                            connection.send_xiaoya, push=False
+                        )
+                        if form_task is not None:
+                            self._init_tasks.append(form_task)
+                            form_task.add_done_callback(
+                                lambda t: self._init_tasks.remove(t) if t in self._init_tasks else None
+                            )
 
                     if mcp_supported:
                         # Start initialization as a separate task so the read
@@ -593,6 +638,48 @@ class ESP32Manager:
                     if not handled_locally and cloud_proxy is not None:
                         await cloud_proxy.send_device_json(data)
 
+                elif msg_type == "xiaoya":
+                    if connection is not self._connection:
+                        continue
+                    if data.get("event") == "homework_photo":
+                        from .photo_capture import get_photo_capture
+                        get_photo_capture().note_device_event(data)
+                        continue  # JPEG never reaches any cloud handler
+                    if data.get("event") in {"presence_hit", "presence_status"}:
+                        from .camera_presence import get_camera_presence
+                        get_camera_presence().note_device_event(data)
+                        continue  # metadata only; reject image fields locally
+                    if data.get("event") == "battery_raw":
+                        from .battery_calibration import get_battery_calibration
+                        get_battery_calibration().record(data)
+                        continue
+                    if data.get("event") == "battery":
+                        _log_battery_event(data)
+                        percent = data.get("percent")
+                        if type(percent) is int:
+                            self._debug_status.on_device_battery(max(0, min(100, percent)))
+                        elif percent is None and "reason" in data:
+                            self._debug_status.on_device_battery_unknown(data.get("reason"))
+                        continue
+                    # 鈴鈴 device events stay inside the gateway (never sent to the cloud).
+                    from .xiaoya_forms import get_xiaoya_forms
+
+                    get_xiaoya_forms().note_device_event(data)
+                    from .camera_presence import get_camera_presence, presence_message
+                    presence = get_camera_presence()
+                    presence.note_device_event(data)
+                    if data.get("event") == "form_state":
+                        await get_xiaoya_forms().send_device(
+                            presence_message(presence.is_feature_on()))
+                    from .xiaoya_games import get_xiaoya_games
+
+                    game_result = get_xiaoya_games().note_device_event(data)
+                    for message in game_result.get("messages", []):
+                        await get_xiaoya_forms().send_device(message)
+                    handler = getattr(cloud_proxy, "handle_xiaoya_event", None)
+                    if handler is not None:
+                        handler(data)
+
                 else:
                     if cloud_proxy is not None:
                         forwarded = await cloud_proxy.send_device_json(data)
@@ -606,11 +693,18 @@ class ESP32Manager:
         finally:
             if cloud_proxy is not None:
                 await cloud_proxy.stop()
+            if connection is self._connection:
+                from .photo_capture import get_photo_capture
+                from .xiaoya_forms import get_xiaoya_forms
+                get_photo_capture().unbind(get_xiaoya_forms().send_device)
             connection.disconnect()
             async with self._lock:
                 if self._connection is connection:
                     self._connection = None
                     self._debug_status.on_device_disconnected()
+                    from .xiaoya_forms import get_xiaoya_forms
+
+                    get_xiaoya_forms().unregister_sender(connection.send_xiaoya)
                     self._debug_status.on_tts_state(False, source="local")
                     self._debug_status.on_tts_state(False, source="device")
 
@@ -884,6 +978,8 @@ class ESP32Manager:
         state = str(message.get("state", "")).lower()
         if msg_type == "listen":
             if state in {"start", "detect"}:
+                from .xiaoya_forms import get_xiaoya_forms
+                get_xiaoya_forms().note_interaction()
                 if callback is not None:
                     callback("listening")
                 if state == "detect" and self.on_wake_detected is not None:

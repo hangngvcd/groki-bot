@@ -208,6 +208,18 @@ int main() {
         CHECK(op.color == (override_scale > 0 ? 85 : 100));
     }
 
+    static_assert(static_cast<std::uint8_t>(Var::Form) == 0xE6);
+    for (std::uint8_t form = 1; form <= 4; ++form) {
+        BytecodeBuilder b;
+        b.code(PUSH_VAR); b.code(static_cast<std::uint8_t>(Var::Form));
+        for (int i = 0; i < 3; ++i) { b.code(PUSH_I8); b.code(1); }
+        b.code(FILL_CIRCLE); b.code(RET); b.add_fn(0, 0, 0);
+        stackchan::avatar::DrawContext ctx; ctx.form = form;
+        auto rr = run_program(b.build(0), ctx);
+        CHECK(rr.ran.has_value());
+        CHECK(rr.canvas.ops.size() == 1 && rr.canvas.ops[0].a == form);
+    }
+
     // Sprout is the first ID beyond the ring window; both boolean values
     // must reach the VM, while the next ID remains invalid.
     static_assert(static_cast<std::uint8_t>(Var::Sprout) == 0xE5);
@@ -228,7 +240,7 @@ int main() {
     {
         BytecodeBuilder b;
         b.code(PUSH_VAR);
-        b.code(0xE6);
+        b.code(0xE7);
         b.code(RET);
         b.add_fn(0, 0, 0);
         auto rr = run_program(b.build(0));

@@ -8,10 +8,23 @@ import os
 
 VOICE_TOOL_NAMES = frozenset(
     {
+        "get_current_datetime",
+        "battery_status",
         "send_task",
         "search_conversations",
         "end_the_call",
         "end_conversation",
+        "end_homework_session",
+        "homework_list",
+        "play_minigame",
+        "homework_done",
+        "homework_photo_snap",
+        "homework_photo_cancel",
+        "show_character",
+        "homework_vocab_context",
+        "note_homework_stuck",
+        "notify_dad_stuck",
+        "paper_practice",
     }
 )
 

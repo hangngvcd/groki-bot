@@ -236,8 +236,8 @@ class ConcurrentSameBotSend(unittest.TestCase):
             server = ProxyServer(
                 Path(tmp),
                 extra_env={
-                    "STACKCHAN_GBOT_FIRST_TIMEOUT": "0.40",
-                    "FAKE_GBOT_SEND_DELAY_S": "0.70",
+                    "STACKCHAN_GBOT_FIRST_TIMEOUT": "1.50",
+                    "FAKE_GBOT_SEND_DELAY_S": "3.50",
                 },
             )
             try:
@@ -257,7 +257,7 @@ class ConcurrentSameBotSend(unittest.TestCase):
     def test_send_past_scaled_old_join_cap_does_not_leak(self) -> None:
         # By default a send takes up to about 60 s and the old join limit was 25 s. With the send timeout cut from 20 to 4,
         # the 25 s limit scales to 5 s. A 3.2 s delay is below one send timeout (the process can finish its reply)
-        # but well above the first-sentence timeout, so send still runs about 2.8 s after the 504; join must wait for the thread.
+        # but well above the first-sentence timeout, so send still runs about 1.7 s after the 504; join must wait for the thread.
         send_timeout = 4.0
         delay = 3.2
         with tempfile.TemporaryDirectory() as tmp:
@@ -265,7 +265,7 @@ class ConcurrentSameBotSend(unittest.TestCase):
                 Path(tmp),
                 extra_env={
                     "STACKCHAN_GBOT_SEND_TIMEOUT_S": str(send_timeout),
-                    "STACKCHAN_GBOT_FIRST_TIMEOUT": "0.40",
+                    "STACKCHAN_GBOT_FIRST_TIMEOUT": "1.50",
                     "FAKE_GBOT_SEND_DELAY_S": str(delay),
                 },
             )

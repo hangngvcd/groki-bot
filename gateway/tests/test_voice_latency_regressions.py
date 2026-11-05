@@ -39,6 +39,7 @@ async def test_slow_audio_sink_does_not_block_interruption(provider):
             on_interrupt=notify,
             on_session_dead=noop,
         )
+        bridge.barge_min_ms = 0  # legacy immediate barge-in path
         await bridge._handle_event(
             {"type": "response.created", "response": {"id": "old"}}
         )

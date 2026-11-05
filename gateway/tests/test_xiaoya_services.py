@@ -91,7 +91,7 @@ def test_install_and_uninstall(service):
         "STACKCHAN_USB_DISABLE": "1",
         "STACKCHAN_CHILD_PROFILE": "1",
         "STACKCHAN_VOICE_BACKEND": "gbot",
-        "STACKCHAN_WAKE_PHRASE": "小白",
+        "STACKCHAN_WAKE_PHRASE": "鈴鈴",
         "STACKCHAN_PARENT_API": "1",
         # Privacy: never pass-through, even without a wake word model.
         "STACKCHAN_BUTTON_ONLY_LISTEN": "1",

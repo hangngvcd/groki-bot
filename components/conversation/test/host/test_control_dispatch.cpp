@@ -37,13 +37,13 @@ struct Dispatch {
     std::vector<std::string> errors;
 };
 
-Dispatch dispatch(const char* text)
+Dispatch dispatch(const char* text, stackchan::conversation::ControlCapabilities caps = {})
 {
     Dispatch out;
     stackchan::conversation::parse_control(
         text, std::strlen(text), [&](const HeadCommand& head) { out.heads.push_back(head); },
         [&](const char* type, const cJSON*) { out.others.emplace_back(type); },
-        [&](const char* error) { out.errors.emplace_back(error); });
+        [&](const char* error) { out.errors.emplace_back(error); }, caps);
     return out;
 }
 
@@ -111,6 +111,26 @@ void test_other_types_pass_through()
     CHECK(tts.others.size() == 1 && tts.others[0] == "tts");
 }
 
+// Ticket 15f2 root cause: SpotPear has no LED strip (led=false), so the
+// gateway's exact status-light frames were dropped before the wake cue saw
+// them. With status_cue they must reach the other sink unchanged.
+void test_led_status_cue_without_led_hardware()
+{
+    using stackchan::conversation::ControlCapabilities;
+    for (const char* text : {R"({"type": "led", "r": 0, "g": 180, "b": 180})",
+                             R"({"type": "led", "r": 0, "g": 80, "b": 180})",
+                             R"({"type": "led", "r": 0, "g": 0, "b": 0})"}) {
+        const auto dropped = dispatch(text, ControlCapabilities{false, false, false});
+        CHECK(dropped.others.empty() && dropped.errors.empty());
+        const auto cue = dispatch(text, ControlCapabilities{false, false, true});
+        CHECK(cue.others.size() == 1 && cue.others[0] == "led");
+        CHECK(cue.errors.empty());
+    }
+    // status_cue does not resurrect head commands for a head-less board.
+    const auto head = dispatch(R"({"type":"head","yaw":1,"pitch":2})", ControlCapabilities{false, false, true});
+    CHECK(head.heads.empty() && head.others.empty());
+}
+
 void test_malformed_json_and_missing_type()
 {
     const auto broken = dispatch(R"({"type":"head","yaw":)");
@@ -151,6 +171,7 @@ int main()
     test_head_without_speed_uses_default();
     test_invalid_head_messages_are_dropped();
     test_other_types_pass_through();
+    test_led_status_cue_without_led_hardware();
     test_malformed_json_and_missing_type();
     test_queue_holds_last_command_while_speaking();
     if (g_failures == 0) {

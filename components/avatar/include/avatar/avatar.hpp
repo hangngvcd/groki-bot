@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <functional>
 #include <span>
 #include <string_view>
 
@@ -66,6 +67,8 @@ public:
     // aora eye-ring wiring: the caller (render task) owns a frame buffer of kRingVarCount floats
     // and fills it with the compositor (main/aora_face.hpp) before tick() every frame; this only
     // stores a non-owning pointer, which the VM reads through the Var::RingBase range. nullptr reads 0.
+    void set_form(std::uint8_t form) noexcept;
+    void set_face_painter(std::function<bool(RichCanvas&, const DrawContext&)> painter);
     void set_sprout_visible(bool visible) noexcept;
     void set_layout_scale(float scale) noexcept;
     void set_eye_ring_buffer(const float* buffer) noexcept;

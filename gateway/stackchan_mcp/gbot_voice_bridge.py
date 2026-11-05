@@ -2,8 +2,10 @@
 # SPDX-License-Identifier: MIT
 """Experimental realtime audio using a signed-in Grok Bot's ephemeral secret.
 
-Long-lived login credentials remain inside the local login bridge. No secrets,
-server error bodies, transcripts, or tool arguments are logged here.
+Long-lived login credentials remain inside the local login bridge. No secrets
+or tool arguments are logged here. Server error code/type/message are logged
+(sanitised, truncated). Transcripts are written only when the parent opts in
+with STACKCHAN_LOG_USER_TRANSCRIPTS=1 (see gbot_dialogue.TranscriptLog).
 """
 
 from __future__ import annotations
@@ -22,6 +24,8 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import aiohttp
 
 from . import child_profile
+from . import gbot_dialogue
+from .parent_settings import get_parent_settings, mandarin_enabled
 from .voice_output_queue import VoiceOutputQueue
 from .gbot_native_channel import NativeVoiceChannel
 
@@ -104,6 +108,25 @@ async def gather_with_cancel(*awaitables):
 
 
 class GbotVoiceBridge:
+    _session_over = False
+    _homework_forms = None
+    _parent_settings = None
+
+    HOMEWORK_CHANGED_NOTE = (
+        "[系統通知，唔使回應] Today's homework list was just changed by a parent. "
+        "Earlier show_character / homework_list results are out of date: for the "
+        "next character or homework request, call the tool again."
+    )
+    MANDARIN_ON_NOTE = (
+        "[系統通知，唔使回應] 爸爸媽媽啱啱改咗設定：而家容許講普通話。"
+        "平時照講香港廣東話；娜娜要求講普通話（或者用普通話讀書、讀默）就即刻轉，"
+        "唔使問爸爸媽媽；字照用繁體字。娜娜叫你轉返或者嗰樣功課做完，就轉返廣東話。"
+    )
+    MANDARIN_OFF_NOTE = (
+        "[系統通知，唔使回應] 爸爸媽媽啱啱改咗設定：由而家起只用香港廣東話（繁體字）回覆，"
+        "唔好再講普通話；永遠唔好叫佢講普通話或者國語。"
+    )
+
     def __init__(
         self,
         *,
@@ -140,6 +163,38 @@ class GbotVoiceBridge:
             or os.getenv("STACKCHAN_TOOL_BOT_ID", "")
         )
         self.language = os.getenv("STACKCHAN_GBOT_VOICE_LANGUAGE", "zh")
+        # grok-transcribe language hint; "auto"/"omit" drops it. The 2026-10-24
+        # probe: zh / yue / zh-HK all transcribe HK Cantonese equally (omitted
+        # once returned romanisation); keyterms fixed 鈴鈴→零零 for all three.
+        # The child profile defaults to yue (Cantonese); others keep the voice
+        # language.
+        self.transcribe_language = os.getenv(
+            "STACKCHAN_GBOT_TRANSCRIBE_LANGUAGE",
+            "yue" if child_profile.enabled() else self.language,
+        )
+        self.keyterms_enabled = gbot_dialogue.env_flag("STACKCHAN_GBOT_KEYTERMS", True)
+        # End of her turn after this much silence (server_vad honours it).
+        self.vad_silence_ms = gbot_dialogue.env_int(
+            "STACKCHAN_GBOT_VAD_SILENCE_MS", 1300, 200, 5000
+        )
+        self.vad_prefix_ms = gbot_dialogue.env_int(
+            "STACKCHAN_GBOT_VAD_PREFIX_MS", 300, 0, 2000
+        )
+        # Before reply audio starts, only sustained speech interrupts.
+        self.barge_min_ms = gbot_dialogue.env_int(
+            "STACKCHAN_GBOT_BARGE_MIN_MS", 600, 0, 5000
+        )
+        self.barge_dbfs = gbot_dialogue.env_float(
+            "STACKCHAN_GBOT_BARGE_DBFS", -40.0, -90.0, 0.0
+        )
+        # Spec hard cap on reply length; 0 disables.
+        self.max_sentences = gbot_dialogue.env_int(
+            "STACKCHAN_GBOT_MAX_SENTENCES", 2, 0, 20
+        )
+        # Set by the proxy: True once `tts start` went to the device and until
+        # tts stop. During playback only the device abort (BOOT) interrupts.
+        self.playback_active = None
+        self._transcript_log = gbot_dialogue.TranscriptLog.from_env()
         self.call_id = str(uuid.uuid4())
         from .debug_status import get_debug_status
 
@@ -195,16 +250,44 @@ class GbotVoiceBridge:
         self._response_audio_seen = set()
         self._active_response = None
         self._response_in_progress = False
+        self._done_responses: set = set()
+        self._capped: set = set()
+        self._reply_text: dict = {}
+        self._barge_candidate = False
+        self._voiced_ms = 0.0
+        self._silent_ms = 0.0
+        self._vad_commit_pending = False
+        self._vad_commit_task = None
+        self._last_reply_id = None
+        self._heard = None
         self._drop_until_response = False
         self._resampler = Pcm16To24()
         self._stopped = False
         self.running = False
+        self._language_mode = "yue"
+        self._base_instructions = ""
+        # 46c: pieces for a Mandarin-mode prompt that replaces (not appends to)
+        # the Cantonese language rules, plus the audio config for language_hint.
+        self._instructions_head = ""
+        self._child_rules = False
+        self._audio_config = None
+        self._language_requests: set[tuple[str | None, str]] = set()
         self.metrics = {
+            "language_switches": 0,
             "input_pcm_bytes": 0,
             "output_pcm_bytes": 0,
             "interruptions": 0,
+            "interrupt_reasons": {},
             "discarded_audio_deltas": 0,
             "speech_starts": 0,
+            "speech_stops": 0,
+            "speech_starts_ignored_playback": 0,
+            "speech_starts_ignored_short": 0,
+            "cancels": 0,
+            "cancels_skipped": 0,
+            "errors": 0,
+            "capped_replies": 0,
+            "response_status": {},
             "server_errors": {},
             "declared_tools": [],
             "tool_events": {},
@@ -271,6 +354,12 @@ class GbotVoiceBridge:
             if not isinstance(name, str) or name in used:
                 raise ValueError("voice tool name collision")
             used.add(name)
+            if name == "send_task" and child_profile.enabled():
+                declaration = {
+                    **declaration,
+                    "description": str(declaration.get("description") or "")
+                    + gbot_dialogue.SEND_TASK_CHILD_DESCRIPTION,
+                }
             self._remote_tools[name] = declaration
             self._tool_schemas[name] = declaration.get("parameters", {})
             declarations.append(declaration)
@@ -293,12 +382,8 @@ class GbotVoiceBridge:
         )
         if "end_the_call" in self._remote_tools:
             instructions = instructions.replace("end_conversation", "end_the_call")
-        return instructions + (
-            "\nOnly call tools declared in this session. For desktop tasks use native "
-            "send_task(request); report acceptance only after relay=accepted. "
-            "If send_task is not declared, desktop delegation is unavailable. "
-            "工具结果包含 spoken 时，只向用户读出 spoken；不要读 relay、errorClass、"
-            "错误码、字段名或调试信息。"
+        return instructions + gbot_dialogue.TOOL_RULES + (
+            gbot_dialogue.SEND_TASK_RULES if child_profile.enabled() else ""
         )
 
     def _safe_tool_name(self, name):
@@ -444,6 +529,10 @@ class GbotVoiceBridge:
                     reason,
                     len(self._pending_updates),
                 )
+            return
+        if self._vad_commit_pending and self._pending_response:
+            # server_vad is about to create a response for her committed turn;
+            # a response.create now would race it (invalid_request_error).
             return
         if self._response_requested:
             if self._pending_updates:
@@ -622,29 +711,65 @@ class GbotVoiceBridge:
             declarations = self._configure_tools(session)
             stage = "provider_instructions"
             self.metrics["startup_stage"] = stage
+            keyterms = (
+                gbot_dialogue.build_keyterms(
+                    gbot_dialogue.homework_titles(),
+                    os.getenv("STACKCHAN_GBOT_EXTRA_KEYTERMS"),
+                )
+                if self.keyterms_enabled
+                else []
+            )
+            transcription = gbot_dialogue.transcription_config(
+                self.transcribe_language, keyterms
+            )
+            instructions_head = session.get(
+                "instructions", "請用香港廣東話簡短自然咁傾偈。"
+            ) + (
+                "\n\n" + self._provider_tool_instructions()
+                if self._executor and self._local_tools_enabled
+                else ""
+            )
             config = {
-                "instructions": session.get("instructions", "请用中文简短自然地对话。")
+                "instructions": instructions_head
                 + (
-                    "\n\n" + self._provider_tool_instructions()
-                    if self._executor and self._local_tools_enabled
+                    gbot_dialogue.cantonese_rules(mandarin_enabled())
+                    if child_profile.enabled()
                     else ""
                 ),
                 "resumption": {"enabled": True},
-                "turn_detection": {"type": "server_vad"},
+                "turn_detection": {
+                    "type": "server_vad",
+                    "silence_duration_ms": self.vad_silence_ms,
+                    "prefix_padding_ms": self.vad_prefix_ms,
+                },
                 "audio": {
                     "input": {
                         "format": {"type": "audio/pcm", "rate": 24000},
-                        "transcription": {
-                            "model": "grok-transcribe",
-                            "language_hint": self.language,
-                        },
+                        "transcription": transcription,
                     },
                     "output": {"format": {"type": "audio/pcm", "rate": 24000}},
                 },
                 "tools": declarations,
             }
-            if self.language == "auto":
-                config["audio"]["input"]["transcription"].pop("language_hint")
+            self._language_mode = "yue"
+            gbot_dialogue.set_active_language_mode("yue")
+            self._language_requests.clear()
+            self._base_instructions = config["instructions"]
+            self._instructions_head = instructions_head
+            self._child_rules = child_profile.enabled()
+            self._audio_config = config["audio"]
+            logger.info(
+                "Grok voice session config language_hint=%s keyterms=%d vad_silence_ms=%d "
+                "prefix_ms=%d barge_min_ms=%d barge_dbfs=%.0f max_sentences=%d transcripts_log=%s",
+                transcription.get("language_hint", "omitted"),
+                len(keyterms),
+                self.vad_silence_ms,
+                self.vad_prefix_ms,
+                self.barge_min_ms,
+                self.barge_dbfs,
+                self.max_sentences,
+                self._transcript_log.enabled,
+            )
             if os.getenv("STACKCHAN_GBOT_VOICE_NAME"):
                 config["voice"] = os.environ["STACKCHAN_GBOT_VOICE_NAME"]
             stage = "session_update"
@@ -664,6 +789,10 @@ class GbotVoiceBridge:
                 )
                 await self._native.start()
             self.metrics["startup_stage"] = "started"
+            if {"show_character", "homework_list"} & set(self._local_tools.values()):
+                self._watch_homework()
+            if child_profile.enabled():
+                self._watch_settings()
         except asyncio.CancelledError:
             await self.stop()
             raise
@@ -706,9 +835,43 @@ class GbotVoiceBridge:
             raise RuntimeError("Grok Bot voice is disconnected")
         await self._ws.send_json(event)
 
+    def _playback_is_active(self):
+        getter = self.playback_active
+        try:
+            return bool(getter()) if callable(getter) else False
+        except Exception:
+            return False
+
+    def _reply_pending(self):
+        return self._response_in_progress or bool(
+            self._turn_task and not self._turn_task.done()
+        )
+
     async def send_audio(self, pcm):
         self._cancel_idle()
         await self._send_pcm(pcm)
+        await self._track_barge_energy(pcm)
+
+    async def _track_barge_energy(self, pcm):
+        # Device PCM is 16 kHz mono s16le.
+        if not pcm:
+            return
+        chunk_ms = len(pcm) / 32.0
+        if gbot_dialogue.pcm16_dbfs(pcm) >= self.barge_dbfs:
+            self._voiced_ms += chunk_ms
+            self._silent_ms = 0.0
+        else:
+            self._silent_ms += chunk_ms
+            if self._silent_ms >= 300:
+                self._voiced_ms = 0.0
+        if not self._barge_candidate:
+            return
+        if self._playback_is_active() or not self._reply_pending():
+            self._barge_candidate = False
+            return
+        if self._voiced_ms >= self.barge_min_ms:
+            self._barge_candidate = False
+            await self.interrupt(reason="sustained_speech")
 
     async def _send_pcm(self, pcm):
         audio = self._resampler.convert(pcm)
@@ -742,12 +905,13 @@ class GbotVoiceBridge:
         )
         await self._request_response()
 
-    async def interrupt(self):
+    async def interrupt(self, reason="device_abort"):
         self._cancel_idle()
         self._pending_response = False
-        active = self._response_in_progress or bool(
-            self._turn_task and not self._turn_task.done()
-        )
+        self._barge_candidate = False
+        active = self._reply_pending()
+        response_id = self._active_response
+        received = self.audio_bytes_by_response.get(response_id, 0)
         self._drop_until_response = True
         if self._active_response:
             self._suppressed.add(self._active_response)
@@ -756,10 +920,66 @@ class GbotVoiceBridge:
         await self._on_interrupt()
         if active:
             self.metrics["interruptions"] += 1
+            reasons = self.metrics["interrupt_reasons"]
+            reasons[reason] = reasons.get(reason, 0) + 1
+        logger.info(
+            "Grok voice interrupt reason=%s active=%s in_progress=%s received_audio_ms=%.0f",
+            reason,
+            active,
+            self._response_in_progress,
+            received / 48.0,
+        )
         if self._response_in_progress:
             self._response_in_progress = False
             self._response_requested = False
-            await self._send({"type": "response.cancel"})
+            await self._cancel_response(response_id)
+
+    async def _cancel_response(self, response_id):
+        # Only cancel a response the server has not already finished/cancelled.
+        if response_id is None or response_id in self._done_responses:
+            self.metrics["cancels_skipped"] += 1
+            logger.info("Grok voice cancel skipped (no active response)")
+            return
+        self.metrics["cancels"] += 1
+        await self._send({"type": "response.cancel"})
+
+    def _flush_heard(self):
+        if self._heard:
+            _, text, ref = self._heard
+            self._heard = None
+            self._transcript_log.write("娜娜", text, ref)
+
+    def _clear_vad_commit(self):
+        self._vad_commit_pending = False
+        if self._vad_commit_task and self._vad_commit_task is not asyncio.current_task():
+            self._vad_commit_task.cancel()
+        self._vad_commit_task = None
+
+    def _expect_vad_response(self):
+        self._clear_vad_commit()
+        self._vad_commit_pending = True
+
+        async def expire():
+            await asyncio.sleep(1.5)
+            self._vad_commit_pending = False
+            self._vad_commit_task = None
+            if not self._stopped:
+                await self._flush_pending()
+
+        self._vad_commit_task = asyncio.create_task(expire())
+
+    async def _cap_reply(self, response_id, delta):
+        if not self.max_sentences or response_id is None or response_id in self._capped:
+            return
+        text = self._reply_text.get(response_id, "") + delta
+        self._reply_text[response_id] = text
+        if gbot_dialogue.sentences_started(text) <= self.max_sentences:
+            return
+        self._capped.add(response_id)
+        self.metrics["capped_replies"] += 1
+        logger.info("Grok voice reply capped at %d sentences", self.max_sentences)
+        if self._response_in_progress and response_id == self._active_response:
+            await self._cancel_response(response_id)
 
     async def _handle_event(self, event):
         kind = event.get("type")
@@ -769,7 +989,9 @@ class GbotVoiceBridge:
                 self._debug_status.gemini_session_count + 1, generation=self._status_generation
             )
         elif kind == "response.created":
+            self._clear_vad_commit()
             self._active_response = event.get("response", {}).get("id")
+            self._last_reply_id = self._active_response
             self._response_in_progress = True
             self._response_requested = False
             metadata = event.get("response", {}).get("metadata") or {}
@@ -790,19 +1012,51 @@ class GbotVoiceBridge:
             self._user_epoch += 1
             self._user_speaking = True
             self._cancel_idle()
-            if self._response_in_progress or (
-                self._turn_task and not self._turn_task.done()
-            ):
-                await self.interrupt()
+            playing = self._playback_is_active()
+            pending = self._reply_pending()
+            logger.info(
+                "Grok voice vad speech_started playback=%s reply_pending=%s",
+                playing,
+                pending,
+            )
+            if playing:
+                # Stale VAD from audio sent before the mic closed; the device is
+                # half-duplex. Only the BOOT button (device abort) barges in.
+                self.metrics["speech_starts_ignored_playback"] += 1
+            elif pending:
+                if self.barge_min_ms <= 0:
+                    await self.interrupt(reason="speech_started")
+                else:
+                    # Wait for sustained voiced energy (see _track_barge_energy).
+                    self._barge_candidate = True
         elif kind == "input_audio_buffer.speech_stopped":
+            self.metrics["speech_stops"] += 1
+            if self._barge_candidate:
+                self._barge_candidate = False
+                self.metrics["speech_starts_ignored_short"] += 1
+            logger.info("Grok voice vad speech_stopped")
             self._user_speaking = False
             # Native completions must not depend on a subsequent VAD response.
             # Leave ordinary response.create requests to their normal path.
             if self._pending_updates:
                 await self._flush_pending()
+        elif kind == "input_audio_buffer.committed":
+            self._expect_vad_response()
+        elif kind in {
+            "response.audio_transcript.delta",
+            "response.output_audio_transcript.delta",
+        }:
+            response_id = event.get("response_id") or self._active_response
+            delta = event.get("delta")
+            if isinstance(delta, str):
+                await self._cap_reply(response_id, delta)
         elif kind in {"response.audio.delta", "response.output_audio.delta"}:
             response_id = event.get("response_id") or self._active_response
-            if self._drop_until_response or response_id in self._suppressed:
+            if (
+                self._drop_until_response
+                or response_id in self._suppressed
+                or response_id in self._capped
+            ):
                 self.metrics["discarded_audio_deltas"] += 1
                 return
             audio = base64.b64decode(event.get("delta", ""), validate=True)
@@ -828,12 +1082,41 @@ class GbotVoiceBridge:
                 await self._on_transcript(event)
             text = event.get("transcript", "")
             if kind == "conversation.item.input_audio_transcription.completed":
+                await self._handle_language_request(text, event.get("item_id"))
+                # grok-transcribe re-sends "completed" with growing text; keep
+                # the latest per item and write it once.
+                item = event.get("item_id")
+                if self._heard and self._heard[0] != item:
+                    self._flush_heard()
+                self._heard = (item, text, self._last_reply_id)
+            else:
+                self._flush_heard()
+                self._transcript_log.write(
+                    "鈴鈴", text, event.get("response_id") or self._active_response
+                )
+            if kind == "conversation.item.input_audio_transcription.completed":
                 if self._executor:
                     await self._executor.observe_user_input(text, finished=True)
             elif self._on_text and text:
                 await self._on_text(text)
         elif kind == "response.done":
-            response_id = event.get("response", {}).get("id") or self._active_response
+            response = event.get("response", {}) or {}
+            response_id = response.get("id") or self._active_response
+            status = response.get("status")
+            status = (
+                status
+                if status in {"completed", "cancelled", "failed", "incomplete", "in_progress"}
+                else "other"
+            )
+            counts = self.metrics["response_status"]
+            counts[status] = counts.get(status, 0) + 1
+            if response_id is not None:
+                self._done_responses.add(response_id)
+                if len(self._done_responses) > 256:
+                    self._done_responses = set(list(self._done_responses)[-128:])
+            self._reply_text.pop(response_id, None)
+            if status != "completed":
+                logger.info("Grok voice response state=done status=%s", status)
             if response_id != self._active_response:
                 return
             self._response_in_progress = False
@@ -890,7 +1173,45 @@ class GbotVoiceBridge:
             key = code + ":" + param
             errors = self.metrics["server_errors"]
             errors[key] = errors.get(key, 0) + 1
-            logger.warning("Grok Bot voice server error code=%s param=%s", code, param)
+            self.metrics["errors"] += 1
+            raw_code = error.get("code")
+            raw_type = error.get("type")
+            message = error.get("message")
+
+            def token(value):
+                return (
+                    value
+                    if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,64}", value)
+                    else "-"
+                )
+
+            message = (
+                re.sub(r"[^\x20-\x7e\u3000-\u9fff]", " ", message)[:200]
+                if isinstance(message, str)
+                else "-"
+            )
+            # Server error text is a short protocol description, not user data;
+            # strip anything that looks like a credential just in case.
+            message = re.sub(r"(?i)(secret|token|key|bearer)\S*", "[redacted]", message)
+            logger.warning(
+                "Grok Bot voice server error code=%s param=%s raw_code=%s type=%s "
+                "in_progress=%s requested=%s message=%s",
+                code,
+                param,
+                token(raw_code),
+                token(raw_type),
+                self._response_in_progress,
+                self._response_requested,
+                message,
+            )
+            # The server ends the conversation itself (inactivity timeout,
+            # expired session): stop reading so the owner hears about it and
+            # can reopen on the next wake, even if the socket lingers open.
+            if raw_code in {"timeout", "session_expired"}:
+                self._session_over = True
+                logger.info(
+                    "Grok voice session ended by server reason=%s", token(raw_code)
+                )
 
     async def _tool(self, event):
         call_id = event.get("call_id")
@@ -953,6 +1274,8 @@ class GbotVoiceBridge:
                     result = self._desktop_failure(outcome, refused=True)
                 else:
                     self._desktop_epoch = self._user_epoch
+                    if child_profile.enabled():
+                        request = gbot_dialogue.SEND_TASK_KNOWLEDGE_PREFIX + request
                     result = await self._local(
                         "/tool",
                         {
@@ -1028,6 +1351,8 @@ class GbotVoiceBridge:
             async for message in self._ws:
                 if message.type == aiohttp.WSMsgType.TEXT:
                     await self._handle_event(json.loads(message.data))
+                    if self._session_over:
+                        break
                 elif message.type == aiohttp.WSMsgType.ERROR:
                     break
         except asyncio.CancelledError:
@@ -1056,7 +1381,204 @@ class GbotVoiceBridge:
                     task.cancel()
                 await self._on_session_dead()
 
+    def _log_session_stats(self):
+        m = self.metrics
+        logger.info(
+            "Grok voice session stats speech_started=%d speech_stopped=%d "
+            "ignored_playback=%d ignored_short=%d interruptions=%d reasons=%s "
+            "cancels=%d cancels_skipped=%d errors=%d capped=%d status=%s",
+            m["speech_starts"],
+            m["speech_stops"],
+            m["speech_starts_ignored_playback"],
+            m["speech_starts_ignored_short"],
+            m["interruptions"],
+            json.dumps(m["interrupt_reasons"], sort_keys=True),
+            m["cancels"],
+            m["cancels_skipped"],
+            m["errors"],
+            m["capped_replies"],
+            json.dumps(m["response_status"], sort_keys=True),
+        )
+
+    def _watch_homework(self):
+        try:
+            from .xiaoya_forms import get_xiaoya_forms  # noqa: PLC0415
+
+            forms = get_xiaoya_forms()
+            forms.add_change_listener(self._on_homework_changed)
+            snap = forms.snapshot()
+            if snap["total"] > snap["done"]:
+                forms.start_homework_session()
+        except Exception:
+            logger.debug("homework change watch unavailable", exc_info=True)
+            return
+        self._homework_forms = forms
+
+    def _on_homework_changed(self, action, source):
+        # The child's own mark_done happened inside this conversation already.
+        if self._stopped or not self.running or source == "child-voice":
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        task = loop.create_task(self._note_homework_changed(action))
+        self._tools.add(task)
+        task.add_done_callback(self._tools.discard)
+
+    async def _note_homework_changed(self, action):
+        # Context only: no response.create, so this costs no extra reply.
+        try:
+            await self._send(
+                {
+                    "type": "conversation.item.create",
+                    "item": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": self.HOMEWORK_CHANGED_NOTE}],
+                    },
+                }
+            )
+        except Exception:
+            logger.debug("homework change note failed", exc_info=True)
+            return
+        logger.info("Grok voice homework change noted action=%s", action)
+
+    def _mode_instructions(self, mode):
+        if mode != "cmn":
+            return self._base_instructions + gbot_dialogue.language_mode_block(mode)
+        # 46c: rebuild with Mandarin-mode rules instead of the Cantonese ones,
+        # and state the mode first as well as last.
+        body = (
+            self._instructions_head + gbot_dialogue.cantonese_rules(True, "cmn")
+            if self._child_rules and self._instructions_head
+            else self._base_instructions
+        )
+        return (
+            gbot_dialogue.language_mode_header("cmn")
+            + body
+            + gbot_dialogue.language_mode_block("cmn")
+        )
+
+    def _mode_audio(self, mode):
+        """Full audio config with the ASR hint for ``mode`` (46c); None in tests."""
+        audio = self._audio_config
+        if not audio:
+            return None
+        audio = json.loads(json.dumps(audio))
+        transcription = audio.get("input", {}).get("transcription")
+        if transcription is None:
+            return None
+        if mode == "cmn":
+            transcription["language_hint"] = "zh"
+        else:
+            base = gbot_dialogue.transcription_config(self.transcribe_language, None)
+            if "language_hint" in base:
+                transcription["language_hint"] = base["language_hint"]
+            else:
+                transcription.pop("language_hint", None)
+        return audio
+
+    async def _send_language_mode(self, mode):
+        gbot_dialogue.set_active_language_mode(mode)
+        session = {"instructions": self._mode_instructions(mode)}
+        audio = self._mode_audio(mode)
+        if audio is not None:
+            session["audio"] = audio
+        try:
+            await self._send({"type": "session.update", "session": session})
+            logger.info(
+                "Grok voice language mode -> %s (instructions=%d chars, language_hint=%s)",
+                mode,
+                len(session["instructions"]),
+                (audio or {}).get("input", {}).get("transcription", {}).get("language_hint", "unchanged"),
+            )
+        except Exception:
+            logger.debug("Grok voice language update failed", exc_info=True)
+            return
+        note = (
+            gbot_dialogue.MANDARIN_SWITCH_NOTE
+            if mode == "cmn"
+            else gbot_dialogue.CANTONESE_SWITCH_NOTE
+        )
+        await self._note_context(note, f"language {mode}")
+
+    async def _handle_language_request(self, text, item_id):
+        try:
+            if not child_profile.enabled() or not mandarin_enabled():
+                return
+            mode = gbot_dialogue.detect_language_request(text)
+            if mode is None or (item_id, mode) in self._language_requests:
+                return
+            changed = mode != self._language_mode
+            reinforce = mode == "cmn" and gbot_dialogue.still_cantonese_complaint(text)
+            if not changed and not reinforce:
+                return
+            self._language_requests.add((item_id, mode))
+            self._language_mode = mode
+            if changed:
+                self.metrics["language_switches"] += 1
+            await self._send_language_mode(mode)
+        except Exception:
+            logger.debug("Grok voice language request failed", exc_info=True)
+
+    def _watch_settings(self):
+        try:
+            settings = get_parent_settings()
+            settings.add_listener(self._on_settings_changed)
+        except Exception:
+            logger.debug("parent settings watch unavailable", exc_info=True)
+            return
+        self._parent_settings = settings
+
+    def _on_settings_changed(self, settings, changed):
+        if self._stopped or not self.running or "mandarin" not in changed:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        if not settings.get("mandarin") and getattr(self, "_language_mode", "yue") == "cmn":
+            self._language_mode = "yue"
+            self.metrics["language_switches"] += 1
+            task = loop.create_task(self._send_language_mode("yue"))
+            self._tools.add(task)
+            task.add_done_callback(self._tools.discard)
+        note = self.MANDARIN_ON_NOTE if settings.get("mandarin") else self.MANDARIN_OFF_NOTE
+        task = loop.create_task(self._note_context(note, "settings mandarin"))
+        self._tools.add(task)
+        task.add_done_callback(self._tools.discard)
+
+    async def _note_context(self, text, what):
+        # Context only: no response.create, so this costs no extra reply.
+        try:
+            await self._send(
+                {
+                    "type": "conversation.item.create",
+                    "item": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": text}],
+                    },
+                }
+            )
+        except Exception:
+            logger.debug("context note failed: %s", what, exc_info=True)
+            return
+        logger.info("Grok voice context noted: %s", what)
+
     async def stop(self):
+        if self._parent_settings is not None:
+            self._parent_settings.remove_listener(self._on_settings_changed)
+            self._parent_settings = None
+        if self._homework_forms is not None:
+            self._homework_forms.remove_change_listener(self._on_homework_changed)
+            self._homework_forms = None
+        gbot_dialogue.set_active_language_mode("yue")
+        if not self._stopped:
+            self._flush_heard()
+            self._log_session_stats()
+        self._clear_vad_commit()
         self._stopped = True
         self._debug_status.on_gemini_stopped(self._status_generation)
         self._cancel_idle()

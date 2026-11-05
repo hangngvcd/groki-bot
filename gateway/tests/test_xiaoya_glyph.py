@@ -1,0 +1,367 @@
+# SPDX-License-Identifier: MIT
+import asyncio
+import base64
+from io import BytesIO
+import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+from PIL import Image
+import pytest
+import websockets
+
+from stackchan_mcp import xiaoya_forms
+from stackchan_mcp.esp32_client import ESP32Manager
+from stackchan_mcp.voice_tools import VoiceToolExecutor
+from stackchan_mcp.xiaoya_glyph import (
+    clean_characters,
+    font_name_for,
+    glyph_message,
+    render_glyph_png,
+    vocab_mode,
+)
+
+
+@pytest.mark.parametrize(
+    ("items", "expected"),
+    [
+        ([{"title": "默書", "done": False}], "dictation"),
+        ([{"title": "抄寫", "done": False}], "dictation"),
+        (
+            [{"title": "默書", "done": False}, {"title": "抄寫", "done": False}],
+            "dictation",
+        ),
+        ([{"title": "默書", "done": True}, {"title": "抄寫", "done": False}], "dictation"),
+        ([{"title": "抄寫", "done": True}], "dictation"),
+        ([], "dictation"),
+        ([{"title": "數學", "done": False}], "dictation"),
+        (None, "dictation"),
+        ([None], "dictation"),
+        ([{"title": 1, "done": False}], "dictation"),
+        ([{}], "dictation"),
+    ],
+)
+def test_mode(items, expected):
+    assert vocab_mode(items) == expected
+
+
+@pytest.mark.parametrize("text", ["蝶", "蝴蝶", "〇", "\U00031350", "「 蝴，蝶。」"])
+def test_clean(text):
+    assert 1 <= len(clean_characters(text)) <= 4
+    assert clean_characters("「 蝴，蝶。」") == "蝴蝶"
+
+
+@pytest.mark.parametrize("text", ["", "abc", "一二三四五", "?!", "蝶1", None, "😀"])
+def test_bad_characters(text):
+    with pytest.raises(ValueError):
+        clean_characters(text)
+
+
+@pytest.mark.parametrize(
+    ("ch", "name"), [(ch, "kai") for ch in "蝶鬱龜"] + [(ch, "sans") for ch in "嘅咗囍"]
+)
+def test_fonts(ch, name):
+    assert font_name_for(ch) == name
+
+
+@pytest.mark.parametrize("chars", ["蝶", "嘅", "蝴蝶", "蜻蜓", "蝴蝶蜻", "蝴蝶蜻蜓"])
+def test_render(chars):
+    png = render_glyph_png(chars)
+    image = Image.open(BytesIO(png))
+    assert image.size == (240, 240)
+    assert image.mode == "P"
+    assert png[28] == 0  # IHDR interlace byte
+    assert len(png) <= 24 * 1024
+    grayscale = image.convert("L")
+    ink = [
+        (x, y) for y in range(240) for x in range(240) if grayscale.getpixel((x, y)) > 0
+    ]
+    assert ink
+    assert all((x - 120) ** 2 + (y - 120) ** 2 <= 100**2 for x, y in ink)
+    message = glyph_message(png)
+    assert len(message["png"]) <= 32768
+    assert message["hold_ms"] == 10000
+    assert base64.b64decode(message["png"]) == png
+
+
+@pytest.mark.parametrize("hold", [999, 60001, True, 1000.0])
+def test_bad_hold(hold):
+    with pytest.raises(ValueError):
+        glyph_message(b"", hold)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case", ["copy", "dictation", "unasserted", "bad", "offline", "render_failure"]
+)
+async def test_tool_device(monkeypatch, tmp_path, case):
+    monkeypatch.setenv("STACKCHAN_CHILD_PROFILE", "1")
+    monkeypatch.delenv("STACKCHAN_TOKEN", raising=False)
+    forms = xiaoya_forms.XiaoyaForms(tmp_path / "forms.json")
+    forms.add_items(
+        ["中文默書" if case == "dictation" else "中文抄寫"], source="parent"
+    )
+    monkeypatch.setattr(xiaoya_forms, "_forms", forms)
+    if case in {"render_failure", "dictation", "bad"}:
+        from stackchan_mcp import xiaoya_glyph
+
+        def fail(_chars):
+            raise ValueError("unsupported glyph")
+
+        monkeypatch.setattr(xiaoya_glyph, "render_glyph_png", fail)
+    executor = VoiceToolExecutor()
+    if case != "unasserted":
+        assert (await executor.execute("homework_vocab_context", {
+            "item": "#1", "copy_mode_said": True,
+        }))["ok"]
+    proxy = SimpleNamespace(
+        start=AsyncMock(return_value=True),
+        stop=AsyncMock(),
+        send_device_json=AsyncMock(),
+        connected=True,
+    )
+    manager = ESP32Manager(cloud_proxy_factory=lambda: proxy)
+    await manager.start("127.0.0.1", 0)
+    port = manager._server.sockets[0].getsockname()[1]
+    try:
+        if case == "offline":
+            result = await executor.execute("show_character", {"character": "蝶"})
+            assert result["ok"] is False
+            return
+        async with websockets.connect(f"ws://127.0.0.1:{port}") as device:
+            await device.send(json.dumps({"type": "hello", "features": {"mcp": False}}))
+            hello = json.loads(await asyncio.wait_for(device.recv(), 1))
+            assert hello["type"] == "hello"
+            await device.send(
+                json.dumps({"type": "xiaoya", "event": "form_state", "form": 1})
+            )
+            for _ in range(100):
+                if forms.session_ready:
+                    break
+                await asyncio.sleep(0.01)
+            assert forms.session_ready
+            result = await executor.execute(
+                "show_character", {"character": "abc" if case == "bad" else "蝶"}
+            )
+            frames = []
+            while True:
+                try:
+                    frames.append(
+                        json.loads(await asyncio.wait_for(device.recv(), 0.1))
+                    )
+                except asyncio.TimeoutError:
+                    break
+            glyphs = [frame for frame in frames if frame.get("cmd") == "glyph"]
+            if case == "copy":
+                assert result["shown"] is True and result["seconds"] == 10
+                assert glyphs and glyphs[0]["hold_ms"] == 10000
+                assert len(glyphs) == 1
+                assert glyphs[0]["session_id"] == hello["session_id"]
+                assert Image.open(BytesIO(base64.b64decode(glyphs[0]["png"]))).size == (
+                    240,
+                    240,
+                )
+            else:
+                assert glyphs == []
+                assert result["ok"] is (case in {"dictation", "unasserted"})
+                if case in {"dictation", "unasserted"}:
+                    assert result["shown"] is False and result["mode"] == "dictation"
+                    assert result["spoken"].startswith("今日要默書") is (case == "dictation")
+    finally:
+        await executor.close()
+        await manager.stop()
+        forms.unregister_sender()
+
+
+@pytest.mark.asyncio
+async def test_send_device_readiness_and_failure(tmp_path):
+    forms = xiaoya_forms.XiaoyaForms(tmp_path / "forms.json")
+    sender = AsyncMock(side_effect=ConnectionError("gone"))
+    assert await forms.send_device({}) is False
+    forms.register_sender(sender, push=False)
+    try:
+        assert await forms.send_device({}) is False
+        sender.assert_not_awaited()
+        forms._session_ready = True
+        assert await forms.send_device({}) is False
+    finally:
+        forms.unregister_sender()
+
+
+def test_non_child_catalog(monkeypatch):
+    from stackchan_mcp.voice_tools import build_function_declarations
+    monkeypatch.setenv("STACKCHAN_CHILD_PROFILE", "0")
+    assert "show_character" not in {tool["name"] for tool in build_function_declarations()}
+
+
+def test_font_directory_override(monkeypatch, tmp_path):
+    monkeypatch.setenv("STACKCHAN_GLYPH_FONT_DIR", str(tmp_path))
+    with pytest.raises(ValueError):
+        render_glyph_png("蝶")
+
+
+def test_unsupported_character():
+    with pytest.raises(ValueError):
+        font_name_for("\U00031350")
+
+
+@pytest.mark.asyncio
+async def test_undeterminable_mode_shows_nothing(monkeypatch, tmp_path):
+    """Spec section 10: if the homework list can't be read, treat it as 默書."""
+    monkeypatch.setenv("STACKCHAN_CHILD_PROFILE", "1")
+    forms = xiaoya_forms.XiaoyaForms(tmp_path / "forms.json")
+    sender = AsyncMock()
+    forms.register_sender(sender, push=False)
+    forms._session_ready = True
+    monkeypatch.setattr(forms, "snapshot", lambda: (_ for _ in ()).throw(RuntimeError("x")))
+    monkeypatch.setattr(xiaoya_forms, "_forms", forms)
+    executor = VoiceToolExecutor()
+    try:
+        result = await executor.execute("show_character", {"character": "蝶"})
+        assert result["mode"] == "dictation" and result["shown"] is False
+        assert "png" not in result
+        assert "radical" in result["note"] or "部首" in result["note"]
+        assert "never invent" in result["note"]
+        assert "默書" not in result["spoken"]
+        assert "我唔出個字住" in result["spoken"]
+        assert result.get("structure") == "左右"
+        sender.assert_not_awaited()
+    finally:
+        await executor.close()
+        forms.unregister_sender()
+
+
+def test_child_instructions_cover_both_modes(monkeypatch):
+    monkeypatch.setenv("STACKCHAN_CHILD_PROFILE", "1")
+    text = VoiceToolExecutor().instructions()
+    assert "show_character" in text
+    assert "部首同結構" in text and "永遠唔顯示" in text and "10秒" in text
+    assert "有顯示時唔好講部首同結構" in text
+    assert "唔准自己估" in text
+    assert "粵拼" in text
+    assert "homework_vocab_context" in text and "唔用標題「抄」" in text
+
+
+def _pixels(png: bytes):
+    return Image.open(BytesIO(png)).convert("L")
+
+
+def test_glyph_is_pre_mirrored_for_the_panel(monkeypatch):
+    # The spotpear128cam panel (MADCTL 0x08) shows the frame buffer left-right
+    # mirrored, so the gateway sends the glyph pre-mirrored: what she sees on the
+    # board is then the normal 蝴蝶 (虫 on the left, 蝴 before 蝶).
+    from PIL import ImageOps
+    from stackchan_mcp import xiaoya_glyph
+
+    monkeypatch.delenv("STACKCHAN_GLYPH_MIRROR", raising=False)
+    assert xiaoya_glyph.panel_mirrors_x() is True
+    sent = _pixels(render_glyph_png("蝴蝶"))
+    upright = _pixels(xiaoya_glyph._render("蝴蝶", xiaoya_glyph._directory(), False))
+    assert sent.tobytes() != upright.tobytes()
+    # What the panel shows (its mirror of what we send) equals the upright card.
+    assert ImageOps.mirror(sent).tobytes() == upright.tobytes()
+    # In the upright card 蝴 sits on the left: its ink is in the left half and the
+    # mirrored card we send carries the 蝶 shape there instead.
+    left_sent = sent.crop((0, 0, 120, 240))
+    right_up = ImageOps.mirror(upright.crop((120, 0, 240, 240)))
+    assert left_sent.tobytes() == right_up.tobytes()
+
+
+def test_glyph_mirror_can_be_disabled(monkeypatch):
+    from stackchan_mcp import xiaoya_glyph
+
+    monkeypatch.setenv("STACKCHAN_GLYPH_MIRROR", "0")
+    assert xiaoya_glyph.panel_mirrors_x() is False
+    assert render_glyph_png("蝶") == xiaoya_glyph._render("蝶", xiaoya_glyph._directory(), False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "titles,done,dictation_words",
+    [
+        ([], [], False),  # empty list
+        (["數學工作紙"], [False], False),  # no 抄 / 默 item
+        (["中文默書", "中文抄生字"], [True, False], False),  # 默 done does not imply copy
+        (["英文默書"], [False], True),  # unfinished 默
+        (["英文默書"], [True], False),  # 默 done, nothing else
+    ],
+)
+async def test_dictation_wording_matches_list(monkeypatch, tmp_path, titles, done, dictation_words):
+    monkeypatch.setenv("STACKCHAN_CHILD_PROFILE", "1")
+    forms = xiaoya_forms.XiaoyaForms(tmp_path / "forms.json")
+    items = [
+        {"id": i + 1, "title": t, "done": d} for i, (t, d) in enumerate(zip(titles, done))
+    ]
+    monkeypatch.setattr(forms, "snapshot", lambda: {"items": items, "done": 0, "total": len(items)})
+    sender = AsyncMock(return_value=True)
+    monkeypatch.setattr(forms, "send_device", sender)
+    monkeypatch.setattr(xiaoya_forms, "_forms", forms)
+    executor = VoiceToolExecutor()
+    try:
+        result = await executor.execute("show_character", {"character": "蝶"})
+        assert result["mode"] == "dictation" and result["shown"] is False
+        assert ("今日要默書" in result["spoken"]) is dictation_words
+        if not dictation_words:
+            # 蝶 has offline structure/radical → tool promises a hint, not invention.
+            assert result["spoken"] == "我唔出個字住。我講吓提示俾你諗吓。"
+            assert result.get("structure") == "左右"
+            assert "虫" in result.get("radical", "")
+        sender.assert_not_awaited()
+    finally:
+        await executor.close()
+
+
+@pytest.mark.asyncio
+async def test_copy_assertion_item_and_day_scope(monkeypatch, tmp_path):
+    monkeypatch.setenv("STACKCHAN_CHILD_PROFILE", "1")
+    day = ["2026-10-27"]
+    forms = xiaoya_forms.XiaoyaForms(tmp_path / "forms.json", today=lambda: day[0])
+    forms.add_items(["中文抄生字", "數學"], source="parent")
+    monkeypatch.setattr(xiaoya_forms, "_forms", forms)
+    sender = AsyncMock(return_value=True)
+    monkeypatch.setattr(forms, "send_device", sender)
+    from stackchan_mcp import xiaoya_glyph
+    monkeypatch.setattr(xiaoya_glyph, "render_glyph_png", lambda c: b"png")
+    executor = VoiceToolExecutor()
+    async def context(item, said=False):
+        result = await executor.execute("homework_vocab_context", {
+            "item": item, "copy_mode_said": said,
+        })
+        assert result["ok"]
+    async def shown(expected):
+        result = await executor.execute("show_character", {"character": "蝶"})
+        assert result["shown"] is expected
+    try:
+        await shown(False)  # title alone cannot grant copy
+        await context("#1", True)  # 娜娜: 我抄生字
+        await shown(True)
+        await shown(True)  # same item/session retains assertion
+        unknown = await executor.execute("homework_vocab_context", {
+            "item": "unknown", "copy_mode_said": False,
+        })
+        assert not unknown["ok"]
+        await shown(False)
+        await context("#1", True)
+        await context("#2")
+        assert not forms.copy_mode_said
+        await shown(False)
+        await context("#1")  # returning does not restore the old assertion
+        await shown(False)
+        await context("#1", True)
+        await shown(True)
+        forms.add_items(["英文"], source="parent")
+        await shown(False)
+        await context("#1", True)
+        day[0] = "2026-10-28"
+        assert not forms.copy_mode_said
+        forms.add_items(["中文抄生字"], source="parent")
+        await shown(False)
+        await context("#1", True)
+        await shown(True)
+    finally:
+        await executor.close()
+
+
+@pytest.mark.parametrize("items", [None, [], [{"title": "", "done": False}], [{"title": "默書", "done": False}]])
+def test_assertion_cannot_override_unknown_or_dictation(items):
+    assert vocab_mode(items, copy_mode_said=True) == "dictation"

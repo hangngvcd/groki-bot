@@ -278,7 +278,7 @@ jobs:
             - **AtomS3R + Atomic ECHO BASE**: `firmware-${{ steps.version.outputs.version }}-atoms3r.zip` (8 MB flash, Octal PSRAM), attached only if this build passed
             - **AtomS3 + Atomic ECHO BASE, slim profile**: `firmware-${{ steps.version.outputs.version }}-atoms3.zip` (8 MB flash, no PSRAM), attached only if this build passed
 
-            - **SpotPear ESP32-S3 1.28-CAM (小芽)**: `firmware-${{ steps.version.outputs.version }}-spotpear128cam.zip` (16 MB flash, Octal PSRAM). Flash with the web flasher choosing "SpotPear ESP32-S3 1.28-CAM"; later updates over Wi-Fi OTA. Hardware OTA/rollback verification pending.
+            - **SpotPear ESP32-S3 1.28-CAM (鈴鈴)**: `firmware-${{ steps.version.outputs.version }}-spotpear128cam.zip` (16 MB flash, Octal PSRAM). Flash with the web flasher choosing "SpotPear ESP32-S3 1.28-CAM"; later updates over Wi-Fi OTA. Hardware OTA/rollback verification pending.
 
             ## Install
 

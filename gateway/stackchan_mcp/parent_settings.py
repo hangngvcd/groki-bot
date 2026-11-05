@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 import json
 import logging
 import os
@@ -12,11 +13,19 @@ import tempfile
 
 logger = logging.getLogger(__name__)
 SCHEMA = {
+    "local_commands_enabled": {"type": "boolean", "default": True},
+    "battery_curve_raw": {"type": "array", "default": None},
+    "battery_low_threshold_pct": {"type": "integer", "min": 5, "max": 50, "default": 20},
+    "session_idle_min": {"type": "integer", "min": 1, "max": 240, "default": 30},
+    "pin_minigame": {
+        "type": "string", "default": "", "enum": ["", "G1", "G2", "G3"],
+        "description_zh": "小遊戲固定款式（留空輪流）",
+    },
     "volume": {
         "type": "integer",
         "min": 0,
         "max": 100,
-        "default": 60,
+        "default": 40,
         "description_zh": "音量",
     },
     "rest_after_min": {
@@ -31,28 +40,70 @@ SCHEMA = {
         "default": False,
         "description_zh": "鏡頭在場偵測",
     },
+    "presence_leave_min": {
+        "type": "integer", "min": 1, "max": 30, "default": 2,
+        "description_zh": "行開幾多分鐘先當行開",
+    },
     "notifications": {
         "type": "boolean",
         "default": False,
         "description_zh": "家長通知",
     },
+    "mandarin": {
+        "type": "boolean",
+        "default": True,
+        "description_zh": "容許鈴鈴應娜娜要求講普通話",
+    },
 }
 TICKETS = {
-    "volume": "16",
+    "pin_minigame": "30",
     "rest_after_min": "12/15",
     "camera_presence": "23",
-    "notifications": "19",
+    "presence_leave_min": "23",
+    "notifications": "19/23",
+}
+
+
+# Settings the gateway sends to the device (ticket 15c: volume via
+# {"type": "xiaoya", "cmd": "volume", "volume": N}, re-sent on every connect).
+APPLIED = {
+    "battery_curve_raw": "sent on session ready and when changed",
+    "battery_low_threshold_pct": "sent on session ready and when changed",
+    "volume": "sent to 鈴鈴 now if connected, otherwise on her next connect",
+}
+
+
+# Settings whose policy is applied by the gateway; device UI may need firmware.
+GATEWAY = {
+    "local_commands_enabled": "pre-session recognised-text hook",
+    "session_idle_min": "homework session idle safety timeout",
+    "camera_presence": "Gateway desk presence policy (ticket 23); firmware 44c camera badge and optional on-device face detection",
+    "presence_leave_min": "Gateway continuous absence threshold (ticket 23)",
+    "notifications": "Opt-in gateway parent away notifications (tickets 19/23)",
+    "mandarin": (
+        "鈴鈴語言規則：進行中嘅對話即時收到通知，下次對話嘅 prompt 一定用新設定"
+    ),
 }
 
 
 def device_support():
-    return {
-        key: {
-            "applied_to_device": False,
-            "reason": f"stored; firmware has no message yet (ticket {ticket})",
+    support = {key: {"applied_to_device": True, "reason": reason} for key, reason in APPLIED.items()}
+    support.update(
+        {
+            key: {"applied_to_device": False, "applied_in_gateway": True, "reason": reason}
+            for key, reason in GATEWAY.items()
         }
-        for key, ticket in TICKETS.items()
-    }
+    )
+    support.update(
+        {
+            key: {
+                "applied_to_device": False,
+                "reason": f"stored; firmware has no message yet (ticket {ticket})",
+            }
+            for key, ticket in TICKETS.items() if key not in GATEWAY
+        }
+    )
+    return support
 
 
 def validate(values):
@@ -62,9 +113,16 @@ def validate(values):
         if key not in SCHEMA:
             raise ValueError(f"Unknown setting: {key}")
         rule = SCHEMA[key]
-        expected = bool if rule["type"] == "boolean" else int
+        if key == "battery_curve_raw":
+            from .battery_calibration import validate_curve
+            if value is not None:
+                validate_curve(value)
+            continue
+        expected = {"boolean": bool, "integer": int, "string": str}[rule["type"]]
         if type(value) is not expected:
             raise ValueError(f"{key}: expected {rule['type']}")
+        if "enum" in rule and value not in rule["enum"]:
+            raise ValueError(f"{key}: invalid choice")
         if expected is int and not rule["min"] <= value <= rule["max"]:
             raise ValueError(f"{key}: expected {rule['min']}..{rule['max']}")
     return values
@@ -80,7 +138,7 @@ class ParentSettings:
         self.path = Path(
             path
             or os.getenv(
-                "STACKCHAN_PARENT_SETTINGS_PATH", "~/.stackchan/parent_settings.json"
+                "STACKCHAN_PARENT_SETTINGS_PATH", str(Path(os.getenv("STACKCHAN_STATE_DIR", "~/.stackchan")) / "parent_settings.json")
             )
         ).expanduser()
         self._settings = {key: rule["default"] for key, rule in SCHEMA.items()}
@@ -98,10 +156,16 @@ class ParentSettings:
             )
 
     def get(self):
-        return dict(self._settings)
+        return deepcopy(self._settings)
 
     def add_listener(self, listener):
         self._listeners.append(listener)
+
+    def remove_listener(self, listener):
+        try:
+            self._listeners.remove(listener)
+        except ValueError:
+            pass
 
     def register_pusher(self, key, pusher):
         if key not in SCHEMA:
@@ -121,11 +185,19 @@ class ParentSettings:
 
     def update(self, values, source):
         validate(values)
+        values = deepcopy(values)
         changed = {
             key: {"old": self._settings[key], "new": value}
             for key, value in values.items()
             if self._settings[key] != value
         }
+        # A repeated explicit toggle still overrides the session's effective state.
+        if "camera_presence" in values and "camera_presence" not in changed:
+            for listener in self._listeners:
+                try:
+                    listener(self.get(), {"camera_presence"})
+                except Exception:
+                    logger.exception("Parent presence override listener failed")
         if not changed:
             return {"changed": {}, "settings": self.get()}
         settings = {**self._settings, **values}
@@ -175,6 +247,15 @@ def get_parent_settings():
     if _settings is None:
         _settings = ParentSettings()
     return _settings
+
+
+def mandarin_enabled():
+    """Whether 鈴鈴 may switch to Mandarin when 娜娜 asks (default on)."""
+    try:
+        return bool(get_parent_settings().get().get("mandarin", SCHEMA["mandarin"]["default"]))
+    except Exception:
+        logger.debug("mandarin setting unreadable; using default", exc_info=True)
+        return SCHEMA["mandarin"]["default"]
 
 
 def reset_parent_settings():

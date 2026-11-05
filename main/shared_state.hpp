@@ -75,6 +75,7 @@ public:
 
     // --- Avatar face (render_task reads every frame) -----------------------
     struct Face {
+        std::atomic<std::uint8_t> form{1};
         std::atomic<float> mouth_open{0.0f};
         // Conversation mood (LLM / MCP / button). Not the live face: the
         // expression controller resolves overlay + voice + this + idle decay.

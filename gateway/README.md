@@ -164,9 +164,9 @@ model's `tokens.txt`. Per-line overrides win over the unchanged global defaults
 (`STACKCHAN_KWS_SCORE=7`, `STACKCHAN_KWS_THRESHOLD=0.05`). For example:
 
 ```dotenv
-STACKCHAN_WAKE_PHRASE=小白
-# Optional: this is the built-in 小白 preset when no keyword is supplied.
-STACKCHAN_WAKE_KEYWORD="x iǎo b ái :1 #0.02 @小白|S UW1 B AA1 S UW1 B AA1 :10 #0.02 @小白小白"
+STACKCHAN_WAKE_PHRASE=鈴鈴
+# Optional: this is the built-in 鈴鈴 preset when no keyword is supplied.
+STACKCHAN_WAKE_KEYWORD="l íng l íng :1 #0.05 @鈴鈴|l ìng l ìng :1 #0.05 @鈴鈴"
 STACKCHAN_CHILD_PROFILE=1
 STACKCHAN_BUTTON_ONLY_LISTEN=1
 ```
@@ -176,14 +176,17 @@ listen as above, keeping the BOOT button as fallback. Child profile does not
 select a wake phrase automatically. With a working detector, the button and
 wake word both open the listening window.
 
-The model supports Mandarin and English. Cantonese 小白 (`siu2 baak6`) is not
-recognised using Mandarin pinyin. The preset combines Mandarin 小白 with an
-English-phoneme approximation for Cantonese 小白小白. Ticket 04 measured roughly
-58–70% Cantonese hits on synthetic voices and zero false triggers in 43 minutes
-of synthetic negatives; Mandarin 小白 reached 98–99%. These are synthetic
-results, not a guarantee for children or real rooms. Prefer Mandarin “小白”,
-or say Cantonese “小白小白” close to the device. Keep BOOT / button-only mode as
-fallback and test with a real child voice using [tools/kws_eval](tools/kws_eval/README.md).
+The model supports Mandarin and English. The 鈴鈴 preset combines Mandarin
+`líng líng` with a `lìng lìng` line that is closer to Cantonese ling4 ling4.
+On synthetic voices (kws_eval, 972 clips) it reached 85% overall (Cantonese
+voices 69%, Mandarin 93%, Taiwanese Mandarin 96%) with 10 false triggers in 57
+minutes of deliberately confusable negatives (電鈴, 美玲, 零…). Homophones such
+as 玲玲 / 零零 also wake it. The legacy `STACKCHAN_WAKE_PHRASE=小白` preset is
+still available. These are synthetic results, not a guarantee for children or
+real rooms; keep BOOT / button-only mode as fallback and test with a real child
+voice using [tools/kws_eval](tools/kws_eval/README.md). While the device speaks
+(cloud TTS or local clips) and for `STACKCHAN_WAKE_SELF_MUTE_TAIL_S` (0.5 s)
+after, the wake word is muted so 鈴鈴 cannot wake herself.
 
 Check a new wake word before relying on it: `kws_offline_repro.py` reads the
 same settings (`--per-variant` reports each variant separately, `--voice` picks another macOS voice, `--wav` uses your own
