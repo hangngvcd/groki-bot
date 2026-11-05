@@ -37,7 +37,6 @@ PHOTO_RETENTION_DAYS = 90
 PRACTICE_LOG_DAYS = 400
 DAILY_LIMIT = 2
 DEFAULT_PASS_TARGET = 3
-MAX_WEAK_POINTS_PER_REPORT = 3
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp"}
 SUBJECTS = {"math": "數學", "chinese_vocab": "中文生字"}
 PRACTICES = {"math": {"similar_question"}, "chinese_vocab": {"vocab_write", "vocab_dictation", "vocab_meaning"}}
@@ -300,8 +299,10 @@ class PaperStore:
         proposals = body.get("weak_points", [])
         if not isinstance(files, list) or not all(isinstance(f, str) for f in files):
             raise ValueError("inbox_files: expected a list of inbox file names")
-        if not isinstance(proposals, list) or len(proposals) > MAX_WEAK_POINTS_PER_REPORT:
-            raise ValueError(f"weak_points: at most {MAX_WEAK_POINTS_PER_REPORT} per report")
+        # No cap on how many weak points one report may propose (dad, 2026-11-04);
+        # all of them stay pending until dad confirms.
+        if not isinstance(proposals, list):
+            raise ValueError("weak_points: expected a list")
         self.ensure()
         sources = []
         for name in files:

@@ -246,7 +246,7 @@ async def run_mcp(client):
 
         subject: math or chinese_vocab. markdown: the full report for dad
         (no child name/school). inbox_files: inbox photo names to archive with
-        it. weak_points (max 3, only mistakes seen 2+ times): {subject, label,
+        it. weak_points (no limit; mistakes seen 2+ times, all of them): {subject, label,
         practice, chars?, mistake?, seen?, id?}; never scores. They are stored
         as pending; nothing reaches 鈴鈴 until dad confirms.
         """
@@ -311,9 +311,10 @@ def paper_command(client, args):
         return client.call("papers/reports?" + urlencode({"id": rest[0]}))
     if action == "submit":
         if len(rest) != 1:
-            raise ValueError("用法：papers submit REPORT.json")
+            raise ValueError("用法：papers submit REPORT.json（或者 - 由 stdin 讀）")
         try:
-            body = json.loads(Path(rest[0]).expanduser().read_text(encoding="utf-8"))
+            text = sys.stdin.read() if rest[0] == "-" else Path(rest[0]).expanduser().read_text(encoding="utf-8")
+            body = json.loads(text)
         except OSError:
             raise ValueError(f"讀唔到檔案 / cannot read {rest[0]}") from None
         return client.call("papers/report", body)

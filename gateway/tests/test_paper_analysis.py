@@ -1,6 +1,7 @@
 """考卷分析 v1: storage, retention, dad-confirm gate, kid practice rules, parent tools."""
 
 import asyncio
+import io
 import json
 import os
 import stat
@@ -110,8 +111,9 @@ def test_rejects_scores_and_bad_items(store, bad):
 
 
 def test_limits_and_unknown_inbox(store):
-    with pytest.raises(ValueError):
-        submit(store, MATH, VOCAB, {**MATH, "id": "m-2"}, {**MATH, "id": "m-3"})
+    # No cap on weak points per report: all proposals are kept as pending.
+    many = [{**MATH, "id": f"m-{n}", "label": f"題型{n}"} for n in range(2, 7)]
+    assert len(submit(store, MATH, VOCAB, *many)["pending"]) == 7
     with pytest.raises(LookupError):
         submit(store, files=["missing.jpg"])
     with pytest.raises(LookupError):
@@ -408,6 +410,10 @@ async def test_parent_api_cli_and_usage_weekly(tmp_path, monkeypatch, capsys):
         assert await asyncio.to_thread(main, ["--url", base, "papers", "submit", str(report)]) == 0
         assert store.items()[0]["id"] == "c-vocab-蝴蝶"
         assert await asyncio.to_thread(main, ["--url", base, "papers", "submit", str(tmp_path / "none.json")]) == 1
+        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(
+            {"subject": "math", "markdown": "# 測驗", "weak_points": [MATH]})))
+        assert await asyncio.to_thread(main, ["--url", base, "papers", "submit", "-"]) == 0
+        assert "m-frac-add" in {i["id"] for i in store.items()}
 
 
 @pytest.mark.asyncio

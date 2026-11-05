@@ -133,9 +133,67 @@ Log 可能有診斷資料，分享前先檢查同遮住私人內容。`status` �
 
 鈴鈴每個形態、每個表情嘅圖片同埋自我介紹／升級聲，都放喺一個獨立嘅資源包，燒錄位置 `0xdb1000`，可以淨係換資源包、唔使重燒韌體。冇包或者某張圖唔啱，部機會自動用返內置畫出嚟嘅樣。製作同燒錄步驟見 [鈴鈴資源包說明](../tools/lingling_assets/README.md)。
 
+## 考卷分析（36–42）
+
+爸爸交娜娜嘅考卷、測驗、默書或者工作紙相，「小芽家長助手」用 Grok Bot 自己睇相，出短報告，完整報告存喺 Mac。v1 只做數學同中文生字。唔用其他 AI 或者付費服務，冇網頁。家長助手要先跟[家長助手 persona](xiaoya-parent-bot-persona.md)加「考卷分析」一節。
+
+### 交相（兩條路）
+
+1. 喺「小芽家長助手」對話直接 send 相，加一句，例如「娜娜今日數學測驗」。
+2. 將相放入 Mac 嘅 `~/xiaoya-data/papers/inbox/`，再同家長助手講「分析考卷」。**唔會自動監察**，唔講就唔會分析。第一次用之前，行一次 `~/.stackchan/bin/stackchan-parent papers inbox`，gateway 就會開好資料夾。
+
+貼士：每頁一張、影正、光猛；有改卷紅筆嗰版最有用；名、學校可以遮。一份卷多頁就一次過 send，講明「同一份」。睇唔清嘅頁，家長助手會叫你重影，唔會估。
+
+### 報告同確認
+
+- 對話會出一份最多 10 行嘅短報告：分數只抄卷面，列出最重要嘅弱項，每項標「清楚／唔肯定」。弱項**冇數目上限**：短報告放唔晒嘅，會寫「仲有 N 項，喺完整報告」。
+- 完整報告存喺 `~/xiaoya-data/reports/`（Markdown），唔抄姓名同學校。inbox 嘅相分析完會搬去 `~/xiaoya-data/papers/`。
+- 家長助手會問「要唔要將呢 N 個弱項加入鈴鈴陪練？」。**爸爸答好先會加入**；未確認嘅弱項鈴鈴睇唔到。
+- 之後可以問「娜娜而家弱咩？」「睇返上次數學分析」，家長助手會讀 Mac 檔答，唔使重新睇相。想暫停、恢復或者刪除某項，直接同佢講。
+
+### 鈴鈴點樣陪練
+
+- 娜娜做完一項相關功課（例如數學）之後，鈴鈴會喺慶祝之後直接開練，**每日最多 2 題**（全部弱項加埋）。
+- 唔可以拒絕：娜娜講「唔要」，鈴鈴會溫柔咁繼續。連續拒絕兩次，或者嗰題當日冇做完，都計入當日 2 題，唔會補。
+- 鈴鈴可以講「練吓測驗嗰類題」，但**唔會提分數**，亦唔會講「你上次錯咗」。
+- 加練**唔計**功課進度、唔令鈴鈴升級、唔解鎖遊戲；加練卡住亦唔會通知爸爸。
+- 連續啱 3 次就當過關，鈴鈴讚一次，之後唔再練嗰項。
+- 想娜娜今日多練幾題：同家長助手講，或者行 `stackchan-parent practice-extra 1`（1–5 題，只限今日）。
+
+### 每週進度
+
+每逢星期日，每日用量報告後面會多一段「【考卷弱點：本週進度】」：練緊嘅弱項、本週過關、練咗幾題、放棄幾題、未確認幾項、仲建議練邊啲。冇嘢報就唔會出。想即刻睇：`stackchan-parent usage --weekly --text`。
+
+### 考試前溫書
+
+同家長助手講「下週考中文」，佢會由弱項清單排好溫書次序（生字先、易錯優先）俾你睇。**你確認先**會放入功課清單做「溫書」項；溫書項同其他功課一樣，計功課進度同慶祝。
+
+### 保留同刪除
+
+- 資料只存喺 Mac 嘅 `~/xiaoya-data/`（`papers/` 相、`reports/` 報告、`weak_points.json` 弱項、`practice.json` 每日加練紀錄）。部機同 gateway log 冇相、冇分數。
+- 相保留 **90 日**；報告同弱項保留到**學年尾（8 月 31 日）**。家長助手讀資料或者每日報告時會順手清走過期嘅。
+- 講「刪晒娜娜考卷資料」：家長助手會先列出要刪幾多個檔，你確認先刪。
+
+### 命令速查
+
+```sh
+~/.stackchan/bin/stackchan-parent papers inbox                 # inbox 有咩相
+~/.stackchan/bin/stackchan-parent papers reports               # 報告清單
+~/.stackchan/bin/stackchan-parent papers report REPORT_ID      # 讀一份報告
+~/.stackchan/bin/stackchan-parent weak-points                  # 弱項清單同狀態
+~/.stackchan/bin/stackchan-parent weak-points confirm ID...    # 確認加入陪練（pause／resume／delete 一樣）
+~/.stackchan/bin/stackchan-parent practice-extra 1             # 今日加 1 題
+~/.stackchan/bin/stackchan-parent papers revision --subject chinese_vocab   # 溫書建議
+~/.stackchan/bin/stackchan-parent papers revision-add "溫書：生字 蝴、蝶"     # 確認後加入功課清單
+~/.stackchan/bin/stackchan-parent papers purge                 # 即刻清過期資料
+~/.stackchan/bin/stackchan-parent papers delete-all            # 列出要刪嘅檔；確認後加 --yes 數目
+```
+
+預設設定（資料夾 `~/xiaoya-data`、學年尾 8 月 31 日、星期日出每週進度）已經係爸爸揀好嘅，唔使改服務設定。
+
 ## 私隱提醒
 
-日常語音流程唔儲存錄音；上面自願做嘅調校錄音要自己清理。鏡頭預設關閉。對話歷史跟 Grok Bot 嘅保留政策，第一階段未有自動七日刪除規則，唔好假設七日後一定消失。唔好將 token 或 agent ID 放入 persona 或聊天。
+日常語音流程唔儲存錄音；上面自願做嘅調校錄音要自己清理。鏡頭預設關閉。考卷資料嘅保留同刪除見上面「考卷分析」。對話歷史跟 Grok Bot 嘅保留政策，第一階段未有自動七日刪除規則，唔好假設七日後一定消失。唔好將 token 或 agent ID 放入 persona 或聊天。
 
 ## 停用／移除服務
 
