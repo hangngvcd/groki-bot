@@ -175,6 +175,7 @@ async def test_gbot_receives_only_child_catalog(child, monkeypatch, native_end):
             "notify_dad_stuck",
             "show_character",
             "homework_vocab_context",
+            "paper_practice",
             "get_current_datetime",
             "battery_status",
         }
@@ -223,6 +224,7 @@ def test_gemini_child_catalog_excludes_search_and_other_tools(child):
         "notify_dad_stuck",
         "show_character",
         "homework_vocab_context",
+        "paper_practice",
         "get_current_datetime",
         "battery_status",
     }
@@ -249,6 +251,7 @@ async def test_extensions_cannot_broaden_child_catalog(child):
             "notify_dad_stuck",
             "show_character",
             "homework_vocab_context",
+            "paper_practice",
             "get_current_datetime",
             "battery_status",
         }

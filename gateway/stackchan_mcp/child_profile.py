@@ -24,6 +24,7 @@ VOICE_TOOL_NAMES = frozenset(
         "homework_vocab_context",
         "note_homework_stuck",
         "notify_dad_stuck",
+        "paper_practice",
     }
 )
 

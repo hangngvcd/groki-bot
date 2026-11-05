@@ -77,6 +77,25 @@ class _PlainTypes:
         return values
 
 
+def _practice_hints() -> dict[str, Any]:
+    """Confirmed weak topics for hints, and whether practice is due now."""
+    try:
+        from .paper_analysis import Practice, get_paper_store  # noqa: PLC0415
+
+        practice = Practice(get_paper_store())
+        state = practice.state()
+        topics = [t["topic"] for t in practice.topics()]
+    except OSError:
+        logger.warning("Paper practice state unavailable", exc_info=True)
+        return {}
+    hints: dict[str, Any] = {}
+    if topics:
+        hints["practice_topics"] = topics
+    if state.get("due") or state.get("open"):
+        hints["practice_due"] = True
+    return hints
+
+
 def _valid_arguments(value, schema):
     """Validate the JSON types/required fields the shared catalog actually uses."""
     kind = schema.get("type")
@@ -177,6 +196,7 @@ TOOL_METADATA: dict[str, ToolMetadata] = {
     "homework_photo_cancel": ToolMetadata(True, "homework", 3.0),
     "note_homework_stuck": ToolMetadata(True, "homework_stuck", 3.0),
     "notify_dad_stuck": ToolMetadata(True, "homework_stuck", 8.0),
+    "paper_practice": ToolMetadata(True, "homework", 3.0),
     "homework_vocab_context": ToolMetadata(True, "glyph", 5.0),
     "show_character": ToolMetadata(True, "glyph", 5.0),
     "self.tracking.start": ToolMetadata(True, "face_tracking", 8.0),
@@ -496,6 +516,31 @@ def build_function_declarations(*, types=None) -> list[Any]:
             required=["item"],
         ),
     )
+    paper_practice = types.FunctionDeclaration(
+        name="paper_practice",
+        description=(
+            "Daily extra practice from dad-confirmed weak topics (max 2 a day). "
+            "action=start only when a result says practice_due=true and any "
+            "celebration/game is over; it returns the topic (never a score). "
+            "answer after she answers your one question (correct true/false); "
+            "refuse when she says 唔要/遲啲; status if unsure. Read returned spoken."
+        ),
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={
+                "action": types.Schema(
+                    type="STRING",
+                    format="enum",
+                    enum=["start", "answer", "refuse", "status"],
+                ),
+                "correct": types.Schema(
+                    type="BOOLEAN",
+                    description="action=answer: true when her final answer is right",
+                ),
+            },
+            required=["action"],
+        ),
+    )
     notify_dad_stuck = types.FunctionDeclaration(
         name="notify_dad_stuck",
         description=(
@@ -570,6 +615,7 @@ def build_function_declarations(*, types=None) -> list[Any]:
             notify_dad_stuck,
             show_character,
             homework_vocab_context,
+            paper_practice,
         ]
     return [
         *device,
@@ -1061,6 +1107,20 @@ class VoiceToolExecutor:
                 "卡住通知一定用 notify_dad_stuck，唔好用 send_task；唔好讀出家長提示全文。"
             )
             base += (
+                "\n加練（爸爸確認咗嘅弱項，每日最多 2 題）：做功課中途唔好提。"
+                "結果有 practice_due=true，等讚賞、變身同遊戲完晒先 call paper_practice(action=start)；"
+                "有 game_unlock 就遊戲完之後佢再同你講嘢先開。唔好問「要唔要」，直接開，例如「做完喇！我哋練吓測驗嗰類分數題，一題就好。」"
+                "practice=true 就按 question 嘅 topic 出一條同類新題（數字唔同），一次一題；"
+                "生字題跟生字規則：唔講粵拼，默書唔顯示字。照教學規則：唔俾答案、一次一個提示，例如「咦，差少少。不如睇吓分母係咪一樣先？」。"
+                "佢答完最後答案就 call paper_practice(action=answer, correct=true/false)，讀 spoken；"
+                "佢話唔要／遲啲／唔玩就 call paper_practice(action=refuse)，讀 spoken 再出返同一題；abandoned=true 就唔再催。"
+                "佢唔出聲就等一陣再溫和講一次；佢返嚟就 call paper_practice(action=start) 繼續同一題。"
+                "practice=false 唔好再開；reason=daily_limit 只係佢問先讀 spoken。"
+                "加練卡住唔好 call note_homework_stuck 或 notify_dad_stuck。加練唔計功課、唔會變身或者開遊戲。"
+                "永遠唔講分數、唔講「上次錯咗邊題」、「你呢樣好弱」、「爸爸話你要練」、「鈴鈴會傷心」；可以講「測驗／默書嗰類題」。"
+                "娜娜問功課撞正 homework_list 嘅 practice_topics，提示可以偏向嗰個弱點。"
+            )
+            base += (
                 "\n小朋友問生字點寫：call show_character，只傳佢問嗰個字；用詞語上下文揀字，只有冇上下文又同音唔清楚先問一句短問題。\n"
                 "mode=copy（抄生字）、shown=true：個字會喺畫面出10秒，叫佢睇清楚，收起之後自己喺簿寫一次；"
                 "有顯示時唔好講部首同結構，只讀 spoken。\n"
@@ -1359,6 +1419,8 @@ class VoiceToolExecutor:
             return self._dispatch_homework(name, args)
         if name in {"note_homework_stuck", "notify_dad_stuck"}:
             return self._dispatch_stuck(name, args)
+        if name == "paper_practice":
+            return self._dispatch_paper_practice(args)
         if name in {"self.tracking.start", "self.tracking.stop"}:
             if self._set_face_tracking is None:
                 return {"ok": False, "error": "face tracking unavailable"}
@@ -1815,7 +1877,7 @@ class VoiceToolExecutor:
             if not snap["items"]:
                 return {"ok": True, "items": [], "spoken": "今日清單未有功課呀，叫爸爸加啦。",
                         "note": HOMEWORK_LIST_FRESH_NOTE}
-            return {
+            result = {
                 "ok": True,
                 "items": [
                     {"id": item["id"], "title": item["title"], "done": item["done"]}
@@ -1824,6 +1886,8 @@ class VoiceToolExecutor:
                 "done": snap["done"],
                 "total": snap["total"],
             }
+            result.update(_practice_hints())
+            return result
         from .homework_photo import get_homework_photo
         photo = get_homework_photo()
         if name == "homework_photo_snap":
@@ -1833,9 +1897,33 @@ class VoiceToolExecutor:
         return photo.resolve(args.get("item"))
 
     @staticmethod
+    def _dispatch_paper_practice(args: dict[str, Any]) -> dict[str, Any]:
+        from .paper_analysis import Practice, get_paper_store  # noqa: PLC0415
+
+        practice = Practice(get_paper_store())
+        action = args.get("action")
+        try:
+            if action == "start":
+                return practice.start()
+            if action == "answer":
+                return practice.answer(args.get("correct"))
+            if action == "refuse":
+                return practice.refuse()
+            if action == "status":
+                return practice.status()
+        except OSError:
+            logger.warning("Paper practice state unavailable", exc_info=True)
+            return {"ok": False, "practice": False, "spoken": ""}
+        return {"ok": False, "error": "action: expected start/answer/refuse/status"}
+
+    @staticmethod
     def _dispatch_stuck(name: str, args: dict[str, Any]) -> dict[str, Any]:
         from .stuck_notify import get_stuck_notify  # noqa: PLC0415
+        from .paper_analysis import Practice, get_paper_store  # noqa: PLC0415
 
+        if Practice(get_paper_store()).is_open():
+            # Extra practice never reports 娜娜 as stuck to dad (plan §4.4).
+            return {"ok": True, "practice": True, "offer_help": False, "spoken": ""}
         stuck = get_stuck_notify()
         item = args.get("item")
         try:

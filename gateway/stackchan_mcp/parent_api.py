@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hmac
+from datetime import date
 import ipaddress
 import logging
 import os
@@ -147,7 +148,7 @@ async def helper_health():
         return {"reachable": False, "agent_configured": False, "desktop_enabled": False}
 
 
-def create_parent_app(token, settings=None, debug_status=None, forms=None, usage=None):
+def create_parent_app(token, settings=None, debug_status=None, forms=None, usage=None, papers=None):
     device_token = os.getenv("STACKCHAN_TOKEN", "")
     if device_token and hmac.compare_digest(token.encode(), device_token.encode()):
         logger.error("Parent API refused: parent token equals device token")
@@ -202,7 +203,125 @@ def create_parent_app(token, settings=None, debug_status=None, forms=None, usage
             result = store.snapshot(day)
         except ValueError as exc:
             return web.json_response({"ok": False, "error": str(exc)}, status=400)
-        return web.json_response({"ok": True, "date": day or store.now().date().isoformat(), "usage": result})
+        day = day or store.now().date().isoformat()
+        payload = {"ok": True, "date": day, "usage": result}
+        week = weekly_section(day, request.query.get("weekly") in {"1", "true"})
+        if week:
+            payload["weekly_weak_points"] = week
+        return web.json_response(payload)
+
+    from .paper_analysis import Practice, format_weekly, get_paper_store, weekly_due
+
+    def paper_store():
+        return papers if papers is not None else get_paper_store()
+
+    def weekly_section(day, force):
+        store = paper_store()
+        try:
+            when = date.fromisoformat(day)
+            if not (force or weekly_due(when)):
+                return None
+            week = store.weekly(when)
+        except (OSError, ValueError):
+            logger.warning("Weekly weak-point section unavailable", exc_info=True)
+            return None
+        text = format_weekly(week)
+        return {**week, "text": text} if text else None
+
+    def paper_error(exc):
+        if isinstance(exc, LookupError):
+            return web.json_response({"ok": False, "error": str(exc).strip("'\"")}, status=404)
+        return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    async def paper_body(request):
+        try:
+            body = await request.json()
+        except ValueError:
+            raise ValueError("expected a JSON object") from None
+        if not isinstance(body, dict):
+            raise ValueError("expected a JSON object")
+        return body
+
+    async def get_paper_inbox(request):
+        store = paper_store()
+        try:
+            store.purge()
+            return web.json_response({"ok": True, "inbox": store.list_inbox(), "inbox_dir": str(store.inbox)})
+        except OSError as exc:
+            return paper_error(ValueError(f"paper storage unavailable: {exc.strerror}"))
+
+    async def get_paper_reports(request):
+        store = paper_store()
+        try:
+            if request.query.get("id"):
+                return web.json_response({"ok": True, "id": request.query["id"], "markdown": store.read_report(request.query["id"])})
+            store.purge()
+            return web.json_response({"ok": True, "reports": store.list_reports()})
+        except (LookupError, OSError) as exc:
+            return paper_error(exc if isinstance(exc, LookupError) else ValueError("paper storage unavailable"))
+
+    async def post_paper_report(request):
+        store = paper_store()
+        try:
+            store.purge()
+            result = store.submit_report(await paper_body(request))
+        except (LookupError, ValueError, TypeError) as exc:
+            return paper_error(exc)
+        return web.json_response({"ok": True, **result, "next": "dad must confirm pending weak points"})
+
+    async def get_weak_points(request):
+        return web.json_response({"ok": True, "weak_points": paper_store().items()})
+
+    async def post_weak_points(request):
+        store = paper_store()
+        try:
+            body = await paper_body(request)
+            if set(body) != {"action", "ids"}:
+                raise ValueError('Expected {"action": confirm|pause|resume|delete, "ids": [...]}')
+            changed = store.update(body["action"], body["ids"])
+        except (LookupError, ValueError, TypeError) as exc:
+            return paper_error(exc)
+        return web.json_response({"ok": True, "changed": changed, "weak_points": store.items()})
+
+    async def post_paper_purge(request):
+        return web.json_response({"ok": True, "removed": paper_store().purge()})
+
+    async def post_paper_delete_all(request):
+        try:
+            body = await paper_body(request)
+            if set(body) - {"confirm", "expect"} or not isinstance(body.get("confirm", False), bool):
+                raise ValueError('Expected {"confirm": false} to list, then {"confirm": true, "expect": N}')
+            result = paper_store().delete_all(body.get("confirm", False), body.get("expect"))
+        except (ValueError, TypeError) as exc:
+            return paper_error(exc)
+        return web.json_response({"ok": True, **result})
+
+    async def post_paper_revision(request):
+        store = paper_store()
+        try:
+            body = await paper_body(request)
+            if set(body) - {"subject", "confirm", "titles"}:
+                raise ValueError('Expected {"subject": ...} or {"confirm": true, "titles": [...]}')
+            if not body.get("confirm"):
+                return web.json_response({"ok": True, "proposal": store.revision(body.get("subject")),
+                                          "next": "dad confirms before items join the homework list"})
+            titles = body.get("titles")
+            if not isinstance(titles, list) or not titles or not all(isinstance(t, str) and t.strip() for t in titles):
+                raise ValueError("titles: expected the dad-confirmed list")
+            snapshot = forms.add_items([t if t.startswith("溫書") else "溫書：" + t for t in titles], source="parent-revision")
+        except (LookupError, ValueError, TypeError) as exc:
+            return paper_error(exc)
+        return web.json_response({"ok": True, "forms": snapshot})
+
+    async def post_practice_extra(request):
+        try:
+            body = await paper_body(request)
+            if set(body) != {"count"}:
+                raise ValueError('Expected {"count": 1..5}')
+            result = Practice(paper_store()).add_extra(body["count"])
+        except (ValueError, TypeError) as exc:
+            return paper_error(exc)
+        return web.json_response({"ok": True, **result})
 
     async def get_settings(request):
         return web.json_response(
@@ -350,6 +469,15 @@ def create_parent_app(token, settings=None, debug_status=None, forms=None, usage
     app.router.add_post("/parent/v1/intro", post_intro)
     app.router.add_get("/parent/v1/volume", get_volume)
     app.router.add_post("/parent/v1/volume", post_volume)
+    app.router.add_get("/parent/v1/papers/inbox", get_paper_inbox)
+    app.router.add_get("/parent/v1/papers/reports", get_paper_reports)
+    app.router.add_post("/parent/v1/papers/report", post_paper_report)
+    app.router.add_post("/parent/v1/papers/purge", post_paper_purge)
+    app.router.add_post("/parent/v1/papers/delete-all", post_paper_delete_all)
+    app.router.add_post("/parent/v1/papers/revision", post_paper_revision)
+    app.router.add_get("/parent/v1/weak-points", get_weak_points)
+    app.router.add_post("/parent/v1/weak-points", post_weak_points)
+    app.router.add_post("/parent/v1/practice/extra", post_practice_extra)
     return app
 
 

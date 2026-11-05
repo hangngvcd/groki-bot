@@ -230,7 +230,15 @@ class HomeworkPhoto:
             usage = get_debug_status().usage
             if usage:
                 usage.photo(sent and has_photo)
+            practice = {}
+            if not result["already_done"]:
+                from .paper_analysis import Practice, get_paper_store
+                try:
+                    practice = Practice(get_paper_store()).note_homework_done(self.item["title"])
+                except OSError:
+                    logger.warning("Paper practice state unavailable", exc_info=True)
             return {
+                **practice,
                 "ok": True,
                 "item": self.item["title"],
                 "already_done": result["already_done"],

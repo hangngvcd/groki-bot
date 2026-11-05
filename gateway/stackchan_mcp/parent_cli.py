@@ -217,7 +217,117 @@ async def run_mcp(client):
         except RuntimeError as exc:
             return {"ok": False, "error": str(exc)}
 
+    async def call(endpoint, values=None):
+        try:
+            return await asyncio.to_thread(client.call, endpoint, values)
+        except RuntimeError as exc:
+            return {"ok": False, "error": str(exc)}
+
+    @server.tool()
+    async def xiaoya_papers_inbox() -> dict:
+        """List paper photos dad dropped in ~/xiaoya-data/papers/inbox (paths stay on the Mac)."""
+        return await call("papers/inbox")
+
+    @server.tool()
+    async def xiaoya_papers_reports(report_id: str | None = None) -> dict:
+        """List stored paper reports, or read one report's markdown by id."""
+        return await call("papers/reports" + ("?" + urlencode({"id": report_id}) if report_id else ""))
+
+    @server.tool()
+    async def xiaoya_papers_submit_report(
+        subject: str,
+        markdown: str,
+        name: str = "",
+        date: str | None = None,
+        inbox_files: list[str] | None = None,
+        weak_points: list[dict] | None = None,
+    ) -> dict:
+        """Store a paper report on the Mac after analysing the photos.
+
+        subject: math or chinese_vocab. markdown: the full report for dad
+        (no child name/school). inbox_files: inbox photo names to archive with
+        it. weak_points (max 3, only mistakes seen 2+ times): {subject, label,
+        practice, chars?, mistake?, seen?, id?}; never scores. They are stored
+        as pending; nothing reaches 鈴鈴 until dad confirms.
+        """
+        values = {"subject": subject, "markdown": markdown, "name": name,
+                  "inbox_files": inbox_files or [], "weak_points": weak_points or []}
+        if date:
+            values["date"] = date
+        return await call("papers/report", values)
+
+    @server.tool()
+    async def xiaoya_weak_points() -> dict:
+        """List weak points with status pending / active / paused / passed."""
+        return await call("weak-points")
+
+    @server.tool()
+    async def xiaoya_weak_points_update(action: str, ids: list[str]) -> dict:
+        """confirm / pause / resume / delete weak points, only after dad said so."""
+        return await call("weak-points", {"action": action, "ids": ids})
+
+    @server.tool()
+    async def xiaoya_practice_extra(count: int = 1) -> dict:
+        """Give 娜娜 extra practice questions for today only (dad asked; 1-5)."""
+        return await call("practice/extra", {"count": count})
+
+    @server.tool()
+    async def xiaoya_papers_revision(subject: str | None = None, confirm: bool = False, titles: list[str] | None = None) -> dict:
+        """Pre-exam list: without confirm returns a proposal (生字 first, then
+        most error-prone). With confirm=true adds dad-approved titles to today's homework."""
+        values = {"confirm": True, "titles": titles or []} if confirm else ({"subject": subject} if subject else {})
+        return await call("papers/revision", values)
+
+    @server.tool()
+    async def xiaoya_papers_delete_all(confirm: bool = False, expect: int | None = None) -> dict:
+        """Delete all paper data. First call lists files; after dad confirms,
+        call again with confirm=true and expect=<count from the list>."""
+        values = {"confirm": confirm}
+        if confirm:
+            values["expect"] = expect
+        return await call("papers/delete-all", values)
+
     await server.run_stdio_async()
+
+
+def paper_command(client, args):
+    """papers / weak-points / practice-extra subcommands (JSON in, JSON out)."""
+    if args.command == "practice-extra":
+        return client.call("practice/extra", {"count": args.count})
+    if args.command == "weak-points":
+        if args.action == "list":
+            return client.call("weak-points")
+        if not args.ids:
+            raise ValueError(f"用法：weak-points {args.action} ID...")
+        return client.call("weak-points", {"action": args.action, "ids": args.ids})
+    action, rest = args.action, args.args
+    if action == "inbox":
+        return client.call("papers/inbox")
+    if action == "reports":
+        return client.call("papers/reports")
+    if action == "report":
+        if len(rest) != 1:
+            raise ValueError("用法：papers report REPORT_ID")
+        return client.call("papers/reports?" + urlencode({"id": rest[0]}))
+    if action == "submit":
+        if len(rest) != 1:
+            raise ValueError("用法：papers submit REPORT.json")
+        try:
+            body = json.loads(Path(rest[0]).expanduser().read_text(encoding="utf-8"))
+        except OSError:
+            raise ValueError(f"讀唔到檔案 / cannot read {rest[0]}") from None
+        return client.call("papers/report", body)
+    if action == "purge":
+        return client.call("papers/purge", {})
+    if action == "delete-all":
+        if args.yes is None:
+            return client.call("papers/delete-all", {"confirm": False})
+        return client.call("papers/delete-all", {"confirm": True, "expect": args.yes})
+    if action == "revision":
+        return client.call("papers/revision", {"subject": args.subject} if args.subject else {})
+    if not rest:
+        raise ValueError("用法：papers revision-add 標題...")
+    return client.call("papers/revision", {"confirm": True, "titles": rest})
 
 
 def main(argv=None):
@@ -229,6 +339,7 @@ def main(argv=None):
         command.add_argument("--url", default=argparse.SUPPRESS)
         if name == "usage":
             command.add_argument("--date")
+            command.add_argument("--weekly", action="store_true")
         if name in {"status", "usage"}:
             command.add_argument("--text", action="store_true")
         if name == "set":
@@ -245,6 +356,16 @@ def main(argv=None):
     battery.add_argument("csv", nargs="?")
     battery.add_argument("--interval", type=int, default=30)
     battery.add_argument("--raw")
+    papers = commands.add_parser("papers")
+    papers.add_argument("action", choices=("inbox", "reports", "report", "submit", "purge", "delete-all", "revision", "revision-add"))
+    papers.add_argument("args", nargs="*")
+    papers.add_argument("--subject")
+    papers.add_argument("--yes", type=int, metavar="COUNT")
+    weak = commands.add_parser("weak-points")
+    weak.add_argument("action", nargs="?", choices=("list", "confirm", "pause", "resume", "delete"), default="list")
+    weak.add_argument("ids", nargs="*")
+    extra = commands.add_parser("practice-extra")
+    extra.add_argument("count", type=int, nargs="?", default=1)
     threshold = commands.add_parser("battery-threshold")
     threshold.add_argument("pct", type=int)
     args = parser.parse_args(argv)
@@ -265,15 +386,25 @@ def main(argv=None):
             data = client.call("battery-cal", values)
             print(json.dumps(data, indent=2))
             return 0 if data.get("ok") else 1
+        if args.command in {"papers", "weak-points", "practice-extra"}:
+            data = paper_command(client, args)
+            print(json.dumps(data, ensure_ascii=False, indent=2))
+            return 0 if data.get("ok") else 1
         if args.command == "mcp":
             asyncio.run(run_mcp(client))
             return 0
         if args.command == "usage":
             from .usage_stats import format_usage
 
-            endpoint = "usage" + ("?" + urlencode({"date": args.date}) if args.date else "")
+            query = {k: v for k, v in (("date", args.date), ("weekly", "1" if args.weekly else None)) if v}
+            endpoint = "usage" + ("?" + urlencode(query) if query else "")
             data = client.call(endpoint)
-            print(format_usage(data["usage"], data["date"]) if args.text else json.dumps(data, ensure_ascii=False, indent=2))
+            if args.text:
+                text = format_usage(data["usage"], data["date"])
+                week = data.get("weekly_weak_points") or {}
+                print(text + ("\n\n" + week["text"] if week.get("text") else ""))
+            else:
+                print(json.dumps(data, ensure_ascii=False, indent=2))
             return 0
         if args.command == "volume":
             if args.value is not None and not 0 <= args.value <= 100:

@@ -53,6 +53,17 @@ def _isolated_xiaoya_forms(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _isolated_paper_data(monkeypatch, tmp_path):
+    """考卷資料 never touches the real ~/xiaoya-data during tests."""
+    from stackchan_mcp.paper_analysis import reset_paper_store
+
+    monkeypatch.setenv("STACKCHAN_XIAOYA_DATA_DIR", str(tmp_path / "xiaoya-data"))
+    reset_paper_store()
+    yield
+    reset_paper_store()
+
+
+@pytest.fixture(autouse=True)
 def _reset_debug_status():
     """Keep the process-wide debug snapshot from leaking across tests."""
     from stackchan_mcp.debug_status import reset_debug_status
